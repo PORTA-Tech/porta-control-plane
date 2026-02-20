@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "render:build": "npm install --package-lock=false && npm run build",
+    "render:build": "npm install --include=dev --package-lock=false && npm run build",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "check": "tsc -p tsconfig.json --noEmit",
