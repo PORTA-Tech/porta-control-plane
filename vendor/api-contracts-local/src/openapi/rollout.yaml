@@ -1,0 +1,181 @@
+openapi: 3.0.3
+info:
+  title: PORTA Rollout API
+  version: 1.0.1
+servers:
+  - url: http://localhost:8787
+paths:
+  /v1/rollout/state:
+    get:
+      summary: Get rollout state
+      responses:
+        '200':
+          description: Current rollout state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutStatusView'
+
+  /v1/rollout/promote:
+    post:
+      summary: Transition rollout to PROMOTING
+      responses:
+        '200':
+          description: Idempotent result
+        '202':
+          description: Transition accepted
+        '409':
+          description: Invalid transition
+
+  /v1/rollout/halt:
+    post:
+      summary: Transition rollout to HALTED
+      responses:
+        '200':
+          description: Idempotent result
+        '202':
+          description: Transition accepted
+        '409':
+          description: Invalid transition
+
+  /v1/rollout/rollback:
+    post:
+      summary: Execute rollback and enter cooldown
+      responses:
+        '200':
+          description: No-op
+        '202':
+          description: Rollback executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackActionResult'
+
+  /v1/slo/evaluate:
+    post:
+      summary: Evaluate SLOs and auto-trigger halt/rollback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SLOMetrics'
+      responses:
+        '200':
+          description: Gate decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SLOGateDecisionView'
+
+components:
+  schemas:
+    RolloutState:
+      type: string
+      enum: [IDLE, PROMOTING, MONITORING, HALTED, ROLLED_BACK, COOLDOWN]
+
+    RolloutStatusView:
+      type: object
+      required: [state, activeConfigSeq, updatedAtUtc]
+      properties:
+        state:
+          $ref: '#/components/schemas/RolloutState'
+        activeConfigSeq:
+          type: integer
+        targetCohort:
+          type: string
+        cooldownUntilUtc:
+          type: string
+          format: date-time
+        updatedAtUtc:
+          type: string
+          format: date-time
+
+    RollbackActionResult:
+      type: object
+      required: [state, actionTaken, rollbackApplied, reason, fromState, toState]
+      properties:
+        state:
+          $ref: '#/components/schemas/RolloutState'
+        actionTaken:
+          type: boolean
+        rollbackApplied:
+          type: boolean
+        reason:
+          type: string
+        fromState:
+          $ref: '#/components/schemas/RolloutState'
+        toState:
+          $ref: '#/components/schemas/RolloutState'
+        cooldownUntilUtc:
+          type: string
+          format: date-time
+
+    SLOMetrics:
+      type: object
+      required:
+        [windowStartUtc, windowEndUtc, cohortId, errorRatePct, p99LatencyMs, degradationRatePct, heartbeatGapIntervals]
+      properties:
+        windowStartUtc:
+          type: string
+          format: date-time
+        windowEndUtc:
+          type: string
+          format: date-time
+        cohortId:
+          type: string
+        errorRatePct:
+          type: number
+          minimum: 0
+        p99LatencyMs:
+          type: number
+          minimum: 0
+        degradationRatePct:
+          type: number
+          minimum: 0
+        heartbeatGapIntervals:
+          type: number
+          minimum: 0
+
+    AggregatedSLO:
+      type: object
+      required:
+        [windowStartUtc, windowEndUtc, cohortId, sampleCount, errorRatePct, p99LatencyMs, degradationRatePct, heartbeatGapIntervals]
+      properties:
+        windowStartUtc:
+          type: string
+          format: date-time
+        windowEndUtc:
+          type: string
+          format: date-time
+        cohortId:
+          type: string
+        sampleCount:
+          type: integer
+        errorRatePct:
+          type: number
+        p99LatencyMs:
+          type: number
+        degradationRatePct:
+          type: number
+        heartbeatGapIntervals:
+          type: number
+
+    SLOGateDecisionView:
+      type: object
+      required: [breached, tripped, triggerAction, recovered, aggregated, rolloutState]
+      properties:
+        breached:
+          type: boolean
+        tripped:
+          type: boolean
+        triggerAction:
+          type: boolean
+        recovered:
+          type: boolean
+        aggregated:
+          $ref: '#/components/schemas/AggregatedSLO'
+        rolloutState:
+          $ref: '#/components/schemas/RolloutState'
+        autoAction:
+          $ref: '#/components/schemas/RollbackActionResult'

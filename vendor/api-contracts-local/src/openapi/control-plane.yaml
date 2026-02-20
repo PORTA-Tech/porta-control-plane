@@ -1,0 +1,991 @@
+openapi: 3.0.3
+info:
+  title: PORTA Control Plane API
+  version: 1.0.1
+servers:
+  - url: http://localhost:8787
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+
+  /v1/config/submit:
+    post:
+      summary: Submit signed configuration envelope
+      tags: [Config]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigEnvelope'
+      responses:
+        '202':
+          description: Accepted and applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigApplyResult'
+        '400':
+          description: Invalid envelope
+        '403':
+          description: Untrusted issuer/signature/algorithm
+        '409':
+          description: Non-monotonic config sequence
+
+  /v1/config/current:
+    get:
+      summary: Get currently applied config
+      tags: [Config]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Current config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentConfigView'
+
+  /v1/config/ledger:
+    get:
+      summary: Get immutable config ledger
+      tags: [Config]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Ledger entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConfigLedgerRecord'
+
+  /v1/config/diff-preview:
+    get:
+      summary: Preview diff between current and target config
+      tags: [Config]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: targetConfigSeq
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: Config diff preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigDiffPreviewView'
+
+  /v1/config/integrity-active:
+    get:
+      summary: Get active configuration integrity view
+      tags: [Config]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Active config integrity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveConfigIntegrityView'
+
+  /v1/rollout/state:
+    get:
+      summary: Get rollout state
+      tags: [Rollout]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Rollout status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutStatusView'
+
+  /v1/rollout/promote:
+    post:
+      summary: Promote rollout to next stage
+      tags: [Rollout]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Idempotent
+        '202':
+          description: Transition accepted
+        '409':
+          description: Invalid transition
+
+  /v1/rollout/halt:
+    post:
+      summary: Halt rollout
+      tags: [Rollout]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Idempotent
+        '202':
+          description: Transition accepted
+        '409':
+          description: Invalid transition
+
+  /v1/rollout/rollback:
+    post:
+      summary: Force rollback and enter cooldown
+      tags: [Rollout]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: No-op (already rolled back/cooldown)
+        '202':
+          description: Rollback action executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackActionResult'
+
+  /v1/rollout/dry-run:
+    get:
+      summary: Dry-run rollout simulation preview
+      tags: [Rollout]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Dry-run simulation output
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutDryRunView'
+
+  /v1/slo/evaluate:
+    post:
+      summary: Evaluate SLO gate and trigger auto action when needed
+      tags: [SLO]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SLOMetrics'
+      responses:
+        '200':
+          description: SLO gate decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SLOGateDecisionView'
+
+  /v1/nodes/snapshot:
+    get:
+      summary: Read node snapshot table
+      tags: [Nodes]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Node snapshot rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NodeSnapshotView'
+
+  /v1/adapter/controls:
+    get:
+      summary: Read adapter activation controls
+      tags: [Adapter]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Adapter controls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdapterActivationControlsView'
+    post:
+      summary: Update adapter activation controls (flag-gated)
+      tags: [Adapter]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdapterActivationControlsUpdate'
+      responses:
+        '200':
+          description: Updated adapter controls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdapterActivationControlsView'
+        '409':
+          description: Activation bypass blocked by rollout FSM
+        '412':
+          description: Adapter feature gate disabled
+
+  /v1/adapter/observability:
+    get:
+      summary: Read adapter observability by cohort
+      tags: [Adapter]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Adapter observability rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdapterCohortObservabilityRow'
+
+  /v1/adapter/replay-log:
+    get:
+      summary: Read adapter replay log for a cohort
+      tags: [Adapter]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: cohort
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/CohortId'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        '200':
+          description: Replay log rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdapterReplayLogRow'
+
+  /v1/adapter/promotion-path:
+    get:
+      summary: Read adapter promotion path status
+      tags: [Adapter]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Adapter promotion path status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdapterPromotionPathView'
+    post:
+      summary: Attempt adapter promotion path advance
+      tags: [Adapter]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Promotion advance decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdapterPromotionPathView'
+
+  /v1/audit/events:
+    get:
+      summary: Read config ledger events (admin only)
+      tags: [Audit]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Config ledger
+
+  /v1/audit/rollout-events:
+    get:
+      summary: Read rollout/operator audit events (admin only)
+      tags: [Audit]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: Operator audit events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+
+  /v1/audit/ledger-view:
+    get:
+      summary: Read immutable rollout audit ledger view (admin only)
+      tags: [Audit]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: actor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: Immutable audit ledger rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditLedgerRow'
+
+components:
+  parameters:
+    OperatorIdHeader:
+      name: x-operator-id
+      in: header
+      required: true
+      schema:
+        type: string
+    OperatorRoleHeader:
+      name: x-operator-role
+      in: header
+      required: true
+      schema:
+        type: string
+        enum: [viewer, operator, admin]
+
+  schemas:
+    CohortId:
+      type: string
+      enum: [stable, canary-1, canary-5, internal, experimental]
+
+    RolloutState:
+      type: string
+      enum: [IDLE, PROMOTING, MONITORING, HALTED, ROLLED_BACK, COOLDOWN]
+
+    SignatureAlgorithm:
+      type: string
+      enum: [ed25519, ecdsa-p256]
+
+    NodeIdentity:
+      type: object
+      required: [nodeId, clusterId, instanceId, cohortId, cohortBucket]
+      properties:
+        nodeId:
+          type: string
+          format: uuid
+        clusterId:
+          type: string
+        instanceId:
+          type: string
+        hardwareFingerprint:
+          type: string
+        cohortId:
+          $ref: '#/components/schemas/CohortId'
+        cohortBucket:
+          type: integer
+          minimum: 0
+          maximum: 99
+
+    ConfigEnvelope:
+      type: object
+      required: [configVersion, configSeq, issuedAt, expiresAt, issuerId, payload, signature, signatureAlgorithm]
+      properties:
+        configVersion:
+          type: string
+        configSeq:
+          type: integer
+          minimum: 1
+        issuedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        issuerId:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        signature:
+          type: string
+        signatureAlgorithm:
+          $ref: '#/components/schemas/SignatureAlgorithm'
+
+    ConfigApplyResult:
+      type: object
+      required: [applied]
+      properties:
+        applied:
+          type: boolean
+        reason:
+          type: string
+
+    CurrentConfigView:
+      type: object
+      required: [configSeq, configVersion]
+      properties:
+        configSeq:
+          type: integer
+        configVersion:
+          type: string
+        appliedAtUtc:
+          type: string
+          format: date-time
+
+    ConfigLedgerRecord:
+      type: object
+      required:
+        [configSeq, configVersion, appliedAtUtc, issuerId, payload, rolloutStatus, hash]
+      properties:
+        configSeq:
+          type: integer
+        configVersion:
+          type: string
+        appliedAtUtc:
+          type: string
+          format: date-time
+        issuerId:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        diffFromPrevious:
+          type: string
+        previousConfigSeq:
+          type: integer
+        approvalTicket:
+          type: string
+        rolloutStatus:
+          type: string
+          enum: [pending, promoting, halted, rolled_back, completed]
+        hash:
+          type: string
+        previousHash:
+          type: string
+
+    ConfigDiffPreviewView:
+      type: object
+      required:
+        [current_config_seq, target_config_seq, added_keys, modified_keys, removed_keys, hash_fingerprint]
+      properties:
+        current_config_seq:
+          type: integer
+          minimum: 0
+        target_config_seq:
+          type: integer
+          minimum: 0
+        added_keys:
+          type: array
+          items:
+            type: string
+        modified_keys:
+          type: array
+          items:
+            type: string
+        removed_keys:
+          type: array
+          items:
+            type: string
+        hash_fingerprint:
+          type: string
+
+    FullConfigDiff:
+      type: object
+      required: [added_keys, modified_keys, removed_keys]
+      properties:
+        added_keys:
+          type: array
+          items:
+            type: string
+        modified_keys:
+          type: array
+          items:
+            type: string
+        removed_keys:
+          type: array
+          items:
+            type: string
+
+    ActiveConfigIntegrityStatus:
+      type: string
+      enum: [verified, expiry_approaching, invalid_or_expired]
+
+    ActiveConfigIntegrityView:
+      type: object
+      required:
+        [
+          config_seq,
+          config_version,
+          issuer,
+          signature_validity,
+          expires_at_utc,
+          expiry_countdown_seconds,
+          hash_fingerprint,
+          full_diff_from_previous,
+          integrity_status
+        ]
+      properties:
+        config_seq:
+          type: integer
+          minimum: 0
+        config_version:
+          type: string
+        issuer:
+          type: string
+        signature_validity:
+          type: boolean
+        expires_at_utc:
+          type: string
+          format: date-time
+        expiry_countdown_seconds:
+          type: integer
+        hash_fingerprint:
+          type: string
+        full_diff_from_previous:
+          $ref: '#/components/schemas/FullConfigDiff'
+        integrity_status:
+          $ref: '#/components/schemas/ActiveConfigIntegrityStatus'
+
+    RolloutTransition:
+      type: object
+      required: [changed, idempotent, from, to, atUtc, reason]
+      properties:
+        changed:
+          type: boolean
+        idempotent:
+          type: boolean
+        from:
+          $ref: '#/components/schemas/RolloutState'
+        to:
+          $ref: '#/components/schemas/RolloutState'
+        atUtc:
+          type: string
+          format: date-time
+        reason:
+          type: string
+
+    RolloutStatusView:
+      type: object
+      required: [state, activeConfigSeq, updatedAtUtc]
+      properties:
+        state:
+          $ref: '#/components/schemas/RolloutState'
+        activeConfigSeq:
+          type: integer
+        targetCohort:
+          type: string
+        cooldownUntilUtc:
+          type: string
+          format: date-time
+        updatedAtUtc:
+          type: string
+          format: date-time
+
+    RollbackActionResult:
+      type: object
+      required: [state, actionTaken, rollbackApplied, reason, fromState, toState]
+      properties:
+        state:
+          $ref: '#/components/schemas/RolloutState'
+        actionTaken:
+          type: boolean
+        rollbackApplied:
+          type: boolean
+        reason:
+          type: string
+        fromState:
+          $ref: '#/components/schemas/RolloutState'
+        toState:
+          $ref: '#/components/schemas/RolloutState'
+        cooldownUntilUtc:
+          type: string
+          format: date-time
+
+    PredictedSLOImpact:
+      type: object
+      required: [error_rate_delta_pct, p99_latency_delta_ms, degradation_rate_delta_pct]
+      properties:
+        error_rate_delta_pct:
+          type: number
+        p99_latency_delta_ms:
+          type: number
+        degradation_rate_delta_pct:
+          type: number
+
+    RolloutDryRunView:
+      type: object
+      required:
+        [
+          blast_radius_node_count,
+          cohorts_impacted,
+          predicted_slo_impact,
+          rollout_stage_progression_preview,
+          generated_at_utc
+        ]
+      properties:
+        blast_radius_node_count:
+          type: integer
+          minimum: 0
+        cohorts_impacted:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortId'
+        predicted_slo_impact:
+          $ref: '#/components/schemas/PredictedSLOImpact'
+        rollout_stage_progression_preview:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutState'
+        generated_at_utc:
+          type: string
+          format: date-time
+
+    SLOMetrics:
+      type: object
+      required:
+        [windowStartUtc, windowEndUtc, cohortId, errorRatePct, p99LatencyMs, degradationRatePct, heartbeatGapIntervals]
+      properties:
+        windowStartUtc:
+          type: string
+          format: date-time
+        windowEndUtc:
+          type: string
+          format: date-time
+        cohortId:
+          type: string
+        errorRatePct:
+          type: number
+          minimum: 0
+        p99LatencyMs:
+          type: number
+          minimum: 0
+        degradationRatePct:
+          type: number
+          minimum: 0
+        heartbeatGapIntervals:
+          type: number
+          minimum: 0
+
+    AggregatedSLO:
+      type: object
+      required:
+        [windowStartUtc, windowEndUtc, cohortId, sampleCount, errorRatePct, p99LatencyMs, degradationRatePct, heartbeatGapIntervals]
+      properties:
+        windowStartUtc:
+          type: string
+          format: date-time
+        windowEndUtc:
+          type: string
+          format: date-time
+        cohortId:
+          type: string
+        sampleCount:
+          type: integer
+          minimum: 1
+        errorRatePct:
+          type: number
+          minimum: 0
+        p99LatencyMs:
+          type: number
+          minimum: 0
+        degradationRatePct:
+          type: number
+          minimum: 0
+        heartbeatGapIntervals:
+          type: number
+          minimum: 0
+
+    SLOGateDecisionView:
+      type: object
+      required: [breached, tripped, triggerAction, recovered, aggregated, rolloutState]
+      properties:
+        breached:
+          type: boolean
+        tripped:
+          type: boolean
+        triggerAction:
+          type: boolean
+        recovered:
+          type: boolean
+        aggregated:
+          $ref: '#/components/schemas/AggregatedSLO'
+        rolloutState:
+          $ref: '#/components/schemas/RolloutState'
+        autoAction:
+          $ref: '#/components/schemas/RollbackActionResult'
+
+    NodeSnapshotView:
+      type: object
+      required:
+        [node_id, cohort, config_seq, signature_valid, last_heartbeat, degradation_state, SLO_compliance]
+      properties:
+        node_id:
+          type: string
+          format: uuid
+        cohort:
+          $ref: '#/components/schemas/CohortId'
+        config_seq:
+          type: integer
+          minimum: 0
+        signature_valid:
+          type: boolean
+        last_heartbeat:
+          type: string
+          format: date-time
+        degradation_state:
+          type: string
+          enum: [normal, degraded, safe]
+        SLO_compliance:
+          type: string
+          enum: [compliant, breach]
+
+    AdapterActivationControls:
+      type: object
+      required:
+        [feature_adapter_enabled, allowed_cohorts, rate_limit, circuit_breaker_threshold, schema_version]
+      properties:
+        feature_adapter_enabled:
+          type: boolean
+        allowed_cohorts:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CohortId'
+        rate_limit:
+          type: integer
+          minimum: 1
+        circuit_breaker_threshold:
+          type: integer
+          minimum: 1
+        schema_version:
+          type: string
+
+    AdapterActivationControlsUpdate:
+      allOf:
+        - $ref: '#/components/schemas/AdapterActivationControls'
+
+    AdapterActivationControlsView:
+      allOf:
+        - $ref: '#/components/schemas/AdapterActivationControls'
+        - type: object
+          required: [feature_gate_enabled, rollout_state, updated_at_utc]
+          properties:
+            feature_gate_enabled:
+              type: boolean
+            rollout_state:
+              $ref: '#/components/schemas/RolloutState'
+            updated_at_utc:
+              type: string
+              format: date-time
+
+    CircuitBreakerState:
+      type: string
+      enum: [CLOSED, OPEN, HALF_OPEN]
+
+    AdapterCohortObservabilityRow:
+      type: object
+      required:
+        [cohort, adapter_error_rate_pct, adapter_latency_ms, circuit_breaker_state, sampled_at_utc]
+      properties:
+        cohort:
+          $ref: '#/components/schemas/CohortId'
+        adapter_error_rate_pct:
+          type: number
+          minimum: 0
+        adapter_latency_ms:
+          type: number
+          minimum: 0
+        circuit_breaker_state:
+          $ref: '#/components/schemas/CircuitBreakerState'
+        sampled_at_utc:
+          type: string
+          format: date-time
+
+    AdapterReplayLogRow:
+      type: object
+      required: [event_id, cohort, timestamp_utc, action, outcome, correlation_id]
+      properties:
+        event_id:
+          type: string
+        cohort:
+          $ref: '#/components/schemas/CohortId'
+        timestamp_utc:
+          type: string
+          format: date-time
+        action:
+          type: string
+        outcome:
+          type: string
+        correlation_id:
+          type: string
+
+    AdapterPromotionStage:
+      type: string
+      enum: [CANARY, LIMITED, MAJORITY, FULL]
+
+    AdapterPromotionPathView:
+      type: object
+      required:
+        [
+          stage,
+          next_stage,
+          advanced,
+          allowed_to_advance,
+          guard_reasons,
+          rollout_state,
+          cooldown_active,
+          updated_at_utc
+        ]
+      properties:
+        stage:
+          $ref: '#/components/schemas/AdapterPromotionStage'
+        next_stage:
+          oneOf:
+            - $ref: '#/components/schemas/AdapterPromotionStage'
+            - type: 'null'
+        advanced:
+          type: boolean
+        allowed_to_advance:
+          type: boolean
+        guard_reasons:
+          type: array
+          items:
+            type: string
+        rollout_state:
+          $ref: '#/components/schemas/RolloutState'
+        cooldown_active:
+          type: boolean
+        updated_at_utc:
+          type: string
+          format: date-time
+
+    AuditEvent:
+      type: object
+      required: [eventId, actorId, action, target, occurredAtUtc]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        actorId:
+          type: string
+        action:
+          type: string
+        target:
+          type: string
+        occurredAtUtc:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+              - type: 'null'
+
+    AuditLedgerRow:
+      type: object
+      required:
+        [action, actor, timestamp, cohort, previous_state, resulting_state, correlation_id]
+      properties:
+        action:
+          type: string
+        actor:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        cohort:
+          type: string
+        previous_state:
+          type: string
+        resulting_state:
+          type: string
+        correlation_id:
+          type: string
