@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
+    "render:prep-git-auth": "git config --global url.\"https://${GITHUB_TOKEN}@github.com/\".insteadOf \"ssh://git@github.com/\" && git config --global url.\"https://${GITHUB_TOKEN}@github.com/\".insteadOf \"git@github.com:\"",
+    "render:build": "npm run render:prep-git-auth && npm install && npm run build",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "check": "tsc -p tsconfig.json --noEmit",
@@ -12,7 +14,7 @@
     "test": "vitest run --pool=threads --poolOptions.threads.singleThread"
   },
   "dependencies": {
-    "@porta/api-contracts": "git+https://github.com/PORTA-Tech/porta-api-contracts.git#v1.0.3",
+    "@porta/api-contracts": "github:PORTA-Tech/porta-api-contracts#cbd4c7e",
     "express": "^4.21.1"
   },
   "devDependencies": {
