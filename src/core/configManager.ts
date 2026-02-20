@@ -141,7 +141,9 @@ export function applySignedConfig(envelope: ConfigEnvelope, actorId: string): Ap
   }
 
   const previousSeq = runtimeState.currentConfigSeq;
+  const previousVersion = runtimeState.currentConfigVersion;
   runtimeState.previousConfigSeq = previousSeq;
+  runtimeState.previousConfigVersion = previousVersion;
   runtimeState.currentConfigSeq = envelope.configSeq;
   runtimeState.currentConfigVersion = envelope.configVersion;
   runtimeState.appliedAtUtc = new Date().toISOString();

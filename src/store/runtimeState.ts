@@ -6,6 +6,7 @@ export interface RuntimeState {
   currentConfigSeq: number;
   currentConfigVersion: string;
   previousConfigSeq?: number;
+  previousConfigVersion?: string;
   appliedAtUtc?: string;
   rolloutState: RolloutState;
   cooldownUntilUtc?: string;
@@ -31,6 +32,7 @@ function toRuntimeState(raw: unknown): RuntimeState {
     currentConfigSeq: Number.isInteger(candidate.currentConfigSeq) ? Number(candidate.currentConfigSeq) : 0,
     currentConfigVersion: typeof candidate.currentConfigVersion === 'string' ? candidate.currentConfigVersion : 'bootstrap',
     previousConfigSeq: Number.isInteger(candidate.previousConfigSeq) ? Number(candidate.previousConfigSeq) : undefined,
+    previousConfigVersion: typeof candidate.previousConfigVersion === 'string' ? candidate.previousConfigVersion : undefined,
     appliedAtUtc: typeof candidate.appliedAtUtc === 'string' ? candidate.appliedAtUtc : undefined,
     rolloutState: typeof candidate.rolloutState === 'string' ? (candidate.rolloutState as RolloutState) : 'IDLE',
     cooldownUntilUtc: typeof candidate.cooldownUntilUtc === 'string' ? candidate.cooldownUntilUtc : undefined
