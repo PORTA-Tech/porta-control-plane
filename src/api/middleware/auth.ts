@@ -25,7 +25,9 @@ const routePolicies: RoutePolicy[] = [
   { method: 'POST', path: /^\/v1\/rollout\/rollback$/, roles: roleSet('operator') },
   { method: 'POST', path: /^\/v1\/slo\/evaluate$/, roles: roleSet('operator') },
   { method: 'GET', path: /^\/v1\/audit\/events$/, roles: roleSet('admin') },
-  { method: 'GET', path: /^\/v1\/audit\/rollout-events$/, roles: roleSet('admin') }
+  { method: 'GET', path: /^\/v1\/audit\/rollout-events$/, roles: roleSet('admin') },
+  { method: 'GET', path: /^\/v1\/audit\/outbox\/status$/, roles: roleSet('admin') },
+  { method: 'POST', path: /^\/v1\/audit\/outbox\/dispatch$/, roles: roleSet('admin') }
 ];
 
 const allowedRoles = roleSet('viewer', 'operator', 'admin');

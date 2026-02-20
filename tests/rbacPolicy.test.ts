@@ -58,4 +58,18 @@ describe('rbac policy', () => {
     const adminResponse = await withHeaders(request(app).get('/v1/audit/events'), 'admin');
     expect(adminResponse.status).toBe(200);
   });
+
+  it('allows only admin to query and dispatch outbox endpoints', async () => {
+    const operatorStatus = await withHeaders(request(app).get('/v1/audit/outbox/status'), 'operator');
+    expect(operatorStatus.status).toBe(403);
+
+    const adminStatus = await withHeaders(request(app).get('/v1/audit/outbox/status'), 'admin');
+    expect(adminStatus.status).toBe(200);
+
+    const operatorDispatch = await withHeaders(request(app).post('/v1/audit/outbox/dispatch'), 'operator');
+    expect(operatorDispatch.status).toBe(403);
+
+    const adminDispatch = await withHeaders(request(app).post('/v1/audit/outbox/dispatch'), 'admin');
+    expect(adminDispatch.status).toBe(200);
+  });
 });

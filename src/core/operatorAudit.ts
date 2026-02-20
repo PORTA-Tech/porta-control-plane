@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { AuditEvent } from '@porta/api-contracts';
+import { enqueueAuditOutboxEvent } from './outbox.js';
 
 const auditPath = path.resolve('.data', 'operator-audit.ndjson');
 
@@ -22,6 +23,7 @@ export function appendOperatorAuditEvent(
   };
 
   fs.appendFileSync(auditPath, JSON.stringify(event) + '\n');
+  enqueueAuditOutboxEvent(event);
   return event;
 }
 
