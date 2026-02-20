@@ -12,7 +12,7 @@
     "test": "vitest run --pool=threads --poolOptions.threads.singleThread"
   },
   "dependencies": {
-    "@porta/api-contracts": "github:PORTA-Tech/porta-api-contracts#v1.0.2",
+    "@porta/api-contracts": "git+https://github.com/PORTA-Tech/porta-api-contracts.git#v1.0.3",
     "express": "^4.21.1"
   },
   "devDependencies": {
