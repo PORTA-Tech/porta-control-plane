@@ -18,10 +18,9 @@ export function appendLedgerRecord(record: Omit<ConfigLedgerRecord, 'hash'>): Co
   fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
   const ledger = readLedger();
   const previous = ledger.at(-1);
-  const normalized: Omit<ConfigLedgerRecord, 'hash'> = {
-    ...record,
-    previousHash: record.previousHash ?? previous?.hash
-  };
+  const inheritedPreviousHash = record.previousHash ?? previous?.hash;
+  const normalized: Omit<ConfigLedgerRecord, 'hash'> =
+    inheritedPreviousHash === undefined ? record : { ...record, previousHash: inheritedPreviousHash };
 
   const full: ConfigLedgerRecord = {
     ...normalized,
@@ -52,6 +51,9 @@ export function verifyLedgerIntegrity(): LedgerIntegrityResult {
   const ledger = readLedger();
   for (let i = 0; i < ledger.length; i++) {
     const item = ledger[i];
+    if (!item) {
+      return { ok: false, index: i, reason: 'broken_chain' };
+    }
     const expectedHash = recordHash(withoutHash(item));
     if (item.hash !== expectedHash) {
       return { ok: false, index: i, reason: 'hash_mismatch' };
@@ -65,7 +67,11 @@ export function verifyLedgerIntegrity(): LedgerIntegrityResult {
       continue;
     }
 
-    const expectedPrevious = ledger[i - 1].hash;
+    const previous = ledger[i - 1];
+    if (!previous) {
+      return { ok: false, index: i, reason: 'broken_chain' };
+    }
+    const expectedPrevious = previous.hash;
     if (item.previousHash !== expectedPrevious) {
       return { ok: false, index: i, reason: 'broken_chain' };
     }
@@ -83,16 +89,19 @@ export function buildLedgerRecord(
   diffFromPrevious?: string,
   approvalTicket?: string
 ): Omit<ConfigLedgerRecord, 'hash'> {
-  return {
+  const base: Omit<ConfigLedgerRecord, 'hash'> = {
     configSeq: envelope.configSeq,
     configVersion: envelope.configVersion,
     appliedAtUtc: new Date().toISOString(),
     issuerId,
     payload: envelope.payload,
-    previousConfigSeq,
-    previousHash,
-    diffFromPrevious,
-    approvalTicket,
     rolloutStatus
+  };
+  return {
+    ...base,
+    ...(previousConfigSeq !== undefined ? { previousConfigSeq } : {}),
+    ...(previousHash !== undefined ? { previousHash } : {}),
+    ...(diffFromPrevious !== undefined ? { diffFromPrevious } : {}),
+    ...(approvalTicket !== undefined ? { approvalTicket } : {})
   };
 }

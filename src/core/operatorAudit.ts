@@ -19,7 +19,7 @@ export function appendOperatorAuditEvent(
     action,
     target,
     occurredAtUtc: new Date().toISOString(),
-    metadata
+    ...(metadata !== undefined ? { metadata } : {})
   };
 
   fs.appendFileSync(auditPath, JSON.stringify(event) + '\n');

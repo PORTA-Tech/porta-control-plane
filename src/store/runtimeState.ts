@@ -5,14 +5,14 @@ import { RolloutState } from '@porta/api-contracts';
 export interface RuntimeState {
   currentConfigSeq: number;
   currentConfigVersion: string;
-  currentConfigIssuerId?: string;
-  currentConfigExpiresAtUtc?: string;
-  currentConfigSignatureValid?: boolean;
-  previousConfigSeq?: number;
-  previousConfigVersion?: string;
-  appliedAtUtc?: string;
+  currentConfigIssuerId: string | undefined;
+  currentConfigExpiresAtUtc: string | undefined;
+  currentConfigSignatureValid: boolean | undefined;
+  previousConfigSeq: number | undefined;
+  previousConfigVersion: string | undefined;
+  appliedAtUtc: string | undefined;
   rolloutState: RolloutState;
-  cooldownUntilUtc?: string;
+  cooldownUntilUtc: string | undefined;
   adapterControls: {
     featureAdapterEnabled: boolean;
     allowedCohorts: ('stable' | 'canary-1' | 'canary-5' | 'internal' | 'experimental')[];
@@ -28,7 +28,14 @@ const statePath = path.resolve('.data', 'runtime-state.json');
 const defaultState: RuntimeState = {
   currentConfigSeq: 0,
   currentConfigVersion: 'bootstrap',
+  currentConfigIssuerId: undefined,
+  currentConfigExpiresAtUtc: undefined,
+  currentConfigSignatureValid: undefined,
+  previousConfigSeq: undefined,
+  previousConfigVersion: undefined,
+  appliedAtUtc: undefined,
   rolloutState: 'IDLE',
+  cooldownUntilUtc: undefined,
   adapterControls: {
     featureAdapterEnabled: false,
     allowedCohorts: ['canary-1'],

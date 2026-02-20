@@ -79,7 +79,7 @@ function secondsUntil(iso?: string): number {
 function integrityStatus(input: {
   signatureValidity: boolean;
   expiryCountdownSeconds: number;
-  expiresAtUtc?: string;
+  expiresAtUtc: string | undefined;
 }): 'verified' | 'expiry_approaching' | 'invalid_or_expired' {
   const expiryParsed = input.expiresAtUtc ? Date.parse(input.expiresAtUtc) : NaN;
   const expired = !Number.isFinite(expiryParsed) || expiryParsed <= Date.now();

@@ -38,7 +38,7 @@ const promotionOrder: AdapterPromotionStage[] = ['CANARY', 'LIMITED', 'MAJORITY'
 function nextStage(stage: AdapterPromotionStage): AdapterPromotionStage | null {
   const index = promotionOrder.indexOf(stage);
   if (index < 0 || index === promotionOrder.length - 1) return null;
-  return promotionOrder[index + 1];
+  return promotionOrder[index + 1] ?? null;
 }
 
 function allowedCohortsForStage(stage: AdapterPromotionStage): CohortId[] {

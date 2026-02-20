@@ -22,7 +22,7 @@ interface MetricSample {
 
 interface GateState {
   tripped: boolean;
-  healthySinceMs?: number;
+  healthySinceMs: number | undefined;
 }
 
 export interface AggregatedSLO {
@@ -134,7 +134,7 @@ export function evaluateSLOGates(metrics: SLOMetrics, actorId = 'system', nowMs 
   const breached = isOverThresholds(aggregated, config.trigger);
   const recoveryHealthy = !isOverThresholds(aggregated, config.recovery);
 
-  const previous = gateStateByCohort.get(cohortId) ?? { tripped: false };
+  const previous = gateStateByCohort.get(cohortId) ?? { tripped: false, healthySinceMs: undefined };
   let triggerAction = false;
   let recovered = false;
   const nextState: GateState = { ...previous };

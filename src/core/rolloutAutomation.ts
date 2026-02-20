@@ -9,7 +9,7 @@ export interface AutoRollbackResult {
   toState: string;
   rollbackApplied: boolean;
   reason: string;
-  cooldownUntilUtc?: string;
+  cooldownUntilUtc: string | undefined;
 }
 
 function revertToPreviousConfigIfAvailable(actorId: string, reason: string): boolean {
