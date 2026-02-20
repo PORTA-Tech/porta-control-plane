@@ -1,5 +1,6 @@
 ﻿import { RolloutState } from '@porta/api-contracts';
-import { runtimeState } from '../store/runtimeState.js';
+import { appendOperatorAuditEvent } from './operatorAudit.js';
+import { persistRuntimeState, runtimeState } from '../store/runtimeState.js';
 
 const allowedTransitions: Record<RolloutState, RolloutState[]> = {
   IDLE: ['PROMOTING', 'HALTED'],
@@ -10,24 +11,106 @@ const allowedTransitions: Record<RolloutState, RolloutState[]> = {
   COOLDOWN: ['IDLE']
 };
 
-export function transitionRolloutState(next: RolloutState): void {
-  const current = runtimeState.rolloutState;
-  if (!allowedTransitions[current].includes(next)) {
-    throw new Error(`Invalid rollout transition: ${current} -> ${next}`);
-  }
-  runtimeState.rolloutState = next;
+export interface RolloutTransitionResult {
+  changed: boolean;
+  idempotent: boolean;
+  from: RolloutState;
+  to: RolloutState;
+  atUtc: string;
+  reason: string;
 }
 
-export function setCooldown(minutes: number): void {
+export class RolloutTransitionError extends Error {
+  public readonly code = 'invalid_transition';
+  public readonly from: RolloutState;
+  public readonly to: RolloutState;
+
+  public constructor(from: RolloutState, to: RolloutState) {
+    super(`Invalid rollout transition: ${from} -> ${to}`);
+    this.from = from;
+    this.to = to;
+  }
+}
+
+function emitTransitionAudit(actorId: string, transition: RolloutTransitionResult): void {
+  appendOperatorAuditEvent(actorId, 'rollout.transition', 'rollout_state_machine', {
+    from: transition.from,
+    to: transition.to,
+    reason: transition.reason,
+    idempotent: transition.idempotent
+  });
+}
+
+export function transitionRolloutState(next: RolloutState, actorId: string, reason: string): RolloutTransitionResult {
+  const current = runtimeState.rolloutState;
+  const atUtc = new Date().toISOString();
+
+  if (current === next) {
+    const result: RolloutTransitionResult = {
+      changed: false,
+      idempotent: true,
+      from: current,
+      to: next,
+      atUtc,
+      reason
+    };
+
+    emitTransitionAudit(actorId, result);
+    return result;
+  }
+
+  if (!allowedTransitions[current].includes(next)) {
+    appendOperatorAuditEvent(actorId, 'rollout.transition_rejected', 'rollout_state_machine', {
+      from: current,
+      to: next,
+      reason,
+      code: 'invalid_transition'
+    });
+    throw new RolloutTransitionError(current, next);
+  }
+
+  runtimeState.rolloutState = next;
+  persistRuntimeState();
+
+  const result: RolloutTransitionResult = {
+    changed: true,
+    idempotent: false,
+    from: current,
+    to: next,
+    atUtc,
+    reason
+  };
+
+  emitTransitionAudit(actorId, result);
+  return result;
+}
+
+export function setCooldown(minutes: number, actorId: string, reason: string): RolloutTransitionResult {
   const until = new Date(Date.now() + minutes * 60_000).toISOString();
   runtimeState.cooldownUntilUtc = until;
-  runtimeState.rolloutState = 'COOLDOWN';
+  const result = transitionRolloutState('COOLDOWN', actorId, reason);
+  appendOperatorAuditEvent(actorId, 'rollout.cooldown_set', 'rollout_state_machine', {
+    cooldownUntilUtc: until,
+    minutes,
+    changed: result.changed
+  });
+  persistRuntimeState();
+  return result;
 }
 
-export function clearCooldownIfElapsed(): void {
-  if (!runtimeState.cooldownUntilUtc) return;
+export function clearCooldownIfElapsed(): RolloutTransitionResult | undefined {
+  if (!runtimeState.cooldownUntilUtc) {
+    return;
+  }
+
   if (Date.now() >= Date.parse(runtimeState.cooldownUntilUtc)) {
+    const previous = runtimeState.cooldownUntilUtc;
     runtimeState.cooldownUntilUtc = undefined;
-    runtimeState.rolloutState = 'IDLE';
+    const result = transitionRolloutState('IDLE', 'system', 'cooldown_elapsed');
+    appendOperatorAuditEvent('system', 'rollout.cooldown_cleared', 'rollout_state_machine', {
+      previousCooldownUntilUtc: previous
+    });
+    persistRuntimeState();
+    return result;
   }
 }
