@@ -3,11 +3,13 @@ import { setCooldown, transitionRolloutState } from './rolloutStateMachine.js';
 import { persistRuntimeState, runtimeState } from '../store/runtimeState.js';
 
 export interface AutoRollbackResult {
+  state: string;
   actionTaken: boolean;
   fromState: string;
   toState: string;
   rollbackApplied: boolean;
   reason: string;
+  cooldownUntilUtc?: string;
 }
 
 function revertToPreviousConfigIfAvailable(actorId: string, reason: string): boolean {
@@ -42,11 +44,13 @@ export function executeAutoHaltRollback(actorId: string, reason: string): AutoRo
 
   if (fromState === 'COOLDOWN' || fromState === 'ROLLED_BACK') {
     return {
+      state: fromState,
       actionTaken: false,
       fromState,
       toState: fromState,
       rollbackApplied: false,
-      reason
+      reason,
+      cooldownUntilUtc: runtimeState.cooldownUntilUtc
     };
   }
 
@@ -68,10 +72,12 @@ export function executeAutoHaltRollback(actorId: string, reason: string): AutoRo
   });
 
   return {
+    state: runtimeState.rolloutState,
     actionTaken: true,
     fromState,
     toState: runtimeState.rolloutState,
     rollbackApplied,
-    reason
+    reason,
+    cooldownUntilUtc: runtimeState.cooldownUntilUtc
   };
 }
