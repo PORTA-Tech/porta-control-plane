@@ -7,7 +7,9 @@ import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
 import { loadRuntimeState, resetRuntimeStateForTests } from '../src/store/runtimeState.js';
 
 const dataDir = path.resolve('.data');
-const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
+const request = (
+  (supertest as unknown as { default?: unknown }).default ?? supertest
+) as typeof import('supertest');
 const app = createApp();
 
 function withHeaders(req: supertest.Test, role: 'viewer' | 'operator' | 'admin'): supertest.Test {
