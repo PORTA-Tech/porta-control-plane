@@ -3,7 +3,7 @@ import { createConfigController } from './api/controllers/configController.js';
 import { createRolloutController } from './api/controllers/rolloutController.js';
 import { createSloController } from './api/controllers/sloController.js';
 import { createAuditController } from './api/controllers/auditController.js';
-import { requireAdmin, requireOperator } from './api/middleware/auth.js';
+import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middleware/auth.js';
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
 import { loadRuntimeState, runtimeState } from './store/runtimeState.js';
@@ -30,11 +30,11 @@ export function createApp(): Express {
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
-  app.use('/v1', requireOperator);
+  app.use('/v1', requireAuthenticatedOperator, enforceRbacPolicy);
   app.use('/v1/config', createConfigController());
   app.use('/v1/rollout', createRolloutController());
   app.use('/v1/slo', createSloController());
-  app.use('/v1/audit', requireAdmin, createAuditController());
+  app.use('/v1/audit', createAuditController());
 
   return app;
 }
