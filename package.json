@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "render:prep-git-auth": "sh -c 'test -n \"$GITHUB_TOKEN\" || (echo \"GITHUB_TOKEN is required\" && exit 1); git config --global url.\"https://x-access-token:${GITHUB_TOKEN}@github.com/\".insteadOf \"ssh://git@github.com/\"; git config --global url.\"https://x-access-token:${GITHUB_TOKEN}@github.com/\".insteadOf \"ssh://git@github.com\"; git config --global url.\"https://x-access-token:${GITHUB_TOKEN}@github.com/\".insteadOf \"git@github.com:\"; git config --global url.\"https://x-access-token:${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\"'",
-    "render:build": "npm run render:prep-git-auth && npm install --package-lock=false && npm run build",
+    "render:build": "sh -c 'test -n \"$GITHUB_TOKEN\" || (echo \"GITHUB_TOKEN is required\" && exit 1); node -e \"const fs=require(\\\"fs\\\");const p=require(\\\"./package.json\\\");p.dependencies[\\\"@porta/api-contracts\\\"]=\\\"git+https://x-access-token:\\\"+process.env.GITHUB_TOKEN+\\\"@github.com/PORTA-Tech/porta-api-contracts.git#cbd4c7e\\\";fs.writeFileSync(\\\"package.json\\\",JSON.stringify(p,null,2));\"; npm install --package-lock=false && npm run build'",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "check": "tsc -p tsconfig.json --noEmit",
