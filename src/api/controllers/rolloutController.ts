@@ -3,6 +3,79 @@ import { runtimeState } from '../../store/runtimeState.js';
 import { OperatorRequest } from '../middleware/auth.js';
 import { RolloutTransitionError, clearCooldownIfElapsed, transitionRolloutState } from '../../core/rolloutStateMachine.js';
 import { executeAutoHaltRollback } from '../../core/rolloutAutomation.js';
+import type { CohortId, RolloutState } from '@porta/api-contracts';
+
+function buildDryRunView(state: RolloutState): {
+  blast_radius_node_count: number;
+  cohorts_impacted: CohortId[];
+  predicted_slo_impact: {
+    error_rate_delta_pct: number;
+    p99_latency_delta_ms: number;
+    degradation_rate_delta_pct: number;
+  };
+  rollout_stage_progression_preview: RolloutState[];
+  generated_at_utc: string;
+} {
+  const viewByState: Record<
+    RolloutState,
+    {
+      blastRadius: number;
+      cohorts: CohortId[];
+      impact: { error: number; latency: number; degradation: number };
+      progression: RolloutState[];
+    }
+  > = {
+    IDLE: {
+      blastRadius: 10,
+      cohorts: ['canary-1'],
+      impact: { error: 0.08, latency: 14, degradation: 0.22 },
+      progression: ['PROMOTING', 'MONITORING', 'IDLE']
+    },
+    PROMOTING: {
+      blastRadius: 50,
+      cohorts: ['canary-1', 'canary-5'],
+      impact: { error: 0.17, latency: 26, degradation: 0.44 },
+      progression: ['MONITORING', 'IDLE']
+    },
+    MONITORING: {
+      blastRadius: 940,
+      cohorts: ['stable'],
+      impact: { error: 0.29, latency: 43, degradation: 0.71 },
+      progression: ['PROMOTING', 'MONITORING', 'IDLE']
+    },
+    HALTED: {
+      blastRadius: 940,
+      cohorts: ['stable'],
+      impact: { error: 0.51, latency: 88, degradation: 1.38 },
+      progression: ['ROLLED_BACK', 'COOLDOWN', 'IDLE']
+    },
+    ROLLED_BACK: {
+      blastRadius: 940,
+      cohorts: ['stable'],
+      impact: { error: -0.11, latency: -12, degradation: -0.31 },
+      progression: ['COOLDOWN', 'IDLE']
+    },
+    COOLDOWN: {
+      blastRadius: 0,
+      cohorts: [],
+      impact: { error: -0.05, latency: -8, degradation: -0.14 },
+      progression: ['IDLE']
+    }
+  };
+
+  const selected = viewByState[state];
+  return {
+    blast_radius_node_count: selected.blastRadius,
+    cohorts_impacted: selected.cohorts,
+    predicted_slo_impact: {
+      error_rate_delta_pct: selected.impact.error,
+      p99_latency_delta_ms: selected.impact.latency,
+      degradation_rate_delta_pct: selected.impact.degradation
+    },
+    rollout_stage_progression_preview: selected.progression,
+    generated_at_utc: new Date().toISOString()
+  };
+}
 
 export function createRolloutController(): Router {
   const router = Router();
@@ -15,6 +88,11 @@ export function createRolloutController(): Router {
       cooldownUntilUtc: runtimeState.cooldownUntilUtc,
       updatedAtUtc: new Date().toISOString()
     });
+  });
+
+  router.get('/dry-run', (_req, res) => {
+    clearCooldownIfElapsed();
+    res.json(buildDryRunView(runtimeState.rolloutState));
   });
 
   router.post('/promote', (req: OperatorRequest, res) => {

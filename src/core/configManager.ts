@@ -146,6 +146,9 @@ export function applySignedConfig(envelope: ConfigEnvelope, actorId: string): Ap
   runtimeState.previousConfigVersion = previousVersion;
   runtimeState.currentConfigSeq = envelope.configSeq;
   runtimeState.currentConfigVersion = envelope.configVersion;
+  runtimeState.currentConfigIssuerId = envelope.issuerId;
+  runtimeState.currentConfigExpiresAtUtc = envelope.expiresAt;
+  runtimeState.currentConfigSignatureValid = true;
   runtimeState.appliedAtUtc = new Date().toISOString();
   persistRuntimeState();
 

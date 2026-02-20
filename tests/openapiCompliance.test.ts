@@ -1,6 +1,6 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import request from 'supertest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as supertest from 'supertest';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import SwaggerParser from '@apidevtools/swagger-parser';
@@ -10,6 +10,7 @@ import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
 import { loadRuntimeState, resetRuntimeStateForTests, runtimeState } from '../src/store/runtimeState.js';
 
 const dataDir = path.resolve('.data');
+const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
 const app = createApp();
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
@@ -24,11 +25,11 @@ interface OpenApiDoc {
 
 let openApi: OpenApiDoc;
 
-function withOperatorHeaders(req: request.Test): request.Test {
+function withOperatorHeaders(req: supertest.Test): supertest.Test {
   return req.set('x-operator-id', 'operator-openapi').set('x-operator-role', 'operator');
 }
 
-function withAdminHeaders(req: request.Test): request.Test {
+function withAdminHeaders(req: supertest.Test): supertest.Test {
   return req.set('x-operator-id', 'admin-openapi').set('x-operator-role', 'admin');
 }
 
@@ -61,6 +62,7 @@ describe('openapi contract compliance', () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();
+    delete process.env.CONTROL_PLANE_ADAPTER_EXPANSION_ENABLED;
     loadRuntimeState();
   });
 
@@ -74,6 +76,12 @@ describe('openapi contract compliance', () => {
     const response = await withOperatorHeaders(request(app).get('/v1/rollout/state'));
     expect(response.status).toBe(200);
     assertSchema('/v1/rollout/state', 'get', 200, response.body);
+  });
+
+  it('GET /v1/rollout/dry-run matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/rollout/dry-run'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/rollout/dry-run', 'get', 200, response.body);
   });
 
   it('POST /v1/rollout/rollback (202) matches OpenAPI schema', async () => {
@@ -111,9 +119,81 @@ describe('openapi contract compliance', () => {
     assertSchema('/v1/slo/evaluate', 'post', 200, response.body);
   });
 
+  it('GET /v1/config/diff-preview matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/config/diff-preview'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/config/diff-preview', 'get', 200, response.body);
+  });
+
+  it('GET /v1/config/integrity-active matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/config/integrity-active'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/config/integrity-active', 'get', 200, response.body);
+  });
+
+  it('GET /v1/nodes/snapshot matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/nodes/snapshot'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/nodes/snapshot', 'get', 200, response.body);
+  });
+
+  it('GET /v1/adapter/controls matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/adapter/controls'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/adapter/controls', 'get', 200, response.body);
+  });
+
+  it('POST /v1/adapter/controls (200) matches OpenAPI schema', async () => {
+    process.env.CONTROL_PLANE_ADAPTER_EXPANSION_ENABLED = 'true';
+    runtimeState.rolloutState = 'PROMOTING';
+
+    const response = await withOperatorHeaders(
+      request(app).post('/v1/adapter/controls').send({
+        feature_adapter_enabled: true,
+        allowed_cohorts: ['canary-1'],
+        rate_limit: 100,
+        circuit_breaker_threshold: 5,
+        schema_version: '1.0.0'
+      })
+    );
+
+    expect(response.status).toBe(200);
+    assertSchema('/v1/adapter/controls', 'post', 200, response.body);
+  });
+
+  it('GET /v1/adapter/observability matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/adapter/observability'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/adapter/observability', 'get', 200, response.body);
+  });
+
+  it('GET /v1/adapter/replay-log matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/adapter/replay-log').query({ cohort: 'canary-1' }));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/adapter/replay-log', 'get', 200, response.body);
+  });
+
+  it('GET /v1/adapter/promotion-path matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/adapter/promotion-path'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/adapter/promotion-path', 'get', 200, response.body);
+  });
+
+  it('POST /v1/adapter/promotion-path matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).post('/v1/adapter/promotion-path'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/adapter/promotion-path', 'post', 200, response.body);
+  });
+
   it('GET /v1/audit/rollout-events matches OpenAPI schema', async () => {
     const response = await withAdminHeaders(request(app).get('/v1/audit/rollout-events'));
     expect(response.status).toBe(200);
     assertSchema('/v1/audit/rollout-events', 'get', 200, response.body);
+  });
+
+  it('GET /v1/audit/ledger-view matches OpenAPI schema', async () => {
+    const response = await withAdminHeaders(request(app).get('/v1/audit/ledger-view'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/audit/ledger-view', 'get', 200, response.body);
   });
 });

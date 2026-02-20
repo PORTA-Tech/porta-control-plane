@@ -3,6 +3,8 @@ import { createConfigController } from './api/controllers/configController.js';
 import { createRolloutController } from './api/controllers/rolloutController.js';
 import { createSloController } from './api/controllers/sloController.js';
 import { createAuditController } from './api/controllers/auditController.js';
+import { createNodeController } from './api/controllers/nodeController.js';
+import { createAdapterController } from './api/controllers/adapterController.js';
 import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middleware/auth.js';
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
@@ -34,6 +36,8 @@ export function createApp(): Express {
   app.use('/v1/config', createConfigController());
   app.use('/v1/rollout', createRolloutController());
   app.use('/v1/slo', createSloController());
+  app.use('/v1/nodes', createNodeController());
+  app.use('/v1/adapter', createAdapterController());
   app.use('/v1/audit', createAuditController());
 
   return app;

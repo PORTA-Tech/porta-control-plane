@@ -1,15 +1,16 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import request from 'supertest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as supertest from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
 import { loadRuntimeState, resetRuntimeStateForTests } from '../src/store/runtimeState.js';
 
 const dataDir = path.resolve('.data');
+const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
 const app = createApp();
 
-function withHeaders(req: request.Test, role: 'viewer' | 'operator' | 'admin'): request.Test {
+function withHeaders(req: supertest.Test, role: 'viewer' | 'operator' | 'admin'): supertest.Test {
   return req.set('x-operator-id', `${role}-user`).set('x-operator-role', role);
 }
 
@@ -36,8 +37,44 @@ describe('rbac policy', () => {
     const read = await withHeaders(request(app).get('/v1/rollout/state'), 'viewer');
     expect(read.status).toBe(200);
 
+    const dryRun = await withHeaders(request(app).get('/v1/rollout/dry-run'), 'viewer');
+    expect(dryRun.status).toBe(200);
+
+    const configDiff = await withHeaders(request(app).get('/v1/config/diff-preview'), 'viewer');
+    expect(configDiff.status).toBe(200);
+
+    const configIntegrity = await withHeaders(request(app).get('/v1/config/integrity-active'), 'viewer');
+    expect(configIntegrity.status).toBe(200);
+
+    const nodeSnapshotRead = await withHeaders(request(app).get('/v1/nodes/snapshot'), 'viewer');
+    expect(nodeSnapshotRead.status).toBe(200);
+
+    const adapterControlsRead = await withHeaders(request(app).get('/v1/adapter/controls'), 'viewer');
+    expect(adapterControlsRead.status).toBe(200);
+
+    const adapterObservabilityRead = await withHeaders(request(app).get('/v1/adapter/observability'), 'viewer');
+    expect(adapterObservabilityRead.status).toBe(200);
+
+    const adapterReplayRead = await withHeaders(request(app).get('/v1/adapter/replay-log').query({ cohort: 'canary-1' }), 'viewer');
+    expect(adapterReplayRead.status).toBe(200);
+
+    const adapterPromotionRead = await withHeaders(request(app).get('/v1/adapter/promotion-path'), 'viewer');
+    expect(adapterPromotionRead.status).toBe(200);
+
     const write = await withHeaders(request(app).post('/v1/rollout/rollback'), 'viewer');
     expect(write.status).toBe(403);
+
+    const adapterControlsWrite = await withHeaders(request(app).post('/v1/adapter/controls').send({
+      feature_adapter_enabled: false,
+      allowed_cohorts: ['canary-1'],
+      rate_limit: 100,
+      circuit_breaker_threshold: 5,
+      schema_version: '1.0.0'
+    }), 'viewer');
+    expect(adapterControlsWrite.status).toBe(403);
+
+    const adapterPromotionWrite = await withHeaders(request(app).post('/v1/adapter/promotion-path'), 'viewer');
+    expect(adapterPromotionWrite.status).toBe(403);
   });
 
   it('allows operator to execute rollback', async () => {
@@ -57,6 +94,12 @@ describe('rbac policy', () => {
 
     const adminResponse = await withHeaders(request(app).get('/v1/audit/events'), 'admin');
     expect(adminResponse.status).toBe(200);
+
+    const operatorLedgerResponse = await withHeaders(request(app).get('/v1/audit/ledger-view'), 'operator');
+    expect(operatorLedgerResponse.status).toBe(403);
+
+    const adminLedgerResponse = await withHeaders(request(app).get('/v1/audit/ledger-view'), 'admin');
+    expect(adminLedgerResponse.status).toBe(200);
   });
 
   it('allows only admin to query and dispatch outbox endpoints', async () => {
