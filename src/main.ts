@@ -5,12 +5,25 @@ import { createSloController } from './api/controllers/sloController.js';
 import { createAuditController } from './api/controllers/auditController.js';
 import { requireAdmin, requireOperator } from './api/middleware/auth.js';
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
+import { verifyLedgerIntegrity } from './core/auditLedger.js';
+import { loadRuntimeState, runtimeState } from './store/runtimeState.js';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
 const startupIdentity = refreshInstanceId(loadOrCreateNodeIdentity());
-console.log(`[control-plane] node_id=${startupIdentity.nodeId} cluster_id=${startupIdentity.clusterId} instance_id=${startupIdentity.instanceId} cohort=${startupIdentity.cohortId}`);
+const state = loadRuntimeState();
+const integrity = verifyLedgerIntegrity();
+if (!integrity.ok) {
+  throw new Error(`Ledger integrity check failed at index=${integrity.index} reason=${integrity.reason}`);
+}
+
+console.log(
+  `[control-plane] node_id=${startupIdentity.nodeId} cluster_id=${startupIdentity.clusterId} instance_id=${startupIdentity.instanceId} cohort=${startupIdentity.cohortId}`
+);
+console.log(
+  `[control-plane] config_seq=${state.currentConfigSeq} config_version=${state.currentConfigVersion} rollout_state=${runtimeState.rolloutState}`
+);
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
