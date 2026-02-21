@@ -10,6 +10,13 @@ import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
 import { loadRuntimeState, runtimeState } from './store/runtimeState.js';
 
+const defaultAllowedOrigins = ['https://porta-operations-console.onrender.com', 'http://localhost:5173'];
+
+function getAllowedOrigins(): Set<string> {
+  const configured = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
+  return new Set(configured.length > 0 ? configured : defaultAllowedOrigins);
+}
+
 export function initializeControlPlane(): void {
   const startupIdentity = refreshInstanceId(loadOrCreateNodeIdentity());
   const state = loadRuntimeState();
@@ -28,6 +35,25 @@ export function initializeControlPlane(): void {
 
 export function createApp(): Express {
   const app = express();
+  const allowedOrigins = getAllowedOrigins();
+
+  app.use((req, res, next) => {
+    const origin = req.header('origin');
+    if (origin && allowedOrigins.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,x-operator-id,x-operator-role,Authorization');
+    }
+
+    if (req.method.toUpperCase() === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+
+    next();
+  });
+
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
