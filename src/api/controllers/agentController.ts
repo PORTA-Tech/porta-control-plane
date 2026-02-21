@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { runtimeState } from '../../store/runtimeState.js';
 
 interface AgentStatusPayload {
   agentId?: string;
@@ -13,6 +14,9 @@ interface AgentPresenceRow {
   lastHeartbeatUtc: string;
   heartbeatCount: number;
   lastNote?: string;
+  configSeq: number;
+  configVersion: string;
+  signatureValidity: boolean;
 }
 
 const agentPresence = new Map<string, AgentPresenceRow>();
@@ -35,11 +39,22 @@ export function createAgentController(): Router {
       agentId,
       lastHeartbeatUtc: typeof payload.timestampUtc === 'string' && payload.timestampUtc.length > 0 ? payload.timestampUtc : now,
       heartbeatCount: (existing?.heartbeatCount ?? 0) + 1,
+      configSeq: runtimeState.currentConfigSeq,
+      configVersion: runtimeState.currentConfigVersion,
+      signatureValidity: runtimeState.currentConfigSignatureValid ?? false,
       ...(typeof payload.note === 'string' && payload.note.length > 0 ? { lastNote: payload.note } : {})
     };
 
     agentPresence.set(agentId, record);
-    res.status(202).json({ accepted: true, agentId, heartbeatCount: record.heartbeatCount });
+    res.status(202).json({
+      accepted: true,
+      agentId,
+      heartbeatCount: record.heartbeatCount,
+      config_seq: runtimeState.currentConfigSeq,
+      config_version: runtimeState.currentConfigVersion,
+      signature_validity: runtimeState.currentConfigSignatureValid ?? false,
+      applied_at_utc: runtimeState.appliedAtUtc
+    });
   });
 
   router.post('/telemetry', (req, res) => {
