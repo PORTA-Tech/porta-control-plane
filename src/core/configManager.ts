@@ -1,4 +1,6 @@
-﻿import crypto from 'node:crypto';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { ConfigEnvelope } from '@porta/api-contracts';
 import { runtimeState, persistRuntimeState } from '../store/runtimeState.js';
 import { appendLedgerRecord, buildLedgerRecord, readLedger } from './auditLedger.js';
@@ -21,12 +23,15 @@ export interface ApplyResult {
 
 function parseTrustedIssuers(): Set<string> {
   const raw = process.env.CONTROL_PLANE_TRUSTED_ISSUERS ?? '';
-  return new Set(
-    raw
-      .split(',')
-      .map((v) => v.trim())
-      .filter(Boolean)
-  );
+  const configured = raw
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  if (configured.length > 0) {
+    return new Set(configured);
+  }
+
+  return new Set(['control-plane']);
 }
 
 function parseClockSkewMs(): number {
@@ -36,7 +41,19 @@ function parseClockSkewMs(): number {
 
 function parsePublicKey(): string | undefined {
   const value = process.env.CONTROL_PLANE_PUBLIC_KEY_PEM;
-  return value && value.trim().length > 0 ? value : undefined;
+  if (value && value.trim().length > 0) {
+    return value;
+  }
+
+  const fallbackPath = path.resolve('signer-public.pem');
+  if (fs.existsSync(fallbackPath)) {
+    const pem = fs.readFileSync(fallbackPath, 'utf8').trim();
+    if (pem.length > 0) {
+      return pem;
+    }
+  }
+
+  return undefined;
 }
 
 function canonicalPayload(envelope: ConfigEnvelope): string {
@@ -155,3 +172,4 @@ export function applySignedConfig(envelope: ConfigEnvelope, actorId: string): Ap
   appendDecision(envelope, actorId, 'accepted', true);
   return { applied: true };
 }
+
