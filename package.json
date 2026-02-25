@@ -10,7 +10,8 @@
     "start": "node dist/main.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --pool=threads --poolOptions.threads.singleThread"
+    "test": "vitest run --pool=threads --poolOptions.threads.singleThread",
+    "step16:load": "node ./scripts/step16-policy-load.mjs"
   },
   "dependencies": {
     "@porta/api-contracts": "file:vendor/api-contracts-local",
