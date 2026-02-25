@@ -1,16 +1,127 @@
-﻿# porta-control-plane
+﻿# PORTA Control Plane
 
-Backend-first fleet control plane (Phase 8A).
+Central governance and decision service for PORTA.
 
-## Scope
-- Deterministic node identity
-- Signed config envelope validation
-- Monotonic `config_seq` anti-replay
-- Immutable append-only audit ledger (hash chained)
-- Rollout state machine + operator API
+This service ingests typed data, evaluates deterministic policies, emits signed intervention commands, keeps append-only audit traces, and exposes operator APIs for rollout/governance.
 
-## Run
-1. `npm install`
-2. `npm run dev`
+## What This Repository Owns
 
-Default port: `8787`
+- Typed ingestion and schema-aware processing
+- Deterministic policy evaluation runtime
+- Signed intervention command generation
+- Decision trace persistence and replay verification
+- Audit/alert endpoints and observability metrics
+- RBAC enforcement on all `/v1/*` APIs
+- Rollout/config integrity surfaces used by the console
+
+## Implemented Scope (Steps)
+
+- Step 8: policy model + signing/verification path foundations
+- Step 9: control-plane ingestion + version validation + structured storage
+- Step 10: deterministic policy execution loop and state mutation model
+- Step 11: audit/governance model (traceability, RBAC, retention controls)
+- Step 15: observability + alerts and correlation coverage
+- Step 16: hardening/load harness for rollout validation
+
+## Runtime Stack
+
+- Node.js + Express (TypeScript)
+- Local persistence under `.data/` for runtime artifacts
+- Ed25519 signing for policy/intervention trust checks
+- SHA-256 canonical hashing for replay/integrity
+
+## API Surface (High Level)
+
+- `GET /health`
+- `POST /v1/policy/evaluate`
+- `GET /v1/policy/state/:environment/:service`
+- `GET/POST /v1/config/*`
+- `GET/POST /v1/rollout/*`
+- `GET /v1/nodes/snapshot`
+- `GET/POST /v1/adapter/*`
+- `GET/POST /v1/audit/*`
+
+All `/v1/*` routes require:
+
+- `x-operator-id`
+- `x-operator-role`
+
+RBAC roles include `viewer`, `operator`, `admin`, `auditor`, `developer`, `agent`, with route-level policy checks.
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js 20+
+- npm
+
+### Install
+
+```bash
+npm install
+```
+
+### Run in dev mode
+
+```bash
+npm run dev
+```
+
+Default port: `8787` (`PORT` env overrides).
+
+### Build and run
+
+```bash
+npm run build
+npm run start
+```
+
+### Type-check and tests
+
+```bash
+npm run check
+npm run test
+```
+
+### Step 16 policy load smoke
+
+```bash
+npm run step16:load
+```
+
+Optional env:
+
+- `CONTROL_PLANE_BASE_URL`
+- `STEP16_ROUNDS`
+- `STEP16_OPERATOR_ID`
+- `STEP16_OPERATOR_ROLE`
+
+## Runtime Data Files
+
+Artifacts are stored in `.data/`:
+
+- `policy-engine-state.json`
+- `audit-decision-traces.ndjson`
+- `signed-intervention-commands.ndjson`
+- `audit-alerts.ndjson`
+- `audit-observability-metrics.json`
+
+## Security Notes
+
+- Use TLS termination in deployment
+- Treat signing keys as secrets; dev keys in repo are for local controlled testing only
+- Keep CORS restricted (`CORS_ALLOWED_ORIGINS`)
+- Default headers include HSTS/CSP/nosniff/frame deny/referrer policy
+
+## Docs
+
+- `docs/step15-observability-alerts.md`
+- `docs/step16-hardening-rollout.md`
+
+## Boundaries
+
+This repo does not own:
+
+- Windows endpoint capture/tray execution: `porta-agent-windows-x64`
+- Operator frontend rendering: `porta-operations-console`
+- Shared contracts package: `porta-api-contracts`
