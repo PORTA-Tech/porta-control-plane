@@ -6,6 +6,7 @@ import { createAuditController } from './api/controllers/auditController.js';
 import { createNodeController } from './api/controllers/nodeController.js';
 import { createAdapterController } from './api/controllers/adapterController.js';
 import { createAgentController } from './api/controllers/agentController.js';
+import { createPolicyController } from './api/controllers/policyController.js';
 import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middleware/auth.js';
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
@@ -68,6 +69,7 @@ export function createApp(): Express {
   app.use('/v1/nodes', createNodeController());
   app.use('/v1/adapter', createAdapterController());
   app.use('/v1/audit', createAuditController());
+  app.use('/v1/policy', createPolicyController());
 
   return app;
 }

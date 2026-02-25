@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { readLedger } from '../../core/auditLedger.js';
 import { readOperatorAuditEvents } from '../../core/operatorAudit.js';
 import { dispatchOutbox, getOutboxStatus } from '../../core/outbox.js';
+import { readAuditMetrics, readDecisionTraces, replayDecisionTrace } from '../../core/policyGovernanceStore.js';
 
 type AuditLedgerRow = {
   action: string;
@@ -96,6 +97,25 @@ export function createAuditController(): Router {
     const maxRaw = Number(req.query.max ?? 100);
     const max = Number.isFinite(maxRaw) ? Math.max(1, Math.min(5000, Math.trunc(maxRaw))) : 100;
     res.json(dispatchOutbox(max));
+  });
+
+  router.get('/decision-traces', (req, res) => {
+    const limitRaw = Number(req.query.limit ?? 200);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(5000, Math.trunc(limitRaw))) : 200;
+    res.json(readDecisionTraces(limit));
+  });
+
+  router.post('/replay/verify', (req, res) => {
+    const traceId = typeof req.body?.trace_id === 'string' ? req.body.trace_id : '';
+    if (!traceId) {
+      res.status(400).json({ error: 'trace_id_required' });
+      return;
+    }
+    res.json(replayDecisionTrace(traceId));
+  });
+
+  router.get('/metrics', (_req, res) => {
+    res.json(readAuditMetrics());
   });
 
   return router;
