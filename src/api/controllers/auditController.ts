@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { readLedger } from '../../core/auditLedger.js';
 import { readOperatorAuditEvents } from '../../core/operatorAudit.js';
 import { dispatchOutbox, getOutboxStatus } from '../../core/outbox.js';
-import { readAuditMetrics, readDecisionTraces, replayDecisionTrace } from '../../core/policyGovernanceStore.js';
+import { readActiveAlerts, readAlertHistory, readAuditMetrics, readDecisionTraces, replayDecisionTrace, resolveAlert } from '../../core/policyGovernanceStore.js';
 
 type AuditLedgerRow = {
   action: string;
@@ -116,6 +116,33 @@ export function createAuditController(): Router {
 
   router.get('/metrics', (_req, res) => {
     res.json(readAuditMetrics());
+  });
+
+  router.get('/alerts', (req, res) => {
+    const limitRaw = Number(req.query.limit ?? 200);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(5000, Math.trunc(limitRaw))) : 200;
+    const includeHistory = String(req.query.include_history ?? 'false').toLowerCase() === 'true';
+    if (includeHistory) {
+      res.json(readAlertHistory(limit));
+      return;
+    }
+    res.json(readActiveAlerts(limit));
+  });
+
+  router.post('/alerts/:alertId/resolve', (req, res) => {
+    const alertId = String(req.params.alertId ?? '').trim();
+    if (!alertId) {
+      res.status(400).json({ error: 'alert_id_required' });
+      return;
+    }
+
+    const resolved = resolveAlert(alertId);
+    if (!resolved) {
+      res.status(404).json({ error: 'alert_not_found' });
+      return;
+    }
+
+    res.json(resolved);
   });
 
   return router;

@@ -19,6 +19,7 @@ export interface PolicyEvaluationRequest {
   region?: string;
   metrics: PolicyMetricSample[];
   timestamp?: string;
+  correlation_id?: string;
   kill_switch_enabled?: boolean;
 }
 
@@ -276,6 +277,7 @@ function evaluatePoliciesSorted(): ExecutionPolicy[] {
 export function evaluatePolicyEngine(request: PolicyEvaluationRequest): PolicyEvaluationResponse {
   const now = request.timestamp ?? new Date().toISOString();
   const nowMs = Date.parse(now);
+  const correlationId = request.correlation_id ?? deterministicUuid(`corr:${request.environment}:${request.service ?? 'all'}:${now}`);
   const killSwitch = request.kill_switch_enabled ?? true;
   const state = loadState();
 
@@ -303,6 +305,7 @@ export function evaluatePolicyEngine(request: PolicyEvaluationRequest): PolicyEv
       blocked.push(policy.policy_id);
       appendDecisionTrace({
         trace_id: deterministicUuid(`${policy.policy_id}:${now}:blocked:missing_metric`),
+        correlation_id: correlationId,
         timestamp: now,
         policy_id: policy.policy_id,
         state_version: serviceState?.version ?? 0,
@@ -324,6 +327,7 @@ export function evaluatePolicyEngine(request: PolicyEvaluationRequest): PolicyEv
       blocked.push(policy.policy_id);
       appendDecisionTrace({
         trace_id: deterministicUuid(`${policy.policy_id}:${now}:skip:condition`),
+        correlation_id: correlationId,
         timestamp: now,
         policy_id: policy.policy_id,
         state_version: serviceState.version,
@@ -346,6 +350,7 @@ export function evaluatePolicyEngine(request: PolicyEvaluationRequest): PolicyEv
       blocked.push(policy.policy_id);
       appendDecisionTrace({
         trace_id: deterministicUuid(`${policy.policy_id}:${now}:blocked:killswitch`),
+        correlation_id: correlationId,
         timestamp: now,
         policy_id: policy.policy_id,
         state_version: serviceState.version,
@@ -364,6 +369,7 @@ export function evaluatePolicyEngine(request: PolicyEvaluationRequest): PolicyEv
       blocked.push(policy.policy_id);
       appendDecisionTrace({
         trace_id: deterministicUuid(`${policy.policy_id}:${now}:cooldown`),
+        correlation_id: correlationId,
         timestamp: now,
         policy_id: policy.policy_id,
         state_version: serviceState.version,
@@ -383,6 +389,7 @@ export function evaluatePolicyEngine(request: PolicyEvaluationRequest): PolicyEv
       blocked.push(policy.policy_id);
       appendDecisionTrace({
         trace_id: deterministicUuid(`${policy.policy_id}:${now}:blocked:hourly_cap`),
+        correlation_id: correlationId,
         timestamp: now,
         policy_id: policy.policy_id,
         state_version: serviceState.version,
@@ -401,6 +408,7 @@ export function evaluatePolicyEngine(request: PolicyEvaluationRequest): PolicyEv
       blocked.push(policy.policy_id);
       appendDecisionTrace({
         trace_id: deterministicUuid(`${policy.policy_id}:${now}:blocked:global_cap`),
+        correlation_id: correlationId,
         timestamp: now,
         policy_id: policy.policy_id,
         state_version: serviceState.version,
@@ -495,6 +503,7 @@ export function evaluatePolicyEngine(request: PolicyEvaluationRequest): PolicyEv
     appendInterventionCommand(command);
     appendDecisionTrace({
       trace_id: deterministicUuid(`${policy.policy_id}:${now}:intervene`),
+      correlation_id: correlationId,
       timestamp: now,
       policy_id: policy.policy_id,
       state_version: serviceState.version,

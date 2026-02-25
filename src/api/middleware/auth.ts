@@ -43,6 +43,8 @@ const routePolicies: RoutePolicy[] = [
   { method: 'GET', path: /^\/v1\/audit\/decision-traces$/, roles: roleSet('auditor', 'admin') },
   { method: 'POST', path: /^\/v1\/audit\/replay\/verify$/, roles: roleSet('auditor', 'admin') },
   { method: 'GET', path: /^\/v1\/audit\/metrics$/, roles: roleSet('auditor', 'admin', 'operator') },
+  { method: 'GET', path: /^\/v1\/audit\/alerts$/, roles: roleSet('auditor', 'admin', 'operator') },
+  { method: 'POST', path: /^\/v1\/audit\/alerts\/[a-z0-9]+\/resolve$/, roles: roleSet('admin', 'operator') },
   { method: 'POST', path: /^\/v1\/policy\/evaluate$/, roles: roleSet('operator', 'admin') },
   { method: 'GET', path: /^\/v1\/policy\/state\/[a-z0-9._-]+\/[a-z0-9._-]+$/, roles: roleSet('operator', 'admin', 'auditor') }
 ];

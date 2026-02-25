@@ -17,6 +17,7 @@ export function createPolicyController(): Router {
         value: number;
       }>;
       timestamp?: string;
+      correlation_id?: string;
       kill_switch_enabled?: boolean;
     };
 
@@ -31,6 +32,7 @@ export function createPolicyController(): Router {
       ...(body.service ? { service: body.service } : {}),
       ...(body.region ? { region: body.region } : {}),
       ...(body.timestamp ? { timestamp: body.timestamp } : {}),
+      ...(body.correlation_id ? { correlation_id: body.correlation_id } : {}),
       ...(typeof body.kill_switch_enabled === 'boolean' ? { kill_switch_enabled: body.kill_switch_enabled } : {})
     });
     res.json(result);
