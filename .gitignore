@@ -3,3 +3,5 @@ dist/
 .env
 .data/*.tmp
 .data/
+signer-private.pem
+signer-public.pem
