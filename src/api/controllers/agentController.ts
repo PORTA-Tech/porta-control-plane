@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { runtimeState } from '../../store/runtimeState.js';
-import { listAgentPresence, upsertAgentPresence } from '../../store/agentPresenceStore.js';
+import { listAgentPresence, upsertAgentPresence, upsertPresenceFromTelemetryBatch } from '../../store/agentPresenceStore.js';
 
 interface AgentStatusPayload {
   agentId?: string;
@@ -41,6 +41,7 @@ export function createAgentController(): Router {
 
   router.post('/telemetry', (req, res) => {
     const batch = Array.isArray(req.body) ? req.body : [];
+    upsertPresenceFromTelemetryBatch(batch);
     res.status(202).json({ accepted: true, count: batch.length });
   });
 

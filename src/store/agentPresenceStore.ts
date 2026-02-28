@@ -42,6 +42,44 @@ export function upsertAgentPresence(payload: AgentStatusPayload): AgentPresenceR
   return record;
 }
 
+function readStringField(input: Record<string, unknown>, ...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = input[name];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+export function upsertPresenceFromTelemetryBatch(batch: unknown): void {
+  if (!Array.isArray(batch)) {
+    return;
+  }
+
+  for (const item of batch) {
+    if (item == null || typeof item !== 'object') {
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const agentId = readStringField(record, 'agentId', 'AgentId');
+    if (!agentId) {
+      continue;
+    }
+
+    const timestampUtc = readStringField(record, 'timestampUtc', 'TimestampUtc');
+    const payload: AgentStatusPayload = {
+      agentId,
+      note: 'telemetry'
+    };
+    if (timestampUtc) {
+      payload.timestampUtc = timestampUtc;
+    }
+    upsertAgentPresence(payload);
+  }
+}
+
 export function listAgentPresence(): AgentPresenceRow[] {
   return Array.from(agentPresence.values());
 }
@@ -49,4 +87,3 @@ export function listAgentPresence(): AgentPresenceRow[] {
 export function clearAgentPresence(): void {
   agentPresence.clear();
 }
-
