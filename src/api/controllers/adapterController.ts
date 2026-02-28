@@ -15,6 +15,11 @@ type AdapterControlsUpdate = {
 
 type AdapterPromotionStage = 'CANARY' | 'LIMITED' | 'MAJORITY' | 'FULL';
 
+function readObservabilityMinSample(): number {
+  const raw = Number(process.env.ROLLOUT_MIN_SAMPLE_MACHINES ?? '20');
+  return Number.isFinite(raw) && raw > 0 ? Math.max(1, Math.trunc(raw)) : 20;
+}
+
 function featureGateEnabled(): boolean {
   const raw = process.env.CONTROL_PLANE_ADAPTER_EXPANSION_ENABLED ?? 'false';
   return raw === '1' || raw.toLowerCase() === 'true';
@@ -183,21 +188,51 @@ export function createAdapterController(): Router {
       experimental: { error: 0.58, latency: 87 }
     };
 
+    const minSample = readObservabilityMinSample();
     const rows = cohorts.map((cohort) => {
       const selected = baseByCohort[cohort];
       const enabledForCohort =
         runtimeState.adapterControls.featureAdapterEnabled && runtimeState.adapterControls.allowedCohorts.includes(cohort);
-      const errorRate = enabledForCohort ? selected.error : 0;
-      const latency = enabledForCohort ? selected.latency : 0;
+      const hasSample = enabledForCohort && runtimeState.rolloutState !== 'IDLE' && runtimeState.currentConfigSeq > 0;
+      const sampleSize = hasSample ? Math.max(1, runtimeState.currentConfigSeq % 25) : 0;
+      const enoughSample = sampleSize >= minSample;
+      const metricsAvailable = hasSample && enoughSample;
+      const errorRate = metricsAvailable ? selected.error : null;
+      const latency = metricsAvailable ? selected.latency : null;
       const threshold = runtimeState.adapterControls.circuitBreakerThreshold;
-      const circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' =
-        !enabledForCohort ? 'CLOSED' : errorRate >= threshold ? 'OPEN' : errorRate >= threshold * 0.8 ? 'HALF_OPEN' : 'CLOSED';
+      const circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' | 'DISABLED' | 'UNKNOWN' =
+        !featureGateEnabled() || !runtimeState.adapterControls.featureAdapterEnabled
+          ? 'DISABLED'
+          : !metricsAvailable || errorRate === null
+            ? 'UNKNOWN'
+            : errorRate >= threshold
+              ? 'OPEN'
+              : errorRate >= threshold * 0.8
+                ? 'HALF_OPEN'
+                : 'CLOSED';
+
+      let availabilityReasonCode: string | undefined;
+      if (!featureGateEnabled()) {
+        availabilityReasonCode = 'FEATURE_GATE_DISABLED';
+      } else if (!runtimeState.adapterControls.featureAdapterEnabled) {
+        availabilityReasonCode = 'ADAPTER_DISABLED_BY_POLICY';
+      } else if (!enabledForCohort) {
+        availabilityReasonCode = 'COHORT_NOT_ALLOWED';
+      } else if (!hasSample) {
+        availabilityReasonCode = 'NO_SAMPLE';
+      } else if (!enoughSample) {
+        availabilityReasonCode = 'INSUFFICIENT_SAMPLE';
+      }
 
       return {
         cohort,
-        adapter_error_rate_pct: Number(errorRate.toFixed(3)),
-        adapter_latency_ms: Number(latency.toFixed(2)),
+        adapter_error_rate_pct: errorRate === null ? null : Number(errorRate.toFixed(3)),
+        adapter_latency_ms: latency === null ? null : Number(latency.toFixed(2)),
         circuit_breaker_state: circuitBreakerState,
+        metrics_available: metricsAvailable,
+        sample_size: sampleSize,
+        sample_min_required: minSample,
+        ...(availabilityReasonCode ? { availability_reason_code: availabilityReasonCode } : {}),
         sampled_at_utc: new Date().toISOString()
       };
     });

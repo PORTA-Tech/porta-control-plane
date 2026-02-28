@@ -4,6 +4,7 @@ import { OperatorRequest } from '../middleware/auth.js';
 import { RolloutTransitionError, clearCooldownIfElapsed, transitionRolloutState } from '../../core/rolloutStateMachine.js';
 import { executeAutoHaltRollback } from '../../core/rolloutAutomation.js';
 import type { CohortId, RolloutState } from '@porta/api-contracts';
+import { buildRolloutEvidencePack, evaluateRollout } from '../../core/rolloutEvaluationEngine.js';
 
 function buildDryRunView(state: RolloutState): {
   blast_radius_node_count: number;
@@ -93,6 +94,20 @@ export function createRolloutController(): Router {
   router.get('/dry-run', (_req, res) => {
     clearCooldownIfElapsed();
     res.json(buildDryRunView(runtimeState.rolloutState));
+  });
+
+  router.get('/evaluate', (req, res) => {
+    clearCooldownIfElapsed();
+    const actorId = (req as OperatorRequest).operatorId ?? 'operator-unknown';
+    res.json(evaluateRollout(actorId));
+  });
+
+  router.get('/evidence-pack', (req, res) => {
+    clearCooldownIfElapsed();
+    const actorId = (req as OperatorRequest).operatorId ?? 'operator-unknown';
+    const limitRaw = Number(req.query.limit ?? 200);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(1000, Math.trunc(limitRaw))) : 200;
+    res.json(buildRolloutEvidencePack(actorId, limit));
   });
 
   router.post('/promote', (req: OperatorRequest, res) => {
