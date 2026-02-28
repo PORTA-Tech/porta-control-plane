@@ -29,6 +29,7 @@ const routePolicies: RoutePolicy[] = [
   { method: 'POST', path: /^\/v1\/rollout\/rollback$/, roles: roleSet('operator') },
   { method: 'POST', path: /^\/v1\/slo\/evaluate$/, roles: roleSet('operator') },
   { method: 'GET', path: /^\/v1\/nodes\/snapshot$/, roles: roleSet('viewer', 'operator', 'admin') },
+  { method: 'GET', path: /^\/v1\/cohorts\/evaluate$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/adapter\/controls$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'POST', path: /^\/v1\/adapter\/controls$/, roles: roleSet('operator') },
   { method: 'GET', path: /^\/v1\/adapter\/observability$/, roles: roleSet('viewer', 'operator', 'admin') },

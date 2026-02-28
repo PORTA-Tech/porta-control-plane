@@ -4,6 +4,7 @@ import { createRolloutController } from './api/controllers/rolloutController.js'
 import { createSloController } from './api/controllers/sloController.js';
 import { createAuditController } from './api/controllers/auditController.js';
 import { createNodeController } from './api/controllers/nodeController.js';
+import { createCohortController } from './api/controllers/cohortController.js';
 import { createAdapterController } from './api/controllers/adapterController.js';
 import { createAgentController } from './api/controllers/agentController.js';
 import { createPolicyController } from './api/controllers/policyController.js';
@@ -76,6 +77,7 @@ export function createApp(): Express {
   app.use('/v1/rollout', createRolloutController());
   app.use('/v1/slo', createSloController());
   app.use('/v1/nodes', createNodeController());
+  app.use('/v1/cohorts', createCohortController());
   app.use('/v1/adapter', createAdapterController());
   app.use('/v1/audit', createAuditController());
   app.use('/v1/policy', createPolicyController());
