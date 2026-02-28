@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { runtimeState } from '../../store/runtimeState.js';
+import { listAgentPresence, upsertAgentPresence } from '../../store/agentPresenceStore.js';
 
 interface AgentStatusPayload {
   agentId?: string;
@@ -8,18 +9,6 @@ interface AgentStatusPayload {
   status?: unknown;
   control?: unknown;
 }
-
-interface AgentPresenceRow {
-  agentId: string;
-  lastHeartbeatUtc: string;
-  heartbeatCount: number;
-  lastNote?: string;
-  configSeq: number;
-  configVersion: string;
-  signatureValidity: boolean;
-}
-
-const agentPresence = new Map<string, AgentPresenceRow>();
 
 export function createAgentController(): Router {
   const router = Router();
@@ -33,19 +22,12 @@ export function createAgentController(): Router {
       return;
     }
 
-    const now = new Date().toISOString();
-    const existing = agentPresence.get(agentId);
-    const record: AgentPresenceRow = {
-      agentId,
-      lastHeartbeatUtc: typeof payload.timestampUtc === 'string' && payload.timestampUtc.length > 0 ? payload.timestampUtc : now,
-      heartbeatCount: (existing?.heartbeatCount ?? 0) + 1,
-      configSeq: runtimeState.currentConfigSeq,
-      configVersion: runtimeState.currentConfigVersion,
-      signatureValidity: runtimeState.currentConfigSignatureValid ?? false,
-      ...(typeof payload.note === 'string' && payload.note.length > 0 ? { lastNote: payload.note } : {})
-    };
+    const record = upsertAgentPresence(payload);
+    if (!record) {
+      res.status(400).json({ error: 'agentId is required' });
+      return;
+    }
 
-    agentPresence.set(agentId, record);
     res.status(202).json({
       accepted: true,
       agentId,
@@ -64,7 +46,7 @@ export function createAgentController(): Router {
 
   // Simple diagnostic endpoint for local validation.
   router.get('/presence', (_req, res) => {
-    res.json(Array.from(agentPresence.values()));
+    res.json(listAgentPresence());
   });
 
   return router;

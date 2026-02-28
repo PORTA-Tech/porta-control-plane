@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { runtimeState } from '../../store/runtimeState.js';
+import { listAgentPresence } from '../../store/agentPresenceStore.js';
 
 type Cohort = 'stable' | 'canary-1' | 'canary-5' | 'internal' | 'experimental';
 type DegradationState = 'normal' | 'degraded' | 'safe';
@@ -15,61 +15,54 @@ interface NodeSnapshotRow {
   SLO_compliance: SloCompliance;
 }
 
-const TOTAL_NODES = 1_040;
+const parsedStaleHeartbeatSeconds = Number.parseInt(process.env.NODE_STALE_HEARTBEAT_SECONDS ?? '30', 10);
+const STALE_HEARTBEAT_SECONDS = Number.isFinite(parsedStaleHeartbeatSeconds) ? parsedStaleHeartbeatSeconds : 30;
 
-function cohortForIndex(index: number): Cohort {
-  if (index < 940) return 'stable';
-  if (index < 950) return 'canary-1';
-  if (index < 1_000) return 'canary-5';
-  if (index < 1_025) return 'internal';
+function cohortForAgentId(agentId: string): Cohort {
+  const hash = Array.from(agentId).reduce((acc, ch) => ((acc * 33) ^ ch.charCodeAt(0)) >>> 0, 5381);
+  const bucket = hash % 100;
+  if (bucket < 90) return 'stable';
+  if (bucket < 91) return 'canary-1';
+  if (bucket < 96) return 'canary-5';
+  if (bucket < 98) return 'internal';
   return 'experimental';
 }
 
-function uuidFromIndex(index: number): string {
-  const value = (index + 1).toString(16).padStart(12, '0');
-  return `00000000-0000-4000-8000-${value}`;
-}
+function degradationFor(lastHeartbeatUtc: string, signatureValid: boolean): DegradationState {
+  if (!signatureValid) {
+    return 'degraded';
+  }
 
-function degradationFor(index: number, cohort: Cohort): DegradationState {
-  const seed = (index * 37) % 100;
-  if (cohort === 'experimental' && seed < 24) return 'degraded';
-  if (cohort === 'canary-5' && seed < 12) return 'degraded';
-  if (seed > 96) return 'safe';
+  const heartbeatMs = Date.parse(lastHeartbeatUtc);
+  if (Number.isFinite(heartbeatMs) && Date.now() - heartbeatMs > STALE_HEARTBEAT_SECONDS * 1_000) {
+    return 'degraded';
+  }
+
   return 'normal';
 }
 
-function heartbeatIso(index: number): string {
-  const lagSeconds = index % 18;
-  return new Date(Date.now() - lagSeconds * 1_000).toISOString();
-}
-
-function signatureValid(index: number): boolean {
-  return index % 41 !== 0;
-}
-
-function sloFor(degradationState: DegradationState, signatureValidValue: boolean): SloCompliance {
-  return degradationState === 'degraded' || !signatureValidValue ? 'breach' : 'compliant';
+function sloFor(degradationState: DegradationState): SloCompliance {
+  return degradationState === 'degraded' ? 'breach' : 'compliant';
 }
 
 export function createNodeController(): Router {
   const router = Router();
 
   router.get('/snapshot', (_req, res) => {
-    const rows: NodeSnapshotRow[] = Array.from({ length: TOTAL_NODES }, (_, index) => {
-      const cohort = cohortForIndex(index);
-      const degradationState = degradationFor(index, cohort);
-      const isSignatureValid = signatureValid(index);
-
-      return {
-        node_id: uuidFromIndex(index),
-        cohort,
-        config_seq: runtimeState.currentConfigSeq,
-        signature_valid: isSignatureValid,
-        last_heartbeat: heartbeatIso(index),
-        degradation_state: degradationState,
-        SLO_compliance: sloFor(degradationState, isSignatureValid)
-      };
-    });
+    const rows: NodeSnapshotRow[] = listAgentPresence()
+      .map((presence) => {
+        const degradationState = degradationFor(presence.lastHeartbeatUtc, presence.signatureValidity);
+        return {
+          node_id: presence.agentId,
+          cohort: cohortForAgentId(presence.agentId),
+          config_seq: presence.configSeq,
+          signature_valid: presence.signatureValidity,
+          last_heartbeat: presence.lastHeartbeatUtc,
+          degradation_state: degradationState,
+          SLO_compliance: sloFor(degradationState)
+        };
+      })
+      .sort((a, b) => Date.parse(b.last_heartbeat) - Date.parse(a.last_heartbeat));
 
     res.json(rows);
   });
