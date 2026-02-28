@@ -44,6 +44,9 @@ export interface ExperimentDefinitionInput {
     metric?: string;
     threshold?: number;
   }>;
+  min_sample_machines?: number;
+  min_coverage_pct?: number;
+  min_window_minutes?: number;
 }
 
 interface ExperimentDefinition {
@@ -62,6 +65,9 @@ interface ExperimentDefinition {
     metric: ExperimentGuardrailMetric;
     threshold: number;
   }>;
+  minSampleMachines: number;
+  minCoveragePct: number;
+  minWindowMinutes: number;
 }
 
 interface ExperimentRuntime {
@@ -75,22 +81,22 @@ interface ExperimentRuntime {
 
 export interface ExperimentPrimaryMetricView {
   metric: ExperimentPrimaryMetric;
-  baseline_value: number;
-  experiment_value: number;
-  delta: number;
+  baseline_value: number | null;
+  experiment_value: number | null;
+  delta: number | null;
   direction: 'up' | 'down';
   target_delta: number;
-  improved: boolean;
+  improved: boolean | null;
 }
 
 export interface ExperimentGuardrailView {
   metric: ExperimentGuardrailMetric;
-  baseline_value: number;
-  experiment_value: number;
-  delta: number;
+  baseline_value: number | null;
+  experiment_value: number | null;
+  delta: number | null;
   threshold: number;
-  violated: boolean;
-  strong_violation: boolean;
+  violated: boolean | null;
+  strong_violation: boolean | null;
 }
 
 export interface ExperimentConfidenceView {
@@ -105,7 +111,33 @@ export interface ExperimentVerdictView {
   status: ExperimentVerdictStatus;
   summary: string;
   triggered_by: string;
+  trigger_reason_code:
+    | 'INSUFFICIENT_SAMPLE'
+    | 'INSUFFICIENT_COVERAGE'
+    | 'WINDOW_TOO_SHORT'
+    | 'GUARDRAIL_STRONG_VIOLATION'
+    | 'GUARDRAIL_VIOLATION'
+    | 'IMPROVEMENT_CONFIRMED'
+    | 'INCONCLUSIVE_LOW_CONFIDENCE'
+    | 'INCONCLUSIVE_NO_PRIMARY_IMPROVEMENT';
+  trigger_reason_details: Record<string, string | number | boolean | null>;
   auto_stop_recommended: boolean;
+}
+
+export interface ExperimentDataQualityView {
+  baseline_sample_machines: number;
+  experiment_sample_machines: number;
+  min_sample_machines: number;
+  baseline_coverage_pct: number;
+  experiment_coverage_pct: number;
+  min_coverage_pct: number;
+  window_minutes: number;
+  min_window_minutes: number;
+  sample_valid: boolean;
+  coverage_valid: boolean;
+  window_valid: boolean;
+  valid: boolean;
+  messages: string[];
 }
 
 export interface ExperimentLifecycleEventView {
@@ -135,14 +167,18 @@ export interface ExperimentEvaluationView {
       metric: ExperimentGuardrailMetric;
       threshold: number;
     }>;
+    min_sample_machines: number;
+    min_coverage_pct: number;
+    min_window_minutes: number;
   };
+  data_quality: ExperimentDataQualityView;
   metrics: {
     primary: ExperimentPrimaryMetricView[];
     guardrails: ExperimentGuardrailView[];
     interventions_per_min_delta: {
-      baseline_value: number;
-      experiment_value: number;
-      delta: number;
+      baseline_value: number | null;
+      experiment_value: number | null;
+      delta: number | null;
     };
   };
   confidence: ExperimentConfidenceView;
@@ -187,6 +223,9 @@ const PRIMARY_TARGET_DELTA: Record<ExperimentPrimaryMetric, number> = {
   focus_strength: 0.05,
   fatigue_probability: -0.04
 };
+const DEFAULT_MIN_SAMPLE_MACHINES = 20;
+const DEFAULT_MIN_COVERAGE_PCT = 70;
+const DEFAULT_MIN_WINDOW_MINUTES = 10;
 
 function round(value: number, decimals = 3): number {
   const factor = 10 ** decimals;
@@ -209,6 +248,21 @@ function parseCohortId(value: string | undefined, fallback: CohortId): CohortId 
     return value;
   }
   return fallback;
+}
+
+function parsePositiveNumber(raw: number | undefined, fallback: number): number {
+  return Number.isFinite(raw) && Number(raw) > 0 ? Number(raw) : fallback;
+}
+
+function parsePercent(raw: number | undefined, fallback: number): number {
+  return clamp(parsePositiveNumber(raw, fallback), 1, 100);
+}
+
+function windowToMinutes(window: CohortWindow): number {
+  if (window === '15m') return 15;
+  if (window === '1h') return 60;
+  if (window === '6h') return 360;
+  return 1440;
 }
 
 function parsePrimaryMetrics(input: string[] | undefined): ExperimentPrimaryMetric[] {
@@ -278,6 +332,9 @@ function normalizeDefinition(input: ExperimentDefinitionInput): ExperimentDefini
   const experimentCohortId = parseCohortId(input.experiment_cohort_id, 'canary-1');
   const primaryMetrics = parsePrimaryMetrics(input.primary_metrics);
   const guardrails = parseGuardrails(input.guardrails);
+  const minSampleMachines = Math.max(1, Math.trunc(parsePositiveNumber(input.min_sample_machines, DEFAULT_MIN_SAMPLE_MACHINES)));
+  const minCoveragePct = parsePercent(input.min_coverage_pct, DEFAULT_MIN_COVERAGE_PCT);
+  const minWindowMinutes = Math.max(1, Math.trunc(parsePositiveNumber(input.min_window_minutes, DEFAULT_MIN_WINDOW_MINUTES)));
 
   const changeVector =
     input.change_vector && typeof input.change_vector === 'object'
@@ -298,7 +355,10 @@ function normalizeDefinition(input: ExperimentDefinitionInput): ExperimentDefini
     experimentCohortId,
     ...(changeVector && Object.keys(changeVector).length > 0 ? { changeVector } : {}),
     primaryMetrics,
-    guardrails
+    guardrails,
+    minSampleMachines,
+    minCoveragePct,
+    minWindowMinutes
   };
 }
 
@@ -636,14 +696,107 @@ function computeConfidence(
   };
 }
 
+function computeDataQuality(
+  definition: ExperimentDefinition,
+  baselineRow: CohortEvaluationRowView,
+  experimentRow: CohortEvaluationRowView
+): ExperimentDataQualityView {
+  const baselineSample = Math.max(0, baselineRow.machine_count);
+  const experimentSample = Math.max(0, experimentRow.machine_count);
+  const baselineCoverage = round((baselineSample / Math.max(1, definition.minSampleMachines)) * 100, 2);
+  const experimentCoverage = round((experimentSample / Math.max(1, definition.minSampleMachines)) * 100, 2);
+  const coverageFloor = Math.min(baselineCoverage, experimentCoverage);
+  const windowMinutes = windowToMinutes(definition.window);
+
+  const sampleValid = baselineSample >= definition.minSampleMachines && experimentSample >= definition.minSampleMachines;
+  const coverageValid = coverageFloor >= definition.minCoveragePct;
+  const windowValid = windowMinutes >= definition.minWindowMinutes;
+  const valid = sampleValid && coverageValid && windowValid;
+
+  const messages: string[] = [];
+  if (!sampleValid) {
+    messages.push('Not enough machines reporting for baseline/experiment.');
+  }
+  if (!coverageValid) {
+    messages.push('Coverage below minimum requirement.');
+  }
+  if (!windowValid) {
+    messages.push('Selected window shorter than minimum duration.');
+  }
+  if (valid) {
+    messages.push('Data quality checks passed.');
+  }
+
+  return {
+    baseline_sample_machines: baselineSample,
+    experiment_sample_machines: experimentSample,
+    min_sample_machines: definition.minSampleMachines,
+    baseline_coverage_pct: round(clamp(baselineCoverage, 0, 999), 2),
+    experiment_coverage_pct: round(clamp(experimentCoverage, 0, 999), 2),
+    min_coverage_pct: definition.minCoveragePct,
+    window_minutes: windowMinutes,
+    min_window_minutes: definition.minWindowMinutes,
+    sample_valid: sampleValid,
+    coverage_valid: coverageValid,
+    window_valid: windowValid,
+    valid,
+    messages
+  };
+}
+
 function computeVerdict(
   primary: ExperimentPrimaryMetricView[],
   guardrails: ExperimentGuardrailView[],
-  confidence: ExperimentConfidenceView
+  confidence: ExperimentConfidenceView,
+  dataQuality: ExperimentDataQualityView
 ): ExperimentVerdictView {
-  const violating = guardrails.filter((guardrail) => guardrail.violated);
-  const strongViolation = guardrails.find((guardrail) => guardrail.strong_violation);
-  const primaryImprovedCount = primary.filter((metric) => metric.improved).length;
+  if (!dataQuality.sample_valid) {
+    return {
+      status: 'inconclusive',
+      summary: 'Experiment outcome is inconclusive due to insufficient sample size.',
+      triggered_by: 'Not enough machines reporting in baseline/experiment cohorts.',
+      trigger_reason_code: 'INSUFFICIENT_SAMPLE',
+      trigger_reason_details: {
+        baseline_machine_count: dataQuality.baseline_sample_machines,
+        experiment_machine_count: dataQuality.experiment_sample_machines,
+        min_required: dataQuality.min_sample_machines
+      },
+      auto_stop_recommended: false
+    };
+  }
+
+  if (!dataQuality.coverage_valid) {
+    return {
+      status: 'inconclusive',
+      summary: 'Experiment outcome is inconclusive due to low coverage.',
+      triggered_by: 'Coverage below configured minimum.',
+      trigger_reason_code: 'INSUFFICIENT_COVERAGE',
+      trigger_reason_details: {
+        baseline_coverage_pct: dataQuality.baseline_coverage_pct,
+        experiment_coverage_pct: dataQuality.experiment_coverage_pct,
+        min_coverage_pct: dataQuality.min_coverage_pct
+      },
+      auto_stop_recommended: false
+    };
+  }
+
+  if (!dataQuality.window_valid) {
+    return {
+      status: 'inconclusive',
+      summary: 'Experiment outcome is inconclusive because window duration is too short.',
+      triggered_by: 'Selected window does not meet minimum duration.',
+      trigger_reason_code: 'WINDOW_TOO_SHORT',
+      trigger_reason_details: {
+        window_minutes: dataQuality.window_minutes,
+        min_window_minutes: dataQuality.min_window_minutes
+      },
+      auto_stop_recommended: false
+    };
+  }
+
+  const violating = guardrails.filter((guardrail) => guardrail.violated === true);
+  const strongViolation = guardrails.find((guardrail) => guardrail.strong_violation === true);
+  const primaryImprovedCount = primary.filter((metric) => metric.improved === true).length;
   const allPrimaryImproved = primary.length > 0 && primaryImprovedCount === primary.length;
 
   if (strongViolation) {
@@ -651,6 +804,12 @@ function computeVerdict(
       status: 'auto_stop_recommended',
       summary: 'Auto-stop recommended due to strong guardrail violation.',
       triggered_by: `${strongViolation.metric} exceeded strong threshold.`,
+      trigger_reason_code: 'GUARDRAIL_STRONG_VIOLATION',
+      trigger_reason_details: {
+        metric: strongViolation.metric,
+        delta: strongViolation.delta,
+        threshold: strongViolation.threshold
+      },
       auto_stop_recommended: true
     };
   }
@@ -660,6 +819,11 @@ function computeVerdict(
       status: 'regression_detected',
       summary: 'Regression detected. Guardrail threshold violated.',
       triggered_by: violating.map((guardrail) => guardrail.metric).join(', '),
+      trigger_reason_code: 'GUARDRAIL_VIOLATION',
+      trigger_reason_details: {
+        metrics: violating.map((guardrail) => guardrail.metric).join(','),
+        violations: violating.length
+      },
       auto_stop_recommended: false
     };
   }
@@ -669,6 +833,26 @@ function computeVerdict(
       status: 'improvement_confirmed',
       summary: 'Improvement confirmed with guardrails healthy.',
       triggered_by: primary.map((metric) => metric.metric).join(', '),
+      trigger_reason_code: 'IMPROVEMENT_CONFIRMED',
+      trigger_reason_details: {
+        improved_metrics: primaryImprovedCount,
+        total_primary_metrics: primary.length,
+        confidence_level: confidence.level
+      },
+      auto_stop_recommended: false
+    };
+  }
+
+  if (confidence.level === 'low') {
+    return {
+      status: 'inconclusive',
+      summary: 'Experiment outcome is inconclusive.',
+      triggered_by: 'Low confidence / sample variance.',
+      trigger_reason_code: 'INCONCLUSIVE_LOW_CONFIDENCE',
+      trigger_reason_details: {
+        confidence_level: confidence.level,
+        confidence_score: confidence.score
+      },
       auto_stop_recommended: false
     };
   }
@@ -676,7 +860,12 @@ function computeVerdict(
   return {
     status: 'inconclusive',
     summary: 'Experiment outcome is inconclusive.',
-    triggered_by: confidence.level === 'low' ? 'Low confidence / sample size.' : 'Primary improvement criteria not met.',
+    triggered_by: 'Primary improvement criteria not met.',
+    trigger_reason_code: 'INCONCLUSIVE_NO_PRIMARY_IMPROVEMENT',
+    trigger_reason_details: {
+      improved_metrics: primaryImprovedCount,
+      total_primary_metrics: primary.length
+    },
     auto_stop_recommended: false
   };
 }
@@ -737,22 +926,49 @@ export function evaluateExperiment(input: {
 
   const baselineDerived = derivedMetrics(baselineRow);
   const experimentDerived = derivedMetrics(experimentRow);
+  const confidence = computeConfidence(definition, baselineRow, experimentRow);
+  const dataQuality = computeDataQuality(definition, baselineRow, experimentRow);
 
-  const primary = definition.primaryMetrics.map((metric) =>
+  const computedPrimary = definition.primaryMetrics.map((metric) =>
     computePrimaryMetricView(metric, baselineDerived, experimentDerived)
   );
-  const guardrails = definition.guardrails.map((guardrail) =>
+  const computedGuardrails = definition.guardrails.map((guardrail) =>
     computeGuardrailView(guardrail, baselineRow, experimentRow, baselineDerived, experimentDerived)
   );
 
-  const interventionsDelta = {
-    baseline_value: baselineDerived.interventionsPerMin,
-    experiment_value: experimentDerived.interventionsPerMin,
-    delta: round(experimentDerived.interventionsPerMin - baselineDerived.interventionsPerMin, 4)
-  };
+  const primary = dataQuality.sample_valid
+    ? computedPrimary
+    : computedPrimary.map((metric) => ({
+        ...metric,
+        baseline_value: null,
+        experiment_value: null,
+        delta: null,
+        improved: null
+      }));
+  const guardrails = dataQuality.sample_valid
+    ? computedGuardrails
+    : computedGuardrails.map((guardrail) => ({
+        ...guardrail,
+        baseline_value: null,
+        experiment_value: null,
+        delta: null,
+        violated: null,
+        strong_violation: null
+      }));
 
-  const confidence = computeConfidence(definition, baselineRow, experimentRow);
-  const verdict = computeVerdict(primary, guardrails, confidence);
+  const interventionsDelta = dataQuality.sample_valid
+    ? {
+        baseline_value: baselineDerived.interventionsPerMin,
+        experiment_value: experimentDerived.interventionsPerMin,
+        delta: round(experimentDerived.interventionsPerMin - baselineDerived.interventionsPerMin, 4)
+      }
+    : {
+        baseline_value: null,
+        experiment_value: null,
+        delta: null
+      };
+
+  const verdict = computeVerdict(primary, guardrails, confidence, dataQuality);
 
   maybeEmitVerdictEvents(runtime, verdict, input.actorId);
 
@@ -785,8 +1001,12 @@ export function evaluateExperiment(input: {
           }
         : {}),
       primary_metrics: definition.primaryMetrics,
-      guardrails: definition.guardrails
+      guardrails: definition.guardrails,
+      min_sample_machines: definition.minSampleMachines,
+      min_coverage_pct: definition.minCoveragePct,
+      min_window_minutes: definition.minWindowMinutes
     },
+    data_quality: dataQuality,
     metrics: {
       primary,
       guardrails,
