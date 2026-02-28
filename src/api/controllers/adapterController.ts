@@ -4,6 +4,7 @@ import { runtimeState, persistRuntimeState } from '../../store/runtimeState.js';
 import type { OperatorRequest } from '../middleware/auth.js';
 import { appendOperatorAuditEvent } from '../../core/operatorAudit.js';
 import { readOperatorAuditEvents } from '../../core/operatorAudit.js';
+import { listAgentPresence } from '../../store/agentPresenceStore.js';
 
 type AdapterControlsUpdate = {
   feature_adapter_enabled: boolean;
@@ -51,6 +52,16 @@ function allowedCohortsForStage(stage: AdapterPromotionStage): CohortId[] {
   if (stage === 'LIMITED') return ['canary-1', 'canary-5'];
   if (stage === 'MAJORITY') return ['canary-1', 'canary-5', 'stable'];
   return ['stable', 'canary-1', 'canary-5', 'internal', 'experimental'];
+}
+
+function cohortForAgentId(agentId: string): CohortId {
+  const hash = Array.from(agentId).reduce((acc, ch) => ((acc * 33) ^ ch.charCodeAt(0)) >>> 0, 5381);
+  const bucket = hash % 100;
+  if (bucket < 90) return 'stable';
+  if (bucket < 91) return 'canary-1';
+  if (bucket < 96) return 'canary-5';
+  if (bucket < 98) return 'internal';
+  return 'experimental';
 }
 
 function evaluateObservabilitySloGate(allowedCohorts: CohortId[]): { ok: boolean; reasons: string[] } {
@@ -189,12 +200,21 @@ export function createAdapterController(): Router {
     };
 
     const minSample = readObservabilityMinSample();
+    const sampleByCohort = cohorts.reduce<Record<CohortId, number>>(
+      (acc, cohort) => ({ ...acc, [cohort]: 0 }),
+      { stable: 0, 'canary-1': 0, 'canary-5': 0, internal: 0, experimental: 0 }
+    );
+    for (const presence of listAgentPresence()) {
+      const cohort = cohortForAgentId(presence.agentId);
+      sampleByCohort[cohort] += 1;
+    }
+
     const rows = cohorts.map((cohort) => {
       const selected = baseByCohort[cohort];
       const enabledForCohort =
         runtimeState.adapterControls.featureAdapterEnabled && runtimeState.adapterControls.allowedCohorts.includes(cohort);
-      const hasSample = enabledForCohort && runtimeState.rolloutState !== 'IDLE' && runtimeState.currentConfigSeq > 0;
-      const sampleSize = hasSample ? Math.max(1, runtimeState.currentConfigSeq % 25) : 0;
+      const sampleSize = sampleByCohort[cohort];
+      const hasSample = enabledForCohort && sampleSize > 0;
       const enoughSample = sampleSize >= minSample;
       const metricsAvailable = hasSample && enoughSample;
       const errorRate = metricsAvailable ? selected.error : null;
