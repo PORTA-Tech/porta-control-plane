@@ -42,6 +42,21 @@ interface TriggerView {
   details: Record<string, Primitive>;
 }
 
+function triggerRank(trigger: TriggerView): number {
+  if (trigger.reason_code === 'NO_DATA') return 5;
+  if (trigger.reason_code === 'API_UNREACHABLE') return 100;
+  if (trigger.reason_code === 'STREAM_DISCONNECTED') return 95;
+  if (trigger.reason_code === 'API_SERVER_ERROR_RATE_HIGH') return 85;
+  if (trigger.reason_code === 'REFRESH_FAILURES') return 80;
+  if (trigger.reason_code === 'API_LATENCY_HIGH') return 45;
+  if (trigger.reason_code === 'METRICS_PLACEHOLDER_DETECTED') return 40;
+  if (trigger.reason_code === 'STREAM_STALE') return 35;
+  if (trigger.reason_code === 'INSUFFICIENT_COVERAGE') return 30;
+  if (trigger.reason_code === 'STREAM_DISABLED') return 20;
+  if (trigger.reason_code === 'API_CLIENT_ERROR_SPIKE') return 15;
+  return trigger.severity === 'critical' ? 70 : 10;
+}
+
 interface SeriesPoint {
   timestamp_utc: string;
   value: number | null;
@@ -501,12 +516,21 @@ export function evaluateSystemHealth(): SystemHealthView {
     });
   }
 
-  if (errorRatePct !== null && errorRatePct > maxAllowedErrorRatePct()) {
+  if (error5xxRatePct !== null && error5xxRatePct > maxAllowedErrorRatePct()) {
     triggers.push({
-      reason_code: 'API_ERROR_RATE_HIGH',
-      severity: errorRatePct > Math.max(10, maxAllowedErrorRatePct() * 1.5) ? 'critical' : 'warning',
-      summary: 'API error rate exceeds threshold.',
-      details: { error_rate_pct: errorRatePct, threshold_pct: maxAllowedErrorRatePct() }
+      reason_code: 'API_SERVER_ERROR_RATE_HIGH',
+      severity: error5xxRatePct > Math.max(10, maxAllowedErrorRatePct() * 1.5) ? 'critical' : 'warning',
+      summary: 'API server error rate exceeds threshold.',
+      details: { server_error_rate_pct: error5xxRatePct, threshold_pct: maxAllowedErrorRatePct() }
+    });
+  }
+
+  if (error4xxRatePct !== null && error4xxRatePct > 70) {
+    triggers.push({
+      reason_code: 'API_CLIENT_ERROR_SPIKE',
+      severity: 'warning',
+      summary: 'Client-side API denials/errors are high.',
+      details: { client_error_rate_pct: error4xxRatePct }
     });
   }
 
@@ -563,7 +587,9 @@ export function evaluateSystemHealth(): SystemHealthView {
     verdict = 'DEGRADED';
   }
 
-  const topReason = triggers[0] ?? {
+  const topReason = triggers
+    .slice()
+    .sort((left, right) => triggerRank(right) - triggerRank(left))[0] ?? {
     reason_code: 'ALL_HEALTH_CHECKS_PASS',
     severity: 'warning',
     summary: 'Console and pipeline reliability checks are healthy.',
@@ -589,7 +615,7 @@ export function evaluateSystemHealth(): SystemHealthView {
     nowMs,
     apiSamples.map((row) => ({
       timestamp_ms: row.timestamp_ms,
-      value: row.status >= 400 ? 100 : 0
+      value: row.status >= 500 ? 100 : 0
     }))
   );
   const refreshFailureSeries = buildMinuteAvgSeries(
