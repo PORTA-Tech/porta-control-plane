@@ -36,12 +36,27 @@ export interface AuthSessionView {
 export interface AuthAccessHelpView {
   signup_enabled: boolean;
   admin_signup_enabled: boolean;
-  users: Array<{ user_id: string; role: AuthRole; display_name: string }>;
-  default_credentials: Array<{ user_id: string; role: AuthRole; password: string }>;
+  user_id_rules: {
+    pattern: string;
+    min_length: number;
+    max_length: number;
+    example: string;
+  };
+  password_rules: {
+    min_length: number;
+    requires_upper: boolean;
+    requires_lower: boolean;
+    requires_number: boolean;
+  };
 }
 
 const sessions = new Map<string, SessionRecord>();
 const usersPath = path.resolve('.data', 'auth-users.json');
+const USER_ID_PATTERN = /^[a-z][a-z0-9._-]{2,31}$/;
+const USER_ID_PATTERN_STRING = '^[a-z][a-z0-9._-]{2,31}$';
+const USER_ID_MIN = 3;
+const USER_ID_MAX = 32;
+const PASSWORD_MIN = 8;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
@@ -70,10 +85,6 @@ function allowSelfRegister(): boolean {
 
 function allowSelfRegisterAdmin(): boolean {
   return parseBoolean(process.env.AUTH_ALLOW_SELF_REGISTER_ADMIN, true);
-}
-
-function exposeBootstrapCredentials(): boolean {
-  return parseBoolean(process.env.AUTH_EXPOSE_BOOTSTRAP_CREDENTIALS, true);
 }
 
 function stableUsers(): AuthUserRecord[] {
@@ -275,18 +286,21 @@ export function resolveAuthUserRole(userId: string): AuthRole | null {
 }
 
 export function readAuthAccessHelp(): AuthAccessHelpView {
-  const users = listAuthUsers();
-  const defaultCredentials = exposeBootstrapCredentials()
-    ? authUsers
-        .filter((user) => user.source === 'default')
-        .map((user) => ({ user_id: user.user_id, role: user.role, password: user.password }))
-    : [];
-
   return {
     signup_enabled: allowSelfRegister(),
     admin_signup_enabled: allowSelfRegisterAdmin(),
-    users,
-    default_credentials: defaultCredentials
+    user_id_rules: {
+      pattern: USER_ID_PATTERN_STRING,
+      min_length: USER_ID_MIN,
+      max_length: USER_ID_MAX,
+      example: 'alex.ops'
+    },
+    password_rules: {
+      min_length: PASSWORD_MIN,
+      requires_upper: true,
+      requires_lower: true,
+      requires_number: true
+    }
   };
 }
 
@@ -307,11 +321,32 @@ export function registerAuthUser(input: {
   const displayName = input.display_name.trim();
   const role = input.role;
 
-  if (!userId || password.length < 6 || !displayName) {
+  if (!userId || !displayName) {
     return {
       ok: false,
       error_code: 'VALIDATION_ERROR',
-      message: 'user_id, display_name and password(min 6 chars) are required.'
+      message: 'user_id and display_name are required.'
+    };
+  }
+  if (!USER_ID_PATTERN.test(userId)) {
+    return {
+      ok: false,
+      error_code: 'INVALID_USER_ID',
+      message: 'user_id must match ^[a-z][a-z0-9._-]{2,31}$.'
+    };
+  }
+  if (password.length < PASSWORD_MIN) {
+    return {
+      ok: false,
+      error_code: 'WEAK_PASSWORD',
+      message: `password must be at least ${PASSWORD_MIN} characters and include upper/lower/number.`
+    };
+  }
+  if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+    return {
+      ok: false,
+      error_code: 'WEAK_PASSWORD',
+      message: 'password must include at least one uppercase letter, one lowercase letter, and one number.'
     };
   }
 
