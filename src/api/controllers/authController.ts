@@ -7,6 +7,8 @@ import {
   readAuthSession,
   registerAuthUser,
   refreshReauth,
+  updateAuthUserPassword,
+  updateAuthUserProfile,
   revokeAuthSession
 } from '../../core/authSessionStore.js';
 
@@ -46,7 +48,8 @@ export function createAuthController(): Router {
       user: {
         user_id: issued.session.user_id,
         role: issued.session.role,
-        display_name: issued.session.display_name
+        display_name: issued.session.display_name,
+        avatar_url: issued.session.avatar_url ?? null
       },
       session_expires_at_utc: issued.session.expires_at_utc,
       reauth_expires_at_utc: issued.session.reauth_expires_at_utc
@@ -68,6 +71,7 @@ export function createAuthController(): Router {
       user_id: session.user_id,
       role: session.role,
       display_name: session.display_name,
+      avatar_url: session.avatar_url ?? null,
       issued_at_utc: session.issued_at_utc,
       session_expires_at_utc: session.expires_at_utc,
       reauth_expires_at_utc: session.reauth_expires_at_utc
@@ -162,6 +166,74 @@ export function createAuthController(): Router {
       ok: true,
       user: created.user
     });
+  });
+
+  router.patch('/profile', (req, res) => {
+    const token = parseBearerToken(req.header('authorization'));
+    if (!token) {
+      res.status(401).json({ error_code: 'UNAUTHORIZED', message: 'Bearer token is required.' });
+      return;
+    }
+    const session = readAuthSession(token);
+    if (!session) {
+      res.status(401).json({ error_code: 'SESSION_EXPIRED', message: 'Session expired or invalid.' });
+      return;
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const displayName = typeof body.display_name === 'string' ? body.display_name : undefined;
+    const avatarUrl = body.avatar_url === null
+      ? null
+      : typeof body.avatar_url === 'string'
+        ? body.avatar_url
+        : undefined;
+    const updated = updateAuthUserProfile({
+      user_id: session.user_id,
+      ...(displayName !== undefined ? { display_name: displayName } : {}),
+      ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {})
+    });
+    if (!updated.ok) {
+      res.status(400).json({ error_code: updated.error_code, message: updated.message });
+      return;
+    }
+    res.json({
+      ok: true,
+      user: updated.user
+    });
+  });
+
+  router.post('/change-password', (req, res) => {
+    const token = parseBearerToken(req.header('authorization'));
+    if (!token) {
+      res.status(401).json({ error_code: 'UNAUTHORIZED', message: 'Bearer token is required.' });
+      return;
+    }
+    const session = readAuthSession(token);
+    if (!session) {
+      res.status(401).json({ error_code: 'SESSION_EXPIRED', message: 'Session expired or invalid.' });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const currentPassword = typeof body.current_password === 'string' ? body.current_password : '';
+    const newPassword = typeof body.new_password === 'string' ? body.new_password : '';
+    if (!currentPassword || !newPassword) {
+      res.status(400).json({
+        error_code: 'VALIDATION_ERROR',
+        message: 'current_password and new_password are required.'
+      });
+      return;
+    }
+    const changed = updateAuthUserPassword({
+      user_id: session.user_id,
+      current_password: currentPassword,
+      new_password: newPassword
+    });
+    if (!changed.ok) {
+      const status = changed.error_code === 'INVALID_CREDENTIALS' ? 401 : 400;
+      res.status(status).json({ error_code: changed.error_code, message: changed.message });
+      return;
+    }
+    res.json({ ok: true });
   });
 
   return router;

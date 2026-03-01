@@ -11,6 +11,7 @@ interface AuthUserRecord {
   password: string;
   role: AuthRole;
   display_name: string;
+  avatar_url?: string;
   source: UserSource;
 }
 
@@ -19,6 +20,7 @@ interface SessionRecord {
   user_id: string;
   role: AuthRole;
   display_name: string;
+  avatar_url?: string;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
@@ -28,6 +30,7 @@ export interface AuthSessionView {
   user_id: string;
   role: AuthRole;
   display_name: string;
+  avatar_url?: string;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
@@ -112,9 +115,17 @@ function parseUserRows(raw: unknown, source: UserSource): AuthUserRecord[] {
     const password = typeof row.password === 'string' ? row.password : '';
     const role = typeof row.role === 'string' ? row.role as AuthRole : 'viewer';
     const displayName = typeof row.display_name === 'string' ? row.display_name : userId;
+    const avatarUrl = typeof row.avatar_url === 'string' ? row.avatar_url.trim() : '';
     if (!userId || !password) continue;
     if (role !== 'viewer' && role !== 'operator' && role !== 'admin' && role !== 'auditor' && role !== 'developer' && role !== 'agent') continue;
-    users.push({ user_id: userId, password, role, display_name: displayName, source });
+    users.push({
+      user_id: userId,
+      password,
+      role,
+      display_name: displayName,
+      ...(avatarUrl.length > 0 ? { avatar_url: avatarUrl } : {}),
+      source
+    });
   }
   return users;
 }
@@ -160,7 +171,8 @@ function persistCustomUsers(): void {
     user_id: user.user_id,
     password: user.password,
     role: user.role,
-    display_name: user.display_name
+    display_name: user.display_name,
+    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {})
   }));
   fs.mkdirSync(path.dirname(usersPath), { recursive: true });
   const tmpPath = `${usersPath}.tmp`;
@@ -192,6 +204,7 @@ function toSessionView(record: SessionRecord): AuthSessionView {
     user_id: record.user_id,
     role: record.role,
     display_name: record.display_name,
+    ...(record.avatar_url ? { avatar_url: record.avatar_url } : {}),
     issued_at_utc: record.issued_at_utc,
     expires_at_utc: record.expires_at_utc,
     reauth_expires_at_utc: record.reauth_expires_at_utc
@@ -213,7 +226,7 @@ export function authenticateUser(userId: string, password: string): AuthUserReco
   };
 }
 
-export function issueAuthSession(user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name'>): { access_token: string; session: AuthSessionView } {
+export function issueAuthSession(user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name' | 'avatar_url'>): { access_token: string; session: AuthSessionView } {
   cleanupExpiredSessions();
   const issuedAt = new Date();
   const expiresAt = new Date(issuedAt.getTime() + sessionTtlMinutes() * 60_000);
@@ -224,6 +237,7 @@ export function issueAuthSession(user: Pick<AuthUserRecord, 'user_id' | 'role' |
     user_id: user.user_id,
     role: user.role,
     display_name: user.display_name,
+    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
     issued_at_utc: issuedAt.toISOString(),
     expires_at_utc: expiresAt.toISOString(),
     reauth_expires_at_utc: reauthExpiresAt.toISOString()
@@ -242,8 +256,17 @@ export function readAuthSession(token: string): AuthSessionView | null {
   const user = findUser(record.user_id);
   if (user) {
     const assignedRole = resolveAssignedRoleForUser(record.user_id, user.role);
-    if (assignedRole !== record.role) {
+    const changed = assignedRole !== record.role
+      || record.display_name !== user.display_name
+      || record.avatar_url !== user.avatar_url;
+    if (changed) {
       record.role = assignedRole;
+      record.display_name = user.display_name;
+      if (user.avatar_url) {
+        record.avatar_url = user.avatar_url;
+      } else {
+        delete record.avatar_url;
+      }
       sessions.set(token, record);
     }
   }
@@ -309,8 +332,9 @@ export function registerAuthUser(input: {
   password: string;
   role: AuthRole;
   display_name: string;
+  avatar_url?: string;
 }):
-  | { ok: true; user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name'> }
+  | { ok: true; user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name' | 'avatar_url'> }
   | { ok: false; error_code: string; message: string } {
   if (!allowSelfRegister()) {
     return { ok: false, error_code: 'SIGNUP_DISABLED', message: 'Self registration is disabled.' };
@@ -319,6 +343,7 @@ export function registerAuthUser(input: {
   const userId = input.user_id.trim();
   const password = input.password;
   const displayName = input.display_name.trim();
+  const avatarUrl = typeof input.avatar_url === 'string' ? input.avatar_url.trim() : '';
   const role = input.role;
 
   if (!userId || !displayName) {
@@ -375,6 +400,7 @@ export function registerAuthUser(input: {
     password,
     role,
     display_name: displayName,
+    ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
     source: 'custom'
   };
   authUsers = [...authUsers, record];
@@ -385,7 +411,92 @@ export function registerAuthUser(input: {
     user: {
       user_id: record.user_id,
       role: record.role,
-      display_name: record.display_name
+      display_name: record.display_name,
+      ...(record.avatar_url ? { avatar_url: record.avatar_url } : {})
     }
   };
+}
+
+function validateAvatarUrl(value: string): boolean {
+  if (!value) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function updateAuthUserProfile(input: {
+  user_id: string;
+  display_name?: string;
+  avatar_url?: string | null;
+}): { ok: true; user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name' | 'avatar_url'> } | { ok: false; error_code: string; message: string } {
+  const user = findUser(input.user_id);
+  if (!user) {
+    return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+  }
+
+  const nextDisplay = typeof input.display_name === 'string' ? input.display_name.trim() : user.display_name;
+  if (!nextDisplay) {
+    return { ok: false, error_code: 'VALIDATION_ERROR', message: 'display_name is required.' };
+  }
+
+  let nextAvatar = user.avatar_url;
+  if (input.avatar_url === null) {
+    nextAvatar = undefined;
+  } else if (typeof input.avatar_url === 'string') {
+    const trimmed = input.avatar_url.trim();
+    if (!validateAvatarUrl(trimmed)) {
+      return { ok: false, error_code: 'VALIDATION_ERROR', message: 'avatar_url must be http/https URL.' };
+    }
+    nextAvatar = trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  user.display_name = nextDisplay;
+  if (nextAvatar) {
+    user.avatar_url = nextAvatar;
+  } else {
+    delete user.avatar_url;
+  }
+  authUsers = [...authUsers];
+  persistCustomUsers();
+
+  return {
+    ok: true,
+    user: {
+      user_id: user.user_id,
+      role: resolveAssignedRoleForUser(user.user_id, user.role),
+      display_name: user.display_name,
+      ...(user.avatar_url ? { avatar_url: user.avatar_url } : {})
+    }
+  };
+}
+
+export function updateAuthUserPassword(input: {
+  user_id: string;
+  current_password: string;
+  new_password: string;
+}): { ok: true } | { ok: false; error_code: string; message: string } {
+  const user = findUser(input.user_id);
+  if (!user) {
+    return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+  }
+  if (!safeEquals(user.password, input.current_password)) {
+    return { ok: false, error_code: 'INVALID_CREDENTIALS', message: 'Current password is incorrect.' };
+  }
+  if (input.new_password.length < PASSWORD_MIN) {
+    return { ok: false, error_code: 'WEAK_PASSWORD', message: `New password must be at least ${PASSWORD_MIN} characters.` };
+  }
+  if (!/[A-Z]/.test(input.new_password) || !/[a-z]/.test(input.new_password) || !/[0-9]/.test(input.new_password)) {
+    return {
+      ok: false,
+      error_code: 'WEAK_PASSWORD',
+      message: 'New password must include uppercase, lowercase, and number.'
+    };
+  }
+  user.password = input.new_password;
+  authUsers = [...authUsers];
+  persistCustomUsers();
+  return { ok: true };
 }
