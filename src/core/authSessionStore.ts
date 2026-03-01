@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { resolveAssignedRoleForUser } from './rbacStore.js';
+import { consumePasswordResetCode, consumeSignupCode } from './authAccessCodeStore.js';
 
 type AuthRole = 'viewer' | 'operator' | 'admin' | 'auditor' | 'developer' | 'agent';
 type UserSource = 'default' | 'env' | 'custom';
@@ -39,6 +40,8 @@ export interface AuthSessionView {
 export interface AuthAccessHelpView {
   signup_enabled: boolean;
   admin_signup_enabled: boolean;
+  signup_code_required: boolean;
+  signup_code_length: number;
   user_id_rules: {
     pattern: string;
     min_length: number;
@@ -55,10 +58,10 @@ export interface AuthAccessHelpView {
 
 const sessions = new Map<string, SessionRecord>();
 const usersPath = path.resolve('.data', 'auth-users.json');
-const USER_ID_PATTERN = /^[a-z][a-z0-9._-]{2,31}$/;
-const USER_ID_PATTERN_STRING = '^[a-z][a-z0-9._-]{2,31}$';
+const USER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._@-]{2,63}$/;
+const USER_ID_PATTERN_STRING = '^[a-zA-Z0-9][a-zA-Z0-9._@-]{2,63}$';
 const USER_ID_MIN = 3;
-const USER_ID_MAX = 32;
+const USER_ID_MAX = 64;
 const PASSWORD_MIN = 8;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -312,11 +315,13 @@ export function readAuthAccessHelp(): AuthAccessHelpView {
   return {
     signup_enabled: allowSelfRegister(),
     admin_signup_enabled: allowSelfRegisterAdmin(),
+    signup_code_required: true,
+    signup_code_length: 6,
     user_id_rules: {
       pattern: USER_ID_PATTERN_STRING,
       min_length: USER_ID_MIN,
       max_length: USER_ID_MAX,
-      example: 'alex.ops'
+      example: 'name@company.com'
     },
     password_rules: {
       min_length: PASSWORD_MIN,
@@ -333,6 +338,7 @@ export function registerAuthUser(input: {
   role: AuthRole;
   display_name: string;
   avatar_url?: string;
+  signup_code: string;
 }):
   | { ok: true; user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name' | 'avatar_url'> }
   | { ok: false; error_code: string; message: string } {
@@ -342,6 +348,7 @@ export function registerAuthUser(input: {
 
   const userId = input.user_id.trim();
   const password = input.password;
+  const signupCode = input.signup_code.trim();
   const displayName = input.display_name.trim();
   const avatarUrl = typeof input.avatar_url === 'string' ? input.avatar_url.trim() : '';
   const role = input.role;
@@ -353,11 +360,18 @@ export function registerAuthUser(input: {
       message: 'user_id and display_name are required.'
     };
   }
+  if (!/^\d{6}$/.test(signupCode)) {
+    return {
+      ok: false,
+      error_code: 'INVALID_SIGNUP_CODE',
+      message: 'signup_code must be a 6-digit code issued by admin.'
+    };
+  }
   if (!USER_ID_PATTERN.test(userId)) {
     return {
       ok: false,
       error_code: 'INVALID_USER_ID',
-      message: 'user_id must match ^[a-z][a-z0-9._-]{2,31}$.'
+      message: 'user_id must start with a letter/number and may include dot, dash, underscore, or @ (3-64 chars).'
     };
   }
   if (password.length < PASSWORD_MIN) {
@@ -393,6 +407,11 @@ export function registerAuthUser(input: {
       error_code: 'USER_EXISTS',
       message: 'User already exists.'
     };
+  }
+
+  const consumed = consumeSignupCode(signupCode);
+  if (!consumed.ok) {
+    return consumed;
   }
 
   const record: AuthUserRecord = {
@@ -496,6 +515,41 @@ export function updateAuthUserPassword(input: {
     };
   }
   user.password = input.new_password;
+  authUsers = [...authUsers];
+  persistCustomUsers();
+  return { ok: true };
+}
+
+export function resetAuthUserPasswordWithCode(input: {
+  user_id: string;
+  reset_code: string;
+  new_password: string;
+}): { ok: true } | { ok: false; error_code: string; message: string } {
+  const userId = input.user_id.trim();
+  const resetCode = input.reset_code.trim();
+  const newPassword = input.new_password;
+  const user = findUser(userId);
+  if (!user) {
+    return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+  }
+  if (!/^\d{6}$/.test(resetCode)) {
+    return { ok: false, error_code: 'INVALID_RESET_CODE', message: 'reset_code must be a 6-digit code.' };
+  }
+  if (newPassword.length < PASSWORD_MIN) {
+    return { ok: false, error_code: 'WEAK_PASSWORD', message: `New password must be at least ${PASSWORD_MIN} characters.` };
+  }
+  if (!/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+    return {
+      ok: false,
+      error_code: 'WEAK_PASSWORD',
+      message: 'New password must include uppercase, lowercase, and number.'
+    };
+  }
+
+  const consumed = consumePasswordResetCode({ code: resetCode, userId });
+  if (!consumed.ok) return consumed;
+
+  user.password = newPassword;
   authUsers = [...authUsers];
   persistCustomUsers();
   return { ok: true };

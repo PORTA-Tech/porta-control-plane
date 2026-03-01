@@ -1,16 +1,22 @@
-import { Router } from 'express';
+import { Request, Response, Router } from 'express';
 import {
   authenticateUser,
   issueAuthSession,
   listAuthUsers,
   readAuthAccessHelp,
   readAuthSession,
+  resetAuthUserPasswordWithCode,
   registerAuthUser,
   refreshReauth,
   updateAuthUserPassword,
   updateAuthUserProfile,
   revokeAuthSession
 } from '../../core/authSessionStore.js';
+import {
+  generatePasswordResetCode,
+  generateSignupCode,
+  listActiveAccessCodes
+} from '../../core/authAccessCodeStore.js';
 
 function parseBearerToken(header: string | undefined): string | null {
   if (!header) return null;
@@ -18,6 +24,20 @@ function parseBearerToken(header: string | undefined): string | null {
   if (!value.toLowerCase().startsWith('bearer ')) return null;
   const token = value.slice('bearer '.length).trim();
   return token.length > 0 ? token : null;
+}
+
+function readSessionOrReject(req: Request, res: Response) {
+  const token = parseBearerToken(req.header('authorization'));
+  if (!token) {
+    res.status(401).json({ error_code: 'UNAUTHORIZED', message: 'Bearer token is required.' });
+    return null;
+  }
+  const session = readAuthSession(token);
+  if (!session) {
+    res.status(401).json({ error_code: 'SESSION_EXPIRED', message: 'Session expired or invalid.' });
+    return null;
+  }
+  return session;
 }
 
 export function createAuthController(): Router {
@@ -133,6 +153,7 @@ export function createAuthController(): Router {
     const password = typeof body.password === 'string' ? body.password : '';
     const displayName = typeof body.display_name === 'string' ? body.display_name : userId;
     const role = typeof body.role === 'string' ? body.role : 'developer';
+    const signupCode = typeof body.signup_code === 'string' ? body.signup_code : '';
     if (!userId.trim() || !password || !displayName.trim()) {
       res.status(400).json({
         error_code: 'VALIDATION_ERROR',
@@ -152,7 +173,8 @@ export function createAuthController(): Router {
       user_id: userId.trim(),
       password,
       display_name: displayName.trim(),
-      role: role as 'viewer' | 'developer' | 'auditor' | 'operator' | 'admin'
+      role: role as 'viewer' | 'developer' | 'auditor' | 'operator' | 'admin',
+      signup_code: signupCode
     });
     if (!created.ok) {
       const status = created.error_code === 'USER_EXISTS' ? 409 : created.error_code === 'SIGNUP_DISABLED' || created.error_code === 'ADMIN_SIGNUP_DISABLED' ? 403 : 400;
@@ -166,6 +188,24 @@ export function createAuthController(): Router {
       ok: true,
       user: created.user
     });
+  });
+
+  router.post('/forgot-password/reset', (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const userId = typeof body.user_id === 'string' ? body.user_id : '';
+    const resetCode = typeof body.reset_code === 'string' ? body.reset_code : '';
+    const newPassword = typeof body.new_password === 'string' ? body.new_password : '';
+    const updated = resetAuthUserPasswordWithCode({
+      user_id: userId,
+      reset_code: resetCode,
+      new_password: newPassword
+    });
+    if (!updated.ok) {
+      const status = updated.error_code === 'USER_NOT_FOUND' ? 404 : 400;
+      res.status(status).json({ error_code: updated.error_code, message: updated.message });
+      return;
+    }
+    res.json({ ok: true });
   });
 
   router.patch('/profile', (req, res) => {
@@ -234,6 +274,60 @@ export function createAuthController(): Router {
       return;
     }
     res.json({ ok: true });
+  });
+
+  router.post('/admin/signup-code', (req, res) => {
+    const session = readSessionOrReject(req, res);
+    if (!session) return;
+    if (session.role !== 'admin') {
+      res.status(403).json({ error_code: 'RBAC_DENIED', message: 'Admin role required.' });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const ttlRaw = Number(body.ttl_minutes);
+    const ttl = Number.isFinite(ttlRaw) ? Math.max(5, Math.min(120, Math.trunc(ttlRaw))) : undefined;
+    const created = generateSignupCode(session.user_id, ttl);
+    res.status(201).json({
+      ok: true,
+      code: created.code,
+      expires_at_utc: created.expires_at_utc
+    });
+  });
+
+  router.post('/admin/password-reset-code', (req, res) => {
+    const session = readSessionOrReject(req, res);
+    if (!session) return;
+    if (session.role !== 'admin') {
+      res.status(403).json({ error_code: 'RBAC_DENIED', message: 'Admin role required.' });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const userId = typeof body.user_id === 'string' ? body.user_id.trim() : '';
+    if (!userId) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'user_id is required.' });
+      return;
+    }
+    const ttlRaw = Number(body.ttl_minutes);
+    const ttl = Number.isFinite(ttlRaw) ? Math.max(5, Math.min(120, Math.trunc(ttlRaw))) : undefined;
+    const created = generatePasswordResetCode(session.user_id, userId, ttl);
+    res.status(201).json({
+      ok: true,
+      user_id: userId,
+      code: created.code,
+      expires_at_utc: created.expires_at_utc
+    });
+  });
+
+  router.get('/admin/codes', (req, res) => {
+    const session = readSessionOrReject(req, res);
+    if (!session) return;
+    if (session.role !== 'admin') {
+      res.status(403).json({ error_code: 'RBAC_DENIED', message: 'Admin role required.' });
+      return;
+    }
+    const typeRaw = typeof req.query.type === 'string' ? req.query.type : 'all';
+    const type = typeRaw === 'signup' || typeRaw === 'password_reset' ? typeRaw : 'all';
+    res.json(listActiveAccessCodes(type));
   });
 
   return router;
