@@ -57,7 +57,16 @@ const routePolicies: RoutePolicy[] = [
   { method: 'GET', path: /^\/v1\/audit\/alerts$/, roles: roleSet('auditor', 'admin', 'operator') },
   { method: 'POST', path: /^\/v1\/audit\/alerts\/[a-z0-9]+\/resolve$/, roles: roleSet('admin', 'operator') },
   { method: 'POST', path: /^\/v1\/policy\/evaluate$/, roles: roleSet('operator', 'admin') },
-  { method: 'GET', path: /^\/v1\/policy\/state\/[a-z0-9._-]+\/[a-z0-9._-]+$/, roles: roleSet('operator', 'admin', 'auditor') }
+  { method: 'GET', path: /^\/v1\/policy\/state\/[a-z0-9._-]+\/[a-z0-9._-]+$/, roles: roleSet('operator', 'admin', 'auditor') },
+  { method: 'GET', path: /^\/v1\/security\/roles$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') },
+  { method: 'GET', path: /^\/v1\/security\/permissions-matrix$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') },
+  { method: 'GET', path: /^\/v1\/security\/sensitive-policy$/, roles: roleSet('operator', 'admin', 'auditor') },
+  { method: 'POST', path: /^\/v1\/security\/sensitive-policy\/update$/, roles: roleSet('admin'), requiresRecentReauth: true },
+  { method: 'GET', path: /^\/v1\/security\/events$/, roles: roleSet('operator', 'admin', 'auditor') },
+  { method: 'GET', path: /^\/v1\/rbac\/assignments$/, roles: roleSet('operator', 'admin', 'auditor') },
+  { method: 'POST', path: /^\/v1\/rbac\/assign$/, roles: roleSet('admin'), requiresRecentReauth: true },
+  { method: 'POST', path: /^\/v1\/rbac\/revoke$/, roles: roleSet('admin'), requiresRecentReauth: true },
+  { method: 'GET', path: /^\/v1\/rbac\/effective-permissions$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') }
 ];
 
 const allowedRoles = roleSet('viewer', 'operator', 'admin', 'auditor', 'developer', 'agent');

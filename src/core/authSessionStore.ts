@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { resolveAssignedRoleForUser } from './rbacStore.js';
 
 type AuthRole = 'viewer' | 'operator' | 'admin' | 'auditor' | 'developer' | 'agent';
 
@@ -125,7 +126,10 @@ export function authenticateUser(userId: string, password: string): AuthUserReco
   const user = authUsers.find((row) => row.user_id.toLowerCase() === normalized);
   if (!user) return null;
   if (!safeEquals(user.password, password)) return null;
-  return user;
+  return {
+    ...user,
+    role: resolveAssignedRoleForUser(user.user_id, user.role)
+  };
 }
 
 export function issueAuthSession(user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name'>): { access_token: string; session: AuthSessionView } {
@@ -154,6 +158,14 @@ export function readAuthSession(token: string): AuthSessionView | null {
   cleanupExpiredSessions();
   const record = sessions.get(token);
   if (!record) return null;
+  const user = authUsers.find((row) => row.user_id.toLowerCase() === record.user_id.toLowerCase());
+  if (user) {
+    const assignedRole = resolveAssignedRoleForUser(record.user_id, user.role);
+    if (assignedRole !== record.role) {
+      record.role = assignedRole;
+      sessions.set(token, record);
+    }
+  }
   return toSessionView(record);
 }
 
@@ -179,7 +191,13 @@ export function hasValidReauth(session: AuthSessionView): boolean {
 export function listAuthUsers(): Array<Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name'>> {
   return authUsers.map((row) => ({
     user_id: row.user_id,
-    role: row.role,
+    role: resolveAssignedRoleForUser(row.user_id, row.role),
     display_name: row.display_name
   }));
+}
+
+export function resolveAuthUserRole(userId: string): AuthRole | null {
+  const user = authUsers.find((row) => row.user_id.toLowerCase() === userId.trim().toLowerCase());
+  if (!user) return null;
+  return resolveAssignedRoleForUser(user.user_id, user.role);
 }
