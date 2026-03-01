@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { OperatorRequest } from '../middleware/auth.js';
 import {
   listSecurityRoles,
   readSecurityEvents,
@@ -14,8 +15,25 @@ export function createSecurityController(): Router {
     res.json(listSecurityRoles());
   });
 
-  router.get('/permissions-matrix', (_req, res) => {
-    res.json(readSecurityPermissionsMatrix());
+  router.get('/permissions-matrix', (req, res) => {
+    const matrix = readSecurityPermissionsMatrix();
+    const role = (req as OperatorRequest).operatorRole ?? 'viewer';
+    if (role === 'admin' || role === 'auditor') {
+      res.json({
+        ...matrix,
+        visibility: 'full',
+        scoped_role: null
+      });
+      return;
+    }
+    const scoped = matrix.rows.find((row) => row.role === role);
+    res.json({
+      rows: scoped ? [{ ...scoped, sensitive_actions: [] }] : [],
+      source: matrix.source,
+      updated_at_utc: matrix.updated_at_utc,
+      visibility: 'restricted',
+      scoped_role: role
+    });
   });
 
   router.get('/sensitive-policy', (_req, res) => {
@@ -48,4 +66,3 @@ export function createSecurityController(): Router {
 
   return router;
 }
-
