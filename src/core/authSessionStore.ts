@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { resolveAssignedRoleForUser } from './rbacStore.js';
 import { consumePasswordResetCode, consumeSignupCode } from './authAccessCodeStore.js';
 
@@ -57,7 +58,12 @@ export interface AuthAccessHelpView {
 }
 
 const sessions = new Map<string, SessionRecord>();
-const usersPath = path.resolve('.data', 'auth-users.json');
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const moduleUsersPath = path.resolve(moduleDir, '..', '..', '.data', 'auth-users.json');
+const legacyUsersPath = path.resolve('.data', 'auth-users.json');
+const usersPath = process.env.AUTH_USERS_PATH && process.env.AUTH_USERS_PATH.trim().length > 0
+  ? path.resolve(process.env.AUTH_USERS_PATH)
+  : moduleUsersPath;
 const USER_ID_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USER_ID_PATTERN_STRING = '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$';
 const USER_ID_MIN = 5;
@@ -156,9 +162,11 @@ function loadUsers(): AuthUserRecord[] {
     table.set(user.user_id.toLowerCase(), user);
   }
 
-  if (fs.existsSync(usersPath)) {
+  const candidatePaths = new Set([usersPath, legacyUsersPath]);
+  for (const candidate of candidatePaths) {
+    if (!fs.existsSync(candidate)) continue;
     try {
-      const parsed = JSON.parse(fs.readFileSync(usersPath, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
       const customUsers = parseUserRows(parsed, 'custom');
       for (const user of customUsers) {
         table.set(user.user_id.toLowerCase(), user);
@@ -185,6 +193,16 @@ function persistCustomUsers(): void {
   const tmpPath = `${usersPath}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(custom, null, 2));
   fs.renameSync(tmpPath, usersPath);
+  if (legacyUsersPath !== usersPath) {
+    try {
+      fs.mkdirSync(path.dirname(legacyUsersPath), { recursive: true });
+      const legacyTmp = `${legacyUsersPath}.tmp`;
+      fs.writeFileSync(legacyTmp, JSON.stringify(custom, null, 2));
+      fs.renameSync(legacyTmp, legacyUsersPath);
+    } catch {
+      // best-effort legacy mirror for environments still booting with cwd-relative data paths
+    }
+  }
 }
 
 function safeEquals(left: string, right: string): boolean {
