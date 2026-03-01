@@ -58,10 +58,10 @@ export interface AuthAccessHelpView {
 
 const sessions = new Map<string, SessionRecord>();
 const usersPath = path.resolve('.data', 'auth-users.json');
-const USER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._@-]{2,63}$/;
-const USER_ID_PATTERN_STRING = '^[a-zA-Z0-9][a-zA-Z0-9._@-]{2,63}$';
-const USER_ID_MIN = 3;
-const USER_ID_MAX = 64;
+const USER_ID_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USER_ID_PATTERN_STRING = '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$';
+const USER_ID_MIN = 5;
+const USER_ID_MAX = 128;
 const PASSWORD_MIN = 8;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -91,6 +91,10 @@ function allowSelfRegister(): boolean {
 
 function allowSelfRegisterAdmin(): boolean {
   return parseBoolean(process.env.AUTH_ALLOW_SELF_REGISTER_ADMIN, true);
+}
+
+function requireSignupCode(): boolean {
+  return parseBoolean(process.env.AUTH_REQUIRE_SIGNUP_CODE, false);
 }
 
 function stableUsers(): AuthUserRecord[] {
@@ -315,7 +319,7 @@ export function readAuthAccessHelp(): AuthAccessHelpView {
   return {
     signup_enabled: allowSelfRegister(),
     admin_signup_enabled: allowSelfRegisterAdmin(),
-    signup_code_required: true,
+    signup_code_required: requireSignupCode(),
     signup_code_length: 6,
     user_id_rules: {
       pattern: USER_ID_PATTERN_STRING,
@@ -338,7 +342,7 @@ export function registerAuthUser(input: {
   role: AuthRole;
   display_name: string;
   avatar_url?: string;
-  signup_code: string;
+  signup_code?: string;
 }):
   | { ok: true; user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name' | 'avatar_url'> }
   | { ok: false; error_code: string; message: string } {
@@ -348,7 +352,7 @@ export function registerAuthUser(input: {
 
   const userId = input.user_id.trim();
   const password = input.password;
-  const signupCode = input.signup_code.trim();
+  const signupCode = (input.signup_code ?? '').trim();
   const displayName = input.display_name.trim();
   const avatarUrl = typeof input.avatar_url === 'string' ? input.avatar_url.trim() : '';
   const role = input.role;
@@ -360,7 +364,7 @@ export function registerAuthUser(input: {
       message: 'user_id and display_name are required.'
     };
   }
-  if (!/^\d{6}$/.test(signupCode)) {
+  if (requireSignupCode() && !/^\d{6}$/.test(signupCode)) {
     return {
       ok: false,
       error_code: 'INVALID_SIGNUP_CODE',
@@ -371,7 +375,7 @@ export function registerAuthUser(input: {
     return {
       ok: false,
       error_code: 'INVALID_USER_ID',
-      message: 'user_id must start with a letter/number and may include dot, dash, underscore, or @ (3-64 chars).'
+      message: 'user_id must be a valid email address.'
     };
   }
   if (password.length < PASSWORD_MIN) {
@@ -409,9 +413,11 @@ export function registerAuthUser(input: {
     };
   }
 
-  const consumed = consumeSignupCode(signupCode);
-  if (!consumed.ok) {
-    return consumed;
+  if (requireSignupCode()) {
+    const consumed = consumeSignupCode(signupCode);
+    if (!consumed.ok) {
+      return consumed;
+    }
   }
 
   const record: AuthUserRecord = {
