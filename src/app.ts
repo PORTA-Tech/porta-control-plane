@@ -12,9 +12,11 @@ import { createPolicyController } from './api/controllers/policyController.js';
 import { createAuthController } from './api/controllers/authController.js';
 import { createSecurityController } from './api/controllers/securityController.js';
 import { createRbacController } from './api/controllers/rbacController.js';
+import { createSystemHealthController } from './api/controllers/systemHealthController.js';
 import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middleware/auth.js';
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
+import { recordSystemApiRequest } from './core/systemHealthEngine.js';
 import { loadRuntimeState, runtimeState } from './store/runtimeState.js';
 
 const defaultAllowedOrigins = ['https://porta-operations-console.onrender.com', 'http://localhost:5173'];
@@ -72,6 +74,21 @@ export function createApp(): Express {
 
   app.use(express.json({ limit: '1mb' }));
 
+  app.use((req, res, next) => {
+    const started = process.hrtime.bigint();
+    res.on('finish', () => {
+      const ended = process.hrtime.bigint();
+      const durationMs = Number(ended - started) / 1_000_000;
+      recordSystemApiRequest({
+        method: req.method.toUpperCase(),
+        path: `${req.baseUrl}${req.path}`,
+        status: res.statusCode,
+        duration_ms: durationMs
+      });
+    });
+    next();
+  });
+
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   app.use('/auth', createAuthController());
@@ -89,6 +106,7 @@ export function createApp(): Express {
   app.use('/v1/policy', createPolicyController());
   app.use('/v1/security', createSecurityController());
   app.use('/v1/rbac', createRbacController());
+  app.use('/v1/system', createSystemHealthController());
 
   return app;
 }

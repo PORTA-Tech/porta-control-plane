@@ -66,7 +66,9 @@ const routePolicies: RoutePolicy[] = [
   { method: 'GET', path: /^\/v1\/rbac\/assignments$/, roles: roleSet('operator', 'admin', 'auditor') },
   { method: 'POST', path: /^\/v1\/rbac\/assign$/, roles: roleSet('admin'), requiresRecentReauth: true },
   { method: 'POST', path: /^\/v1\/rbac\/revoke$/, roles: roleSet('admin'), requiresRecentReauth: true },
-  { method: 'GET', path: /^\/v1\/rbac\/effective-permissions$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') }
+  { method: 'GET', path: /^\/v1\/rbac\/effective-permissions$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') },
+  { method: 'GET', path: /^\/v1\/system\/health$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') },
+  { method: 'POST', path: /^\/v1\/system\/ui-metrics$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') }
 ];
 
 const allowedRoles = roleSet('viewer', 'operator', 'admin', 'auditor', 'developer', 'agent');
