@@ -3,7 +3,9 @@ import {
   authenticateUser,
   issueAuthSession,
   listAuthUsers,
+  readAuthAccessHelp,
   readAuthSession,
+  registerAuthUser,
   refreshReauth,
   revokeAuthSession
 } from '../../core/authSessionStore.js';
@@ -115,6 +117,51 @@ export function createAuthController(): Router {
 
   router.get('/users', (_req, res) => {
     res.json(listAuthUsers());
+  });
+
+  router.get('/access-help', (_req, res) => {
+    res.json(readAuthAccessHelp());
+  });
+
+  router.post('/register', (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const userId = typeof body.user_id === 'string' ? body.user_id : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+    const displayName = typeof body.display_name === 'string' ? body.display_name : userId;
+    const role = typeof body.role === 'string' ? body.role : 'developer';
+    if (!userId.trim() || !password || !displayName.trim()) {
+      res.status(400).json({
+        error_code: 'VALIDATION_ERROR',
+        message: 'user_id, display_name and password are required.'
+      });
+      return;
+    }
+    const allowedRoles = new Set(['viewer', 'developer', 'auditor', 'operator', 'admin']);
+    if (!allowedRoles.has(role)) {
+      res.status(400).json({
+        error_code: 'VALIDATION_ERROR',
+        message: 'Unsupported role.'
+      });
+      return;
+    }
+    const created = registerAuthUser({
+      user_id: userId.trim(),
+      password,
+      display_name: displayName.trim(),
+      role: role as 'viewer' | 'developer' | 'auditor' | 'operator' | 'admin'
+    });
+    if (!created.ok) {
+      const status = created.error_code === 'USER_EXISTS' ? 409 : created.error_code === 'SIGNUP_DISABLED' || created.error_code === 'ADMIN_SIGNUP_DISABLED' ? 403 : 400;
+      res.status(status).json({
+        error_code: created.error_code,
+        message: created.message
+      });
+      return;
+    }
+    res.status(201).json({
+      ok: true,
+      user: created.user
+    });
   });
 
   return router;
