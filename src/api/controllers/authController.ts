@@ -1,6 +1,7 @@
 import { Request, Response, Router } from 'express';
 import {
   authenticateUser,
+  hasAuthUser,
   issueAuthSession,
   listAuthUsers,
   readAuthAccessHelp,
@@ -57,7 +58,11 @@ export function createAuthController(): Router {
     }
     const user = authenticateUser(userId.trim(), password);
     if (!user) {
-      res.status(401).json({ error_code: 'INVALID_CREDENTIALS', message: 'Invalid username or password.' });
+      const exists = hasAuthUser(userId.trim());
+      res.status(401).json({
+        error_code: exists ? 'INVALID_CREDENTIALS' : 'USER_NOT_FOUND',
+        message: exists ? 'Invalid username or password.' : 'Account not found. Create an account on this control-plane node.'
+      });
       return;
     }
 

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -61,9 +62,10 @@ const sessions = new Map<string, SessionRecord>();
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const moduleUsersPath = path.resolve(moduleDir, '..', '..', '.data', 'auth-users.json');
 const legacyUsersPath = path.resolve('.data', 'auth-users.json');
+const homeUsersPath = path.resolve(os.homedir(), '.porta', 'auth-users.json');
 const usersPath = process.env.AUTH_USERS_PATH && process.env.AUTH_USERS_PATH.trim().length > 0
   ? path.resolve(process.env.AUTH_USERS_PATH)
-  : moduleUsersPath;
+  : homeUsersPath;
 const USER_ID_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USER_ID_PATTERN_STRING = '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$';
 const USER_ID_MIN = 5;
@@ -162,7 +164,7 @@ function loadUsers(): AuthUserRecord[] {
     table.set(user.user_id.toLowerCase(), user);
   }
 
-  const candidatePaths = new Set([usersPath, legacyUsersPath]);
+  const candidatePaths = new Set([usersPath, moduleUsersPath, legacyUsersPath]);
   for (const candidate of candidatePaths) {
     if (!fs.existsSync(candidate)) continue;
     try {
@@ -193,14 +195,17 @@ function persistCustomUsers(): void {
   const tmpPath = `${usersPath}.tmp`;
   fs.writeFileSync(tmpPath, JSON.stringify(custom, null, 2));
   fs.renameSync(tmpPath, usersPath);
-  if (legacyUsersPath !== usersPath) {
+
+  const mirrors = new Set([legacyUsersPath, moduleUsersPath]);
+  for (const mirrorPath of mirrors) {
+    if (mirrorPath === usersPath) continue;
     try {
-      fs.mkdirSync(path.dirname(legacyUsersPath), { recursive: true });
-      const legacyTmp = `${legacyUsersPath}.tmp`;
-      fs.writeFileSync(legacyTmp, JSON.stringify(custom, null, 2));
-      fs.renameSync(legacyTmp, legacyUsersPath);
+      fs.mkdirSync(path.dirname(mirrorPath), { recursive: true });
+      const mirrorTmp = `${mirrorPath}.tmp`;
+      fs.writeFileSync(mirrorTmp, JSON.stringify(custom, null, 2));
+      fs.renameSync(mirrorTmp, mirrorPath);
     } catch {
-      // best-effort legacy mirror for environments still booting with cwd-relative data paths
+      // best-effort mirror for compatibility with older runtime paths.
     }
   }
 }
@@ -239,6 +244,10 @@ function toSessionView(record: SessionRecord): AuthSessionView {
 function findUser(userId: string): AuthUserRecord | undefined {
   const normalized = userId.trim().toLowerCase();
   return authUsers.find((row) => row.user_id.toLowerCase() === normalized);
+}
+
+export function hasAuthUser(userId: string): boolean {
+  return Boolean(findUser(userId));
 }
 
 export function authenticateUser(userId: string, password: string): AuthUserRecord | null {
