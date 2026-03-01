@@ -9,6 +9,7 @@ import { createExperimentController } from './api/controllers/experimentControll
 import { createAdapterController } from './api/controllers/adapterController.js';
 import { createAgentController } from './api/controllers/agentController.js';
 import { createPolicyController } from './api/controllers/policyController.js';
+import { createAuthController } from './api/controllers/authController.js';
 import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middleware/auth.js';
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
@@ -71,6 +72,7 @@ export function createApp(): Express {
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
+  app.use('/auth', createAuthController());
   app.use('/api/agent', createAgentController());
 
   app.use('/v1', requireAuthenticatedOperator, enforceRbacPolicy);

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { readAuthSession } from '../../core/authSessionStore.js';
 import { incrementAuditMetric } from '../../core/policyGovernanceStore.js';
 
 export type OperatorRole = 'viewer' | 'operator' | 'admin' | 'auditor' | 'developer' | 'agent';
@@ -6,18 +7,22 @@ export type OperatorRole = 'viewer' | 'operator' | 'admin' | 'auditor' | 'develo
 export interface OperatorRequest extends Request {
   operatorId?: string;
   operatorRole?: OperatorRole;
+  authSessionToken?: string;
+  authMode?: 'session' | 'header';
+  reauthExpiresAtUtc?: string;
 }
 
 interface RoutePolicy {
   method: string;
   path: RegExp;
   roles: ReadonlySet<OperatorRole>;
+  requiresRecentReauth?: boolean;
 }
 
 const roleSet = (...roles: OperatorRole[]): ReadonlySet<OperatorRole> => new Set(roles);
 
 const routePolicies: RoutePolicy[] = [
-  { method: 'POST', path: /^\/v1\/config\/submit$/, roles: roleSet('operator') },
+  { method: 'POST', path: /^\/v1\/config\/submit$/, roles: roleSet('operator'), requiresRecentReauth: true },
   { method: 'GET', path: /^\/v1\/config\/current$/, roles: roleSet('operator', 'admin') },
   { method: 'GET', path: /^\/v1\/config\/ledger$/, roles: roleSet('operator', 'admin') },
   { method: 'GET', path: /^\/v1\/config\/integrity-active$/, roles: roleSet('viewer', 'operator', 'admin') },
@@ -26,9 +31,9 @@ const routePolicies: RoutePolicy[] = [
   { method: 'GET', path: /^\/v1\/rollout\/dry-run$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/rollout\/evaluate$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/rollout\/evidence-pack$/, roles: roleSet('viewer', 'operator', 'admin') },
-  { method: 'POST', path: /^\/v1\/rollout\/promote$/, roles: roleSet('operator') },
-  { method: 'POST', path: /^\/v1\/rollout\/halt$/, roles: roleSet('operator') },
-  { method: 'POST', path: /^\/v1\/rollout\/rollback$/, roles: roleSet('operator') },
+  { method: 'POST', path: /^\/v1\/rollout\/promote$/, roles: roleSet('operator'), requiresRecentReauth: true },
+  { method: 'POST', path: /^\/v1\/rollout\/halt$/, roles: roleSet('operator'), requiresRecentReauth: true },
+  { method: 'POST', path: /^\/v1\/rollout\/rollback$/, roles: roleSet('operator'), requiresRecentReauth: true },
   { method: 'POST', path: /^\/v1\/slo\/evaluate$/, roles: roleSet('operator') },
   { method: 'GET', path: /^\/v1\/nodes\/snapshot$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/cohorts\/evaluate$/, roles: roleSet('viewer', 'operator', 'admin') },
@@ -57,7 +62,31 @@ const routePolicies: RoutePolicy[] = [
 
 const allowedRoles = roleSet('viewer', 'operator', 'admin', 'auditor', 'developer', 'agent');
 
+function parseBearerToken(header: string | undefined): string | null {
+  if (!header) return null;
+  const raw = header.trim();
+  if (!raw.toLowerCase().startsWith('bearer ')) return null;
+  const token = raw.slice('bearer '.length).trim();
+  return token.length > 0 ? token : null;
+}
+
 export function requireAuthenticatedOperator(req: OperatorRequest, res: Response, next: NextFunction): void {
+  const bearerToken = parseBearerToken(req.header('authorization'));
+  if (bearerToken) {
+    const session = readAuthSession(bearerToken);
+    if (!session) {
+      res.status(401).json({ error: 'unauthorized', error_code: 'SESSION_EXPIRED' });
+      return;
+    }
+    req.operatorId = session.user_id;
+    req.operatorRole = session.role;
+    req.authSessionToken = bearerToken;
+    req.authMode = 'session';
+    req.reauthExpiresAtUtc = session.reauth_expires_at_utc;
+    next();
+    return;
+  }
+
   const operatorId = req.header('x-operator-id');
   const operatorRole = req.header('x-operator-role')?.toLowerCase() as OperatorRole | undefined;
 
@@ -68,6 +97,7 @@ export function requireAuthenticatedOperator(req: OperatorRequest, res: Response
 
   req.operatorId = operatorId;
   req.operatorRole = operatorRole;
+  req.authMode = 'header';
   next();
 }
 
@@ -99,6 +129,20 @@ export function enforceRbacPolicy(req: OperatorRequest, res: Response, next: Nex
       message: 'You do not have permission to execute this action.'
     });
     return;
+  }
+
+  if (policy.requiresRecentReauth && req.authMode === 'session') {
+    const reauthExpiresMs = req.reauthExpiresAtUtc ? Date.parse(req.reauthExpiresAtUtc) : NaN;
+    if (!Number.isFinite(reauthExpiresMs) || reauthExpiresMs <= Date.now()) {
+      incrementAuditMetric('audit_access_denied_total', 1, { reason: 'reauth_required' });
+      res.status(403).json({
+        error_code: 'REAUTH_REQUIRED',
+        required_role: [...policy.roles][0],
+        user_role: req.operatorRole ?? 'unknown',
+        message: 'Re-authentication is required for this sensitive action.'
+      });
+      return;
+    }
   }
 
   next();
