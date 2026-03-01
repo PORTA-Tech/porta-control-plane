@@ -217,19 +217,18 @@ export function createAdapterController(): Router {
       const hasSample = enabledForCohort && sampleSize > 0;
       const enoughSample = sampleSize >= minSample;
       const metricsAvailable = hasSample && enoughSample;
-      const errorRate = metricsAvailable ? selected.error : null;
-      const latency = metricsAvailable ? selected.latency : null;
+      // Contract compatibility: observability metrics remain numeric in v1 schema.
+      const errorRate = metricsAvailable ? selected.error : 0;
+      const latency = metricsAvailable ? selected.latency : 0;
       const threshold = runtimeState.adapterControls.circuitBreakerThreshold;
-      const circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' | 'DISABLED' | 'UNKNOWN' =
-        !featureGateEnabled() || !runtimeState.adapterControls.featureAdapterEnabled
-          ? 'DISABLED'
-          : !metricsAvailable || errorRate === null
-            ? 'UNKNOWN'
-            : errorRate >= threshold
-              ? 'OPEN'
-              : errorRate >= threshold * 0.8
-                ? 'HALF_OPEN'
-                : 'CLOSED';
+      const circuitBreakerState: 'CLOSED' | 'OPEN' | 'HALF_OPEN' =
+        !featureGateEnabled() || !runtimeState.adapterControls.featureAdapterEnabled || !metricsAvailable
+          ? 'CLOSED'
+          : errorRate >= threshold
+            ? 'OPEN'
+            : errorRate >= threshold * 0.8
+              ? 'HALF_OPEN'
+              : 'CLOSED';
 
       let availabilityReasonCode: string | undefined;
       if (!featureGateEnabled()) {
@@ -246,8 +245,8 @@ export function createAdapterController(): Router {
 
       return {
         cohort,
-        adapter_error_rate_pct: errorRate === null ? null : Number(errorRate.toFixed(3)),
-        adapter_latency_ms: latency === null ? null : Number(latency.toFixed(2)),
+        adapter_error_rate_pct: Number(errorRate.toFixed(3)),
+        adapter_latency_ms: Number(latency.toFixed(2)),
         circuit_breaker_state: circuitBreakerState,
         metrics_available: metricsAvailable,
         sample_size: sampleSize,
