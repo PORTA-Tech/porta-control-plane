@@ -6,6 +6,8 @@ import { createApp } from '../src/app.js';
 import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
 import { loadRuntimeState, resetRuntimeStateForTests, runtimeState } from '../src/store/runtimeState.js';
 import { appendLedgerRecord } from '../src/core/auditLedger.js';
+import { clearMachineSummaryStoreForTests } from '../src/store/machineSummaryStore.js';
+import { clearMachineActionStoreForTests } from '../src/store/machineActionStore.js';
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
@@ -24,8 +26,122 @@ describe('endpoint integration', () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();
+    clearMachineSummaryStoreForTests();
+    clearMachineActionStoreForTests();
     delete process.env.CONTROL_PLANE_ADAPTER_EXPANSION_ENABLED;
     loadRuntimeState();
+  });
+
+  it('ingests machine summaries and exposes them through fleet read endpoints', async () => {
+    const summary = {
+      machineId: 'machine-a',
+      machineName: 'HP-Laptop',
+      userName: 'DOMAIN\\alice',
+      agentVersion: '1.0.0',
+      schemaVersion: '1.0.0',
+      policyVersion: 'policy-v2',
+      reportedAtUtc: '2026-03-11T12:00:00.000Z',
+      agentRunning: true,
+      userSessionConnected: true,
+      activityDetected: true,
+      lastActivityUtc: '2026-03-11T11:59:58.000Z',
+      userAgentHeartbeatUtc: '2026-03-11T11:59:59.000Z',
+      captureContext: 'UserSession',
+      keyboardSignalActive: true,
+      mouseSignalActive: true,
+      ownershipWarning: null,
+      captureFailureReason: null,
+      lastError: null,
+      backendConnected: true,
+      localApiAuthReady: true,
+      dbMigrationFailed: false,
+      taskContinuityScore: 0.88,
+      taskContinuitySeconds: 2400,
+      continuityState: 'keep',
+      deepWorkActive: true,
+      overloadLikelihood: 0.34,
+      overloadActive: false,
+      breakNeeded: true,
+      breakPendingAction: 'stretch_break_suggestion',
+      breakPendingReasonCode: 'delivery_boundary_wait',
+      calibrationStage: 'calibrated',
+      trustTier: 'high',
+      modelConfidence: 0.87,
+      signalQualityScore: 0.91,
+      partialData: false,
+      missingMajorChannels: []
+    };
+
+    const ingest = await request(app).post('/api/agent/machine-summary').send(summary);
+    expect(ingest.status).toBe(202);
+
+    const listResponse = await withOperatorHeaders(request(app).get('/v1/machines/summary'));
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toHaveLength(1);
+    expect(listResponse.body[0]?.machineId).toBe('machine-a');
+    expect(listResponse.body[0]?.trustTier).toBe('high');
+
+    const detailResponse = await withOperatorHeaders(request(app).get('/v1/machines/machine-a'));
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body.machineName).toBe('HP-Laptop');
+    expect(detailResponse.body.breakPendingAction).toBe('stretch_break_suggestion');
+
+    const compatibilityResponse = await withOperatorHeaders(request(app).get('/v1/nodes/snapshot'));
+    expect(compatibilityResponse.status).toBe(200);
+    expect(compatibilityResponse.body).toHaveLength(1);
+    expect(compatibilityResponse.body[0]?.node_id).toBe('machine-a');
+    expect(compatibilityResponse.body[0]?.degradation_state).toBe('normal');
+  });
+
+  it('ingests machine action events and exposes them through fleet action endpoints', async () => {
+    const events = [
+      {
+        machineId: 'machine-a',
+        userName: 'DOMAIN\\alice',
+        interventionId: 'int-1',
+        action: 'break_suggestion',
+        actionCategory: 'suggestion',
+        decisionState: 'decided',
+        executionState: 'applied',
+        verifiedState: 'not_applicable',
+        timestampUtc: '2026-03-11T12:00:00.000Z',
+        appliedAtUtc: '2026-03-11T12:00:01.000Z',
+        errorCode: null,
+        policyId: 'break-policy',
+        whatChanged: 'Break suggestion displayed to user.',
+        howToUndo: 'Dismiss the suggestion overlay.'
+      },
+      {
+        machineId: 'machine-a',
+        userName: 'DOMAIN\\alice',
+        interventionId: 'int-2',
+        action: 'deep_work_notifications_suppressed',
+        actionCategory: 'automatic_change',
+        decisionState: 'decided',
+        executionState: 'verified',
+        verifiedState: 'verified',
+        timestampUtc: '2026-03-11T12:05:00.000Z',
+        appliedAtUtc: '2026-03-11T12:05:01.000Z',
+        errorCode: null,
+        policyId: 'deep-work-policy',
+        whatChanged: 'Notifications were suppressed.',
+        howToUndo: 'Wait for deep work exit or restore notifications manually.'
+      }
+    ];
+
+    const ingest = await request(app).post('/api/agent/action-events').send(events);
+    expect(ingest.status).toBe(202);
+    expect(ingest.body.count).toBe(2);
+
+    const recentResponse = await withOperatorHeaders(request(app).get('/v1/actions/recent'));
+    expect(recentResponse.status).toBe(200);
+    expect(recentResponse.body).toHaveLength(2);
+    expect(recentResponse.body[0]?.interventionId).toBe('int-2');
+
+    const machineResponse = await withOperatorHeaders(request(app).get('/v1/machines/machine-a/actions'));
+    expect(machineResponse.status).toBe(200);
+    expect(machineResponse.body).toHaveLength(2);
+    expect(machineResponse.body[0]?.action).toBe('deep_work_notifications_suppressed');
   });
 
   it('POST /v1/rollout/rollback executes forced rollback and cooldown', async () => {

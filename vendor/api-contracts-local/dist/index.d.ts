@@ -1,4 +1,6 @@
 export * from './dtos/NodeIdentity.js';
+export * from './dtos/MachineSummaryReport.js';
+export * from './dtos/MachineActionEvent.js';
 export * from './dtos/ConfigEnvelope.js';
 export * from './dtos/ConfigLedgerRecord.js';
 export * from './dtos/RolloutState.js';

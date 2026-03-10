@@ -15,12 +15,14 @@
   },
   "dependencies": {
     "@porta/api-contracts": "file:vendor/api-contracts-local",
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^12.1.0",
     "@types/express": "^4.17.21",
     "@types/node": "^22.7.7",
+    "@types/pg": "^8.18.0",
     "@types/supertest": "^6.0.3",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",

@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { listAgentPresence } from '../../store/agentPresenceStore.js';
+import { listMachineSummaries } from '../../store/machineSummaryStore.js';
+import type { MachineSummaryReport } from '@porta/api-contracts';
 
 type Cohort = 'stable' | 'canary-1' | 'canary-5' | 'internal' | 'experimental';
 type DegradationState = 'normal' | 'degraded' | 'safe';
@@ -48,24 +50,60 @@ function sloFor(degradationState: DegradationState): SloCompliance {
 export function createNodeController(): Router {
   const router = Router();
 
-  router.get('/snapshot', (_req, res) => {
-    const rows: NodeSnapshotRow[] = listAgentPresence()
-      .map((presence) => {
-        const degradationState = degradationFor(presence.lastHeartbeatUtc, presence.signatureValidity);
-        return {
-          node_id: presence.agentId,
-          cohort: cohortForAgentId(presence.agentId),
-          config_seq: presence.configSeq,
-          signature_valid: presence.signatureValidity,
-          last_heartbeat: presence.lastHeartbeatUtc,
-          degradation_state: degradationState,
-          SLO_compliance: sloFor(degradationState)
-        };
-      })
-      .sort((a, b) => Date.parse(b.last_heartbeat) - Date.parse(a.last_heartbeat));
+  router.get('/snapshot', async (_req, res, next) => {
+    try {
+      const summaries = await listMachineSummaries();
+      const presenceByAgentId = new Map(listAgentPresence().map((presence) => [presence.agentId, presence]));
 
-    res.json(rows);
+      const rows: NodeSnapshotRow[] = summaries
+        .map((summary) => mapSummaryToNodeSnapshot(summary, presenceByAgentId.get(summary.machineId)))
+        .sort((a, b) => Date.parse(b.last_heartbeat) - Date.parse(a.last_heartbeat));
+
+      res.json(rows);
+    } catch (error) {
+      next(error);
+    }
   });
 
   return router;
+}
+
+function mapSummaryToNodeSnapshot(
+  summary: MachineSummaryReport,
+  presence:
+    | {
+        configSeq: number;
+        signatureValidity: boolean;
+      }
+    | undefined
+): NodeSnapshotRow {
+  const signatureValid = presence?.signatureValidity ?? (!summary.dbMigrationFailed && summary.localApiAuthReady);
+  const degradationState = degradationForSummary(summary, signatureValid);
+
+  return {
+    node_id: summary.machineId,
+    cohort: cohortForAgentId(summary.machineId),
+    config_seq: presence?.configSeq ?? 0,
+    signature_valid: signatureValid,
+    last_heartbeat: summary.reportedAtUtc,
+    degradation_state: degradationState,
+    SLO_compliance: sloFor(degradationState)
+  };
+}
+
+function degradationForSummary(summary: MachineSummaryReport, signatureValid: boolean): DegradationState {
+  if (!signatureValid || !summary.agentRunning || summary.dbMigrationFailed) {
+    return 'degraded';
+  }
+
+  const heartbeatMs = Date.parse(summary.reportedAtUtc);
+  if (Number.isFinite(heartbeatMs) && Date.now() - heartbeatMs > STALE_HEARTBEAT_SECONDS * 1_000) {
+    return 'degraded';
+  }
+
+  if (!summary.userSessionConnected || (!summary.activityDetected && !summary.deepWorkActive)) {
+    return 'degraded';
+  }
+
+  return 'normal';
 }

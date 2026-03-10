@@ -799,6 +799,218 @@ components:
         autoAction:
           $ref: '#/components/schemas/RollbackActionResult'
 
+    CaptureContextValue:
+      type: string
+      enum: [Unknown, UserSession, ServiceSession]
+
+    ContinuityStateValue:
+      type: string
+      enum: [keep, pause, decay, reset]
+
+    CalibrationStageValue:
+      type: string
+      enum: [cold, provisional, calibrated]
+
+    TrustTierValue:
+      type: string
+      enum: [low, medium, high]
+
+    MachineActionCategoryValue:
+      type: string
+      enum: [suggestion, automatic_change, policy_intent, unsupported, decision_record]
+
+    MachineActionDecisionStateValue:
+      type: string
+      enum: [decided]
+
+    MachineActionExecutionStateValue:
+      type: string
+      enum: [decision_only, decided, applied, verified, failed]
+
+    MachineActionVerifiedStateValue:
+      type: string
+      enum: [not_applicable, pending, unverified, verified]
+
+    MachineSummaryReport:
+      type: object
+      required:
+        [
+          machine_id,
+          machine_name,
+          user_name,
+          agent_version,
+          schema_version,
+          policy_version,
+          reported_at_utc,
+          agent_running,
+          user_session_connected,
+          activity_detected,
+          capture_context,
+          keyboard_signal_active,
+          mouse_signal_active,
+          backend_connected,
+          local_api_auth_ready,
+          db_migration_failed,
+          task_continuity_score,
+          task_continuity_seconds,
+          continuity_state,
+          deep_work_active,
+          overload_likelihood,
+          overload_active,
+          break_needed,
+          calibration_stage,
+          trust_tier,
+          model_confidence,
+          partial_data,
+          missing_major_channels
+        ]
+      properties:
+        machine_id:
+          type: string
+        machine_name:
+          type: string
+        user_name:
+          type: string
+        agent_version:
+          type: string
+        schema_version:
+          type: string
+        policy_version:
+          type: string
+        reported_at_utc:
+          type: string
+          format: date-time
+        agent_running:
+          type: boolean
+        user_session_connected:
+          type: boolean
+        activity_detected:
+          type: boolean
+        last_activity_utc:
+          type: string
+          format: date-time
+          nullable: true
+        user_agent_heartbeat_utc:
+          type: string
+          format: date-time
+          nullable: true
+        capture_context:
+          $ref: '#/components/schemas/CaptureContextValue'
+        keyboard_signal_active:
+          type: boolean
+        mouse_signal_active:
+          type: boolean
+        ownership_warning:
+          type: string
+          nullable: true
+        capture_failure_reason:
+          type: string
+          nullable: true
+        last_error:
+          type: string
+          nullable: true
+        backend_connected:
+          type: boolean
+        local_api_auth_ready:
+          type: boolean
+        db_migration_failed:
+          type: boolean
+        task_continuity_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        task_continuity_seconds:
+          type: number
+          minimum: 0
+        continuity_state:
+          $ref: '#/components/schemas/ContinuityStateValue'
+        deep_work_active:
+          type: boolean
+        overload_likelihood:
+          type: number
+          minimum: 0
+          maximum: 1
+        overload_active:
+          type: boolean
+        break_needed:
+          type: boolean
+        break_pending_action:
+          type: string
+          nullable: true
+        break_pending_reason_code:
+          type: string
+          nullable: true
+        calibration_stage:
+          $ref: '#/components/schemas/CalibrationStageValue'
+        trust_tier:
+          $ref: '#/components/schemas/TrustTierValue'
+        model_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        signal_quality_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+        partial_data:
+          type: boolean
+        missing_major_channels:
+          type: array
+          items:
+            type: string
+
+    MachineActionEvent:
+      type: object
+      required:
+        [
+          machine_id,
+          user_name,
+          intervention_id,
+          action,
+          action_category,
+          decision_state,
+          execution_state,
+          verified_state,
+          timestamp_utc,
+          policy_id
+        ]
+      properties:
+        machine_id:
+          type: string
+        user_name:
+          type: string
+        intervention_id:
+          type: string
+        action:
+          type: string
+        action_category:
+          $ref: '#/components/schemas/MachineActionCategoryValue'
+        decision_state:
+          $ref: '#/components/schemas/MachineActionDecisionStateValue'
+        execution_state:
+          $ref: '#/components/schemas/MachineActionExecutionStateValue'
+        verified_state:
+          $ref: '#/components/schemas/MachineActionVerifiedStateValue'
+        timestamp_utc:
+          type: string
+          format: date-time
+        applied_at_utc:
+          type: string
+          format: date-time
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        policy_id:
+          type: string
+        what_changed:
+          type: string
+          nullable: true
+        how_to_undo:
+          type: string
+          nullable: true
+
     NodeSnapshotView:
       type: object
       required:
