@@ -20,6 +20,60 @@ paths:
                   ok:
                     type: boolean
 
+  /api/device/register:
+    post:
+      summary: Register or refresh a device identity
+      tags: [Device Identity]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegistrationRequest'
+      responses:
+        '200':
+          description: Device registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceLinkResult'
+
+  /api/device/link-account:
+    post:
+      summary: Link a registered device to an account and organization
+      tags: [Device Identity]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceAccountLinkRequest'
+      responses:
+        '200':
+          description: Device linked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceLinkResult'
+
+  /api/device/unlink-account:
+    post:
+      summary: Unlink a device from the current account
+      tags: [Device Identity]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceAccountUnlinkRequest'
+      responses:
+        '200':
+          description: Device unlinked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceLinkResult'
+
   /v1/config/submit:
     post:
       summary: Submit signed configuration envelope
@@ -847,6 +901,10 @@ components:
       type: string
       enum: [essential, enhanced]
 
+    DeviceLinkStateValue:
+      type: string
+      enum: [linked, unlinked]
+
     MachineActionCategoryValue:
       type: string
       enum: [suggestion, automatic_change, policy_intent, unsupported, decision_record]
@@ -1057,6 +1115,93 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    DeviceRegistrationRequest:
+      type: object
+      required:
+        [device_id, machine_name, platform, agent_version]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        machine_name:
+          type: string
+        device_display_name:
+          type: string
+          nullable: true
+        platform:
+          type: string
+        agent_version:
+          type: string
+        account_id:
+          type: string
+          format: uuid
+          nullable: true
+        org_id:
+          type: string
+          format: uuid
+          nullable: true
+        session_token:
+          type: string
+          nullable: true
+        local_proof_token:
+          type: string
+          nullable: true
+
+    DeviceAccountLinkRequest:
+      type: object
+      required:
+        [device_id, account_id, org_id]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        session_token:
+          type: string
+          nullable: true
+        local_proof_token:
+          type: string
+          nullable: true
+
+    DeviceAccountUnlinkRequest:
+      type: object
+      required:
+        [device_id]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+          nullable: true
+        org_id:
+          type: string
+          format: uuid
+          nullable: true
+        session_token:
+          type: string
+          nullable: true
+        local_proof_token:
+          type: string
+          nullable: true
+
+    DeviceLinkResult:
+      type: object
+      required: [ok, link_state, device]
+      properties:
+        ok:
+          type: boolean
+        link_state:
+          $ref: '#/components/schemas/DeviceLinkStateValue'
+        device:
+          $ref: '#/components/schemas/DeviceProfile'
 
     MachineSummaryReport:
       type: object

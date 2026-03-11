@@ -1,4 +1,14 @@
-import type { AccountProfile, ConsentRecord, DeviceProfile, Membership, OrganizationProfile } from '@porta/api-contracts';
+import type {
+  AccountProfile,
+  ConsentRecord,
+  DeviceAccountLinkRequest,
+  DeviceAccountUnlinkRequest,
+  DeviceLinkResult,
+  DeviceProfile,
+  DeviceRegistrationRequest,
+  Membership,
+  OrganizationProfile
+} from '@porta/api-contracts';
 import { getAccountProfile, getAccountProfileByPrimaryEmail, listAccountProfiles, upsertAccountProfile } from '../store/accountStore.js';
 import { getOrganizationProfile, listOrganizationProfiles } from '../store/organizationStore.js';
 import { getDeviceProfile, listDeviceProfilesForAccount, listDeviceProfilesForOrganization, upsertDeviceProfile } from '../store/deviceStore.js';
@@ -36,8 +46,49 @@ export interface AdminOrganizationView {
   consents: ConsentRecord[];
 }
 
+export interface IdentityOperationError {
+  status: number;
+  errorCode: string;
+  message: string;
+}
+
+export type DeviceIdentityOperationResult =
+  | { ok: true; value: DeviceLinkResult }
+  | { ok: false; error: IdentityOperationError };
+
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function linkedState(device: DeviceProfile): 'linked' | 'unlinked' {
+  return device.currentAccountId ? 'linked' : 'unlinked';
+}
+
+function success(device: DeviceProfile): DeviceIdentityOperationResult {
+  return {
+    ok: true,
+    value: {
+      ok: true,
+      linkState: linkedState(device),
+      device
+    }
+  };
+}
+
+function failure(status: number, errorCode: string, message: string): DeviceIdentityOperationResult {
+  return {
+    ok: false,
+    error: {
+      status,
+      errorCode,
+      message
+    }
+  };
+}
+
+async function hasActiveMembership(accountId: string, orgId: string): Promise<boolean> {
+  const memberships = await listMembershipsForAccount(accountId);
+  return memberships.some((membership) => membership.orgId === orgId && membership.status === 'active');
 }
 
 export async function ensureAccountProfileForAuthUser(userId: string): Promise<AccountProfile | null> {
@@ -109,6 +160,115 @@ export async function revokeDeviceForAccount(accountId: string, deviceId: string
 
   await upsertDeviceProfile(updated);
   return updated;
+}
+
+export async function registerDeviceIdentity(request: DeviceRegistrationRequest): Promise<DeviceIdentityOperationResult> {
+  const existing = await getDeviceProfile(request.deviceId);
+
+  if (request.accountId) {
+    const account = await getAccountProfile(request.accountId);
+    if (!account) {
+      return failure(404, 'ACCOUNT_NOT_FOUND', 'Account profile was not found.');
+    }
+  }
+
+  if (request.orgId) {
+    const organization = await getOrganizationProfile(request.orgId);
+    if (!organization) {
+      return failure(404, 'ORGANIZATION_NOT_FOUND', 'Organization profile was not found.');
+    }
+  }
+
+  if (request.accountId && request.orgId) {
+    const membershipActive = await hasActiveMembership(request.accountId, request.orgId);
+    if (!membershipActive) {
+      return failure(409, 'MEMBERSHIP_NOT_ACTIVE', 'Account is not actively linked to the organization.');
+    }
+  }
+
+  const timestamp = nowIso();
+  const profile: DeviceProfile = {
+    deviceId: request.deviceId,
+    orgId: request.orgId ?? existing?.orgId ?? null,
+    machineName: request.machineName,
+    deviceDisplayName: request.deviceDisplayName ?? existing?.deviceDisplayName ?? request.machineName,
+    platform: request.platform,
+    agentVersion: request.agentVersion,
+    status: existing?.status ?? 'active',
+    firstSeenAt: existing?.firstSeenAt ?? timestamp,
+    lastSeenAt: timestamp,
+    currentAccountId: request.accountId ?? existing?.currentAccountId ?? null,
+    revokedAt: existing?.revokedAt ?? null,
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp
+  };
+
+  await upsertDeviceProfile(profile);
+  return success(profile);
+}
+
+export async function linkDeviceIdentity(request: DeviceAccountLinkRequest): Promise<DeviceIdentityOperationResult> {
+  const device = await getDeviceProfile(request.deviceId);
+  if (!device) {
+    return failure(404, 'DEVICE_NOT_FOUND', 'Device profile was not found.');
+  }
+
+  if (device.status === 'revoked') {
+    return failure(409, 'DEVICE_REVOKED', 'Revoked devices cannot be linked to an account.');
+  }
+
+  const account = await getAccountProfile(request.accountId);
+  if (!account) {
+    return failure(404, 'ACCOUNT_NOT_FOUND', 'Account profile was not found.');
+  }
+
+  const organization = await getOrganizationProfile(request.orgId);
+  if (!organization) {
+    return failure(404, 'ORGANIZATION_NOT_FOUND', 'Organization profile was not found.');
+  }
+
+  const membershipActive = await hasActiveMembership(request.accountId, request.orgId);
+  if (!membershipActive) {
+    return failure(409, 'MEMBERSHIP_NOT_ACTIVE', 'Account is not actively linked to the organization.');
+  }
+
+  const timestamp = nowIso();
+  const updated: DeviceProfile = {
+    ...device,
+    orgId: request.orgId,
+    currentAccountId: request.accountId,
+    lastSeenAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  await upsertDeviceProfile(updated);
+  return success(updated);
+}
+
+export async function unlinkDeviceIdentity(request: DeviceAccountUnlinkRequest): Promise<DeviceIdentityOperationResult> {
+  const device = await getDeviceProfile(request.deviceId);
+  if (!device) {
+    return failure(404, 'DEVICE_NOT_FOUND', 'Device profile was not found.');
+  }
+
+  if (request.accountId && device.currentAccountId !== request.accountId) {
+    return failure(409, 'DEVICE_LINK_MISMATCH', 'Device is not linked to the requested account.');
+  }
+
+  if (request.orgId && device.orgId !== request.orgId) {
+    return failure(409, 'DEVICE_LINK_MISMATCH', 'Device is not linked to the requested organization.');
+  }
+
+  const timestamp = nowIso();
+  const updated: DeviceProfile = {
+    ...device,
+    currentAccountId: null,
+    lastSeenAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  await upsertDeviceProfile(updated);
+  return success(updated);
 }
 
 export async function buildAdminAccountView(accountId: string): Promise<AdminAccountView | null> {
