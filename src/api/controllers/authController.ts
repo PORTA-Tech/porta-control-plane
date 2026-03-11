@@ -71,10 +71,12 @@ export function createAuthController(): Router {
       access_token: issued.access_token,
       token_type: 'Bearer',
       user: {
+        account_id: issued.session.account_id,
         user_id: issued.session.user_id,
         role: issued.session.role,
         display_name: issued.session.display_name,
-        avatar_url: issued.session.avatar_url ?? null
+        avatar_url: issued.session.avatar_url ?? null,
+        auth_provider: issued.session.auth_provider ?? null
       },
       session_expires_at_utc: issued.session.expires_at_utc,
       reauth_expires_at_utc: issued.session.reauth_expires_at_utc
@@ -93,10 +95,12 @@ export function createAuthController(): Router {
       return;
     }
     res.json({
+      account_id: session.account_id,
       user_id: session.user_id,
       role: session.role,
       display_name: session.display_name,
       avatar_url: session.avatar_url ?? null,
+      auth_provider: session.auth_provider ?? null,
       issued_at_utc: session.issued_at_utc,
       session_expires_at_utc: session.expires_at_utc,
       reauth_expires_at_utc: session.reauth_expires_at_utc

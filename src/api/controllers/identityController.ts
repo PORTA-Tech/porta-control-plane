@@ -1,0 +1,153 @@
+import { Request, Response, Router } from 'express';
+import { updateAuthUserProfile } from '../../core/authSessionStore.js';
+import { buildAdminAccountView, buildAdminOrganizationView, buildMeProfileView, ensureAccountProfileForAuthUser, listDevicesForAuthUser, listOrganizationsForAuthUser, revokeDeviceForAccount } from '../../core/identityProfileService.js';
+import type { OperatorRequest } from '../middleware/auth.js';
+
+function requireSessionUser(req: OperatorRequest, res: Response): string | null {
+  if (req.authMode !== 'session' || !req.operatorId) {
+    res.status(401).json({ error_code: 'SESSION_REQUIRED', message: 'Interactive account session is required.' });
+    return null;
+  }
+
+  return req.operatorId;
+}
+
+export function createIdentityController(): Router {
+  const router = Router();
+
+  router.get('/me', async (req: Request, res: Response) => {
+    const userId = requireSessionUser(req as OperatorRequest, res);
+    if (!userId) return;
+
+    const view = await buildMeProfileView(userId);
+    if (!view) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+      return;
+    }
+
+    res.json(view);
+  });
+
+  router.patch('/me/profile', async (req: Request, res: Response) => {
+    const userId = requireSessionUser(req as OperatorRequest, res);
+    if (!userId) return;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const displayName = typeof body.display_name === 'string' ? body.display_name : undefined;
+    const avatarUrl = body.avatar_url === null
+      ? null
+      : typeof body.avatar_url === 'string'
+        ? body.avatar_url
+        : undefined;
+
+    const updated = updateAuthUserProfile({
+      user_id: userId,
+      ...(displayName !== undefined ? { display_name: displayName } : {}),
+      ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {})
+    });
+
+    if (!updated.ok) {
+      res.status(400).json({ error_code: updated.error_code, message: updated.message });
+      return;
+    }
+
+    const profile = await ensureAccountProfileForAuthUser(userId);
+    if (!profile) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      account: profile
+    });
+  });
+
+  router.get('/me/organizations', async (req: Request, res: Response) => {
+    const userId = requireSessionUser(req as OperatorRequest, res);
+    if (!userId) return;
+
+    const organizations = await listOrganizationsForAuthUser(userId);
+    if (!organizations) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+      return;
+    }
+
+    res.json(organizations);
+  });
+
+  router.get('/me/devices', async (req: Request, res: Response) => {
+    const userId = requireSessionUser(req as OperatorRequest, res);
+    if (!userId) return;
+
+    const devices = await listDevicesForAuthUser(userId);
+    if (!devices) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+      return;
+    }
+
+    res.json(devices);
+  });
+
+  router.post('/me/devices/:deviceId/revoke', async (req: Request, res: Response) => {
+    const userId = requireSessionUser(req as OperatorRequest, res);
+    if (!userId) return;
+
+    const account = await ensureAccountProfileForAuthUser(userId);
+    if (!account) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+      return;
+    }
+
+    const deviceId = req.params.deviceId;
+    if (!deviceId) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'deviceId is required.' });
+      return;
+    }
+
+    const updated = await revokeDeviceForAccount(account.accountId, deviceId);
+    if (!updated) {
+      res.status(404).json({ error_code: 'DEVICE_NOT_FOUND', message: 'Device not found for this account.' });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      device: updated
+    });
+  });
+
+  router.get('/admin/accounts/:accountId', async (req: Request, res: Response) => {
+    const accountId = req.params.accountId;
+    if (!accountId) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'accountId is required.' });
+      return;
+    }
+
+    const view = await buildAdminAccountView(accountId);
+    if (!view) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+      return;
+    }
+
+    res.json(view);
+  });
+
+  router.get('/admin/organizations/:orgId', async (req: Request, res: Response) => {
+    const orgId = req.params.orgId;
+    if (!orgId) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'orgId is required.' });
+      return;
+    }
+
+    const view = await buildAdminOrganizationView(orgId);
+    if (!view) {
+      res.status(404).json({ error_code: 'ORGANIZATION_NOT_FOUND', message: 'Organization profile was not found.' });
+      return;
+    }
+
+    res.json(view);
+  });
+
+  return router;
+}

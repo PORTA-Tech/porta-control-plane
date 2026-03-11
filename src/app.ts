@@ -15,6 +15,7 @@ import { createAuthController } from './api/controllers/authController.js';
 import { createSecurityController } from './api/controllers/securityController.js';
 import { createRbacController } from './api/controllers/rbacController.js';
 import { createSystemHealthController } from './api/controllers/systemHealthController.js';
+import { createIdentityController } from './api/controllers/identityController.js';
 import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middleware/auth.js';
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
@@ -100,6 +101,7 @@ export function createApp(): Express {
   app.use('/v1/config', createConfigController());
   app.use('/v1/rollout', createRolloutController());
   app.use('/v1/slo', createSloController());
+  app.use('/v1', createIdentityController());
   app.use('/v1/nodes', createNodeController());
   app.use('/v1/machines', createMachineController());
   app.use('/v1/actions', createActionController());

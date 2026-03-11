@@ -1,42 +1,60 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolveAssignedRoleForUser } from './rbacStore.js';
 import { consumePasswordResetCode, consumeSignupCode } from './authAccessCodeStore.js';
+import type { AuthProvider } from '@porta/api-contracts';
 
 type AuthRole = 'viewer' | 'operator' | 'admin' | 'auditor' | 'developer' | 'agent';
 type UserSource = 'default' | 'env' | 'custom';
 
 interface AuthUserRecord {
+  account_id: string;
   user_id: string;
   password: string;
   role: AuthRole;
   display_name: string;
   avatar_url?: string;
+  auth_provider?: AuthProvider | null;
   source: UserSource;
 }
 
 interface SessionRecord {
   token: string;
+  account_id: string;
   user_id: string;
   role: AuthRole;
   display_name: string;
   avatar_url?: string;
+  auth_provider?: AuthProvider | null;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
 }
 
+type AuthUserPublicView = Pick<AuthUserRecord, 'account_id' | 'user_id' | 'role' | 'display_name' | 'avatar_url' | 'auth_provider'>;
+
 export interface AuthSessionView {
+  account_id: string;
   user_id: string;
   role: AuthRole;
   display_name: string;
   avatar_url?: string;
+  auth_provider?: AuthProvider | null;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
+}
+
+export interface AuthUserIdentityView {
+  account_id: string;
+  user_id: string;
+  role: AuthRole;
+  display_name: string;
+  avatar_url?: string;
+  auth_provider?: AuthProvider | null;
 }
 
 export interface AuthAccessHelpView {
@@ -105,16 +123,26 @@ function requireSignupCode(): boolean {
   return parseBoolean(process.env.AUTH_REQUIRE_SIGNUP_CODE, false);
 }
 
+function deriveStableAccountId(userId: string): string {
+  const digest = createHash('sha256').update(`porta-auth-account:${userId.trim().toLowerCase()}`).digest('hex');
+  const raw = digest.slice(0, 32).split('');
+  raw[12] = '4';
+  const variant = parseInt(raw[16] ?? '8', 16);
+  raw[16] = ((variant & 0x3) | 0x8).toString(16);
+  const hex = raw.join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 function stableUsers(): AuthUserRecord[] {
   const adminPassword = process.env.AUTH_DEFAULT_ADMIN_PASSWORD ?? 'porta-admin';
   const operatorPassword = process.env.AUTH_DEFAULT_OPERATOR_PASSWORD ?? 'porta-operator';
   const auditorPassword = process.env.AUTH_DEFAULT_AUDITOR_PASSWORD ?? 'porta-auditor';
   const developerPassword = process.env.AUTH_DEFAULT_DEVELOPER_PASSWORD ?? 'porta-developer';
   return [
-    { user_id: 'admin', password: adminPassword, role: 'admin', display_name: 'Admin', source: 'default' },
-    { user_id: 'operator', password: operatorPassword, role: 'operator', display_name: 'Operator', source: 'default' },
-    { user_id: 'auditor', password: auditorPassword, role: 'auditor', display_name: 'Auditor', source: 'default' },
-    { user_id: 'developer', password: developerPassword, role: 'developer', display_name: 'Developer', source: 'default' }
+    { account_id: deriveStableAccountId('admin'), user_id: 'admin', password: adminPassword, role: 'admin', display_name: 'Admin', auth_provider: 'local', source: 'default' },
+    { account_id: deriveStableAccountId('operator'), user_id: 'operator', password: operatorPassword, role: 'operator', display_name: 'Operator', auth_provider: 'local', source: 'default' },
+    { account_id: deriveStableAccountId('auditor'), user_id: 'auditor', password: auditorPassword, role: 'auditor', display_name: 'Auditor', auth_provider: 'local', source: 'default' },
+    { account_id: deriveStableAccountId('developer'), user_id: 'developer', password: developerPassword, role: 'developer', display_name: 'Developer', auth_provider: 'local', source: 'default' }
   ];
 }
 
@@ -126,19 +154,28 @@ function parseUserRows(raw: unknown, source: UserSource): AuthUserRecord[] {
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object') continue;
     const row = entry as Record<string, unknown>;
+    const accountId = typeof row.account_id === 'string' && row.account_id.trim().length > 0
+      ? row.account_id.trim()
+      : '';
     const userId = typeof row.user_id === 'string' ? row.user_id.trim() : '';
     const password = typeof row.password === 'string' ? row.password : '';
     const role = typeof row.role === 'string' ? row.role as AuthRole : 'viewer';
     const displayName = typeof row.display_name === 'string' ? row.display_name : userId;
     const avatarUrl = typeof row.avatar_url === 'string' ? row.avatar_url.trim() : '';
+    const authProvider = typeof row.auth_provider === 'string'
+      && (row.auth_provider === 'local' || row.auth_provider === 'google' || row.auth_provider === 'microsoft' || row.auth_provider === 'sso')
+      ? row.auth_provider
+      : 'local';
     if (!userId || !password) continue;
     if (role !== 'viewer' && role !== 'operator' && role !== 'admin' && role !== 'auditor' && role !== 'developer' && role !== 'agent') continue;
     users.push({
+      account_id: accountId || deriveStableAccountId(userId),
       user_id: userId,
       password,
       role,
       display_name: displayName,
       ...(avatarUrl.length > 0 ? { avatar_url: avatarUrl } : {}),
+      ...(authProvider ? { auth_provider: authProvider } : {}),
       source
     });
   }
@@ -185,11 +222,13 @@ let authUsers: AuthUserRecord[] = loadUsers();
 
 function persistCustomUsers(): void {
   const custom = authUsers.filter((user) => user.source === 'custom').map((user) => ({
+    account_id: user.account_id,
     user_id: user.user_id,
     password: user.password,
     role: user.role,
     display_name: user.display_name,
-    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {})
+    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {})
   }));
   fs.mkdirSync(path.dirname(usersPath), { recursive: true });
   const tmpPath = `${usersPath}.tmp`;
@@ -231,10 +270,12 @@ function cleanupExpiredSessions(): void {
 
 function toSessionView(record: SessionRecord): AuthSessionView {
   return {
+    account_id: record.account_id,
     user_id: record.user_id,
     role: record.role,
     display_name: record.display_name,
     ...(record.avatar_url ? { avatar_url: record.avatar_url } : {}),
+    ...(record.auth_provider ? { auth_provider: record.auth_provider } : {}),
     issued_at_utc: record.issued_at_utc,
     expires_at_utc: record.expires_at_utc,
     reauth_expires_at_utc: record.reauth_expires_at_utc
@@ -260,7 +301,7 @@ export function authenticateUser(userId: string, password: string): AuthUserReco
   };
 }
 
-export function issueAuthSession(user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name' | 'avatar_url'>): { access_token: string; session: AuthSessionView } {
+export function issueAuthSession(user: AuthUserPublicView): { access_token: string; session: AuthSessionView } {
   cleanupExpiredSessions();
   const issuedAt = new Date();
   const expiresAt = new Date(issuedAt.getTime() + sessionTtlMinutes() * 60_000);
@@ -268,10 +309,12 @@ export function issueAuthSession(user: Pick<AuthUserRecord, 'user_id' | 'role' |
   const token = randomBytes(32).toString('base64url');
   const record: SessionRecord = {
     token,
+    account_id: user.account_id,
     user_id: user.user_id,
     role: user.role,
     display_name: user.display_name,
     ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
     issued_at_utc: issuedAt.toISOString(),
     expires_at_utc: expiresAt.toISOString(),
     reauth_expires_at_utc: reauthExpiresAt.toISOString()
@@ -292,14 +335,22 @@ export function readAuthSession(token: string): AuthSessionView | null {
     const assignedRole = resolveAssignedRoleForUser(record.user_id, user.role);
     const changed = assignedRole !== record.role
       || record.display_name !== user.display_name
-      || record.avatar_url !== user.avatar_url;
+      || record.avatar_url !== user.avatar_url
+      || record.account_id !== user.account_id
+      || record.auth_provider !== user.auth_provider;
     if (changed) {
       record.role = assignedRole;
       record.display_name = user.display_name;
+      record.account_id = user.account_id;
       if (user.avatar_url) {
         record.avatar_url = user.avatar_url;
       } else {
         delete record.avatar_url;
+      }
+      if (user.auth_provider) {
+        record.auth_provider = user.auth_provider;
+      } else {
+        delete record.auth_provider;
       }
       sessions.set(token, record);
     }
@@ -334,6 +385,19 @@ export function listAuthUsers(): Array<Pick<AuthUserRecord, 'user_id' | 'role' |
       role: resolveAssignedRoleForUser(row.user_id, row.role),
       display_name: row.display_name
     }));
+}
+
+export function readAuthUserIdentity(userId: string): AuthUserIdentityView | null {
+  const user = findUser(userId);
+  if (!user) return null;
+  return {
+    account_id: user.account_id,
+    user_id: user.user_id,
+    role: resolveAssignedRoleForUser(user.user_id, user.role),
+    display_name: user.display_name,
+    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {})
+  };
 }
 
 export function resolveAuthUserRole(userId: string): AuthRole | null {
@@ -371,7 +435,7 @@ export function registerAuthUser(input: {
   avatar_url?: string;
   signup_code?: string;
 }):
-  | { ok: true; user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name' | 'avatar_url'> }
+  | { ok: true; user: AuthUserPublicView }
   | { ok: false; error_code: string; message: string } {
   if (!allowSelfRegister()) {
     return { ok: false, error_code: 'SIGNUP_DISABLED', message: 'Self registration is disabled.' };
@@ -448,11 +512,13 @@ export function registerAuthUser(input: {
   }
 
   const record: AuthUserRecord = {
+    account_id: randomUUID(),
     user_id: userId,
     password,
     role,
     display_name: displayName,
     ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+    auth_provider: 'local',
     source: 'custom'
   };
   authUsers = [...authUsers, record];
@@ -464,7 +530,9 @@ export function registerAuthUser(input: {
       user_id: record.user_id,
       role: record.role,
       display_name: record.display_name,
-      ...(record.avatar_url ? { avatar_url: record.avatar_url } : {})
+      ...(record.avatar_url ? { avatar_url: record.avatar_url } : {}),
+      account_id: record.account_id,
+      ...(record.auth_provider ? { auth_provider: record.auth_provider } : {})
     }
   };
 }
@@ -483,7 +551,7 @@ export function updateAuthUserProfile(input: {
   user_id: string;
   display_name?: string;
   avatar_url?: string | null;
-}): { ok: true; user: Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name' | 'avatar_url'> } | { ok: false; error_code: string; message: string } {
+}): { ok: true; user: AuthUserPublicView } | { ok: false; error_code: string; message: string } {
   const user = findUser(input.user_id);
   if (!user) {
     return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
@@ -517,10 +585,12 @@ export function updateAuthUserProfile(input: {
   return {
     ok: true,
     user: {
+      account_id: user.account_id,
       user_id: user.user_id,
       role: resolveAssignedRoleForUser(user.user_id, user.role),
       display_name: user.display_name,
-      ...(user.avatar_url ? { avatar_url: user.avatar_url } : {})
+      ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+      ...(user.auth_provider ? { auth_provider: user.auth_provider } : {})
     }
   };
 }

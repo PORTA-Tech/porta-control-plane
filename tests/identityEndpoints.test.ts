@@ -1,0 +1,190 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as supertest from 'supertest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createApp } from '../src/app.js';
+import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
+import { loadRuntimeState, resetRuntimeStateForTests } from '../src/store/runtimeState.js';
+import { clearAccountStoreForTests } from '../src/store/accountStore.js';
+import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
+import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
+import { clearDeviceStoreForTests, upsertDeviceProfile } from '../src/store/deviceStore.js';
+import { clearConsentRecordStoreForTests, upsertConsentRecord } from '../src/store/consentRecordStore.js';
+
+const dataDir = path.resolve('.data');
+const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
+const app = createApp();
+
+async function loginAdmin(): Promise<string> {
+  const response = await request(app).post('/auth/login').send({
+    user_id: 'admin',
+    password: 'porta-admin'
+  });
+
+  expect(response.status).toBe(200);
+  expect(typeof response.body.access_token).toBe('string');
+  return response.body.access_token as string;
+}
+
+describe('identity endpoints', () => {
+  beforeEach(() => {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+    resetRuntimeStateForTests();
+    resetSLOGateStateForTests();
+    clearAccountStoreForTests();
+    clearOrganizationStoreForTests();
+    clearMembershipStoreForTests();
+    clearDeviceStoreForTests();
+    clearConsentRecordStoreForTests();
+    loadRuntimeState();
+  });
+
+  it('serves /v1/me, organizations, devices, profile update, and revoke without telemetry', async () => {
+    const token = await loginAdmin();
+
+    const meResponse = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);
+    expect(meResponse.status).toBe(200);
+    expect(meResponse.body.account.displayName).toBe('Admin');
+    const accountId = meResponse.body.account.accountId as string;
+
+    await upsertOrganizationProfile({
+      orgId: '4d69d34a-1ec8-4c60-bf02-7e1fe63fe0ed',
+      orgName: 'PORTA Labs',
+      orgSlug: 'porta-labs',
+      planTier: 'pro',
+      billingAccountId: 'billing-1',
+      createdAt: '2026-03-11T10:00:00.000Z',
+      updatedAt: '2026-03-11T10:00:00.000Z'
+    });
+
+    await upsertMembership({
+      membershipId: '7e063ff7-3112-426e-8f60-6b9d6414dbe5',
+      accountId,
+      orgId: '4d69d34a-1ec8-4c60-bf02-7e1fe63fe0ed',
+      role: 'owner',
+      status: 'active',
+      invitedAt: null,
+      joinedAt: '2026-03-11T10:01:00.000Z',
+      invitedByAccountId: null,
+      createdAt: '2026-03-11T10:01:00.000Z',
+      updatedAt: '2026-03-11T10:01:00.000Z'
+    });
+
+    await upsertDeviceProfile({
+      deviceId: '64df6801-ce5f-4832-8b6d-752b6c5f18e9',
+      orgId: '4d69d34a-1ec8-4c60-bf02-7e1fe63fe0ed',
+      machineName: 'ADMIN-BOX',
+      deviceDisplayName: 'Admin Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.0',
+      status: 'active',
+      firstSeenAt: '2026-03-11T10:02:00.000Z',
+      lastSeenAt: '2026-03-11T10:03:00.000Z',
+      currentAccountId: accountId,
+      revokedAt: null,
+      createdAt: '2026-03-11T10:02:00.000Z',
+      updatedAt: '2026-03-11T10:03:00.000Z'
+    });
+
+    const orgsResponse = await request(app).get('/v1/me/organizations').set('authorization', `Bearer ${token}`);
+    expect(orgsResponse.status).toBe(200);
+    expect(orgsResponse.body).toHaveLength(1);
+    expect(orgsResponse.body[0]?.organization?.orgName).toBe('PORTA Labs');
+
+    const devicesResponse = await request(app).get('/v1/me/devices').set('authorization', `Bearer ${token}`);
+    expect(devicesResponse.status).toBe(200);
+    expect(devicesResponse.body).toHaveLength(1);
+    expect(devicesResponse.body[0]?.deviceDisplayName).toBe('Admin Workstation');
+
+    const patchResponse = await request(app)
+      .patch('/v1/me/profile')
+      .set('authorization', `Bearer ${token}`)
+      .send({ display_name: 'Admin Prime' });
+    expect(patchResponse.status).toBe(200);
+    expect(patchResponse.body.account.displayName).toBe('Admin Prime');
+
+    const revokeResponse = await request(app)
+      .post('/v1/me/devices/64df6801-ce5f-4832-8b6d-752b6c5f18e9/revoke')
+      .set('authorization', `Bearer ${token}`);
+    expect(revokeResponse.status).toBe(200);
+    expect(revokeResponse.body.device.status).toBe('revoked');
+    expect(revokeResponse.body.device.revokedAt).toBeTruthy();
+  });
+
+  it('serves admin account and organization views from identity stores', async () => {
+    const token = await loginAdmin();
+    const meResponse = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);
+    expect(meResponse.status).toBe(200);
+    const accountId = meResponse.body.account.accountId as string;
+
+    await upsertOrganizationProfile({
+      orgId: '338dc68c-0a6f-4d77-ac89-7ba6c3736fec',
+      orgName: 'PORTA Ops',
+      orgSlug: 'porta-ops',
+      planTier: 'enterprise',
+      billingAccountId: 'billing-ops',
+      createdAt: '2026-03-11T11:00:00.000Z',
+      updatedAt: '2026-03-11T11:00:00.000Z'
+    });
+
+    await upsertMembership({
+      membershipId: '468fd688-c4d0-46b2-9b6d-1adfcf77ce95',
+      accountId,
+      orgId: '338dc68c-0a6f-4d77-ac89-7ba6c3736fec',
+      role: 'owner',
+      status: 'active',
+      invitedAt: null,
+      joinedAt: '2026-03-11T11:05:00.000Z',
+      invitedByAccountId: null,
+      createdAt: '2026-03-11T11:05:00.000Z',
+      updatedAt: '2026-03-11T11:05:00.000Z'
+    });
+
+    await upsertDeviceProfile({
+      deviceId: '1f3074fa-d7b1-4add-8fc0-86d4e4b31c14',
+      orgId: '338dc68c-0a6f-4d77-ac89-7ba6c3736fec',
+      machineName: 'OPS-BOX',
+      deviceDisplayName: 'Ops Desktop',
+      platform: 'windows',
+      agentVersion: '1.0.0',
+      status: 'active',
+      firstSeenAt: '2026-03-11T11:06:00.000Z',
+      lastSeenAt: '2026-03-11T11:07:00.000Z',
+      currentAccountId: accountId,
+      revokedAt: null,
+      createdAt: '2026-03-11T11:06:00.000Z',
+      updatedAt: '2026-03-11T11:07:00.000Z'
+    });
+
+    await upsertConsentRecord({
+      consentId: 'cc28b71e-c01c-44b9-8c06-2d98585d71ea',
+      scope: 'device_capture',
+      accountId,
+      deviceId: '1f3074fa-d7b1-4add-8fc0-86d4e4b31c14',
+      orgId: '338dc68c-0a6f-4d77-ac89-7ba6c3736fec',
+      consentVersion: 'v1',
+      consentState: 'accepted',
+      telemetryLevel: 'enhanced',
+      consentedAt: '2026-03-11T11:08:00.000Z',
+      updatedAt: '2026-03-11T11:08:00.000Z'
+    });
+
+    const accountResponse = await request(app)
+      .get(`/v1/admin/accounts/${accountId}`)
+      .set('authorization', `Bearer ${token}`);
+    expect(accountResponse.status).toBe(200);
+    expect(accountResponse.body.account.accountId).toBe(accountId);
+    expect(accountResponse.body.memberships).toHaveLength(1);
+    expect(accountResponse.body.devices).toHaveLength(1);
+    expect(accountResponse.body.consents).toHaveLength(1);
+
+    const orgResponse = await request(app)
+      .get('/v1/admin/organizations/338dc68c-0a6f-4d77-ac89-7ba6c3736fec')
+      .set('authorization', `Bearer ${token}`);
+    expect(orgResponse.status).toBe(200);
+    expect(orgResponse.body.organization.orgName).toBe('PORTA Ops');
+    expect(orgResponse.body.memberships).toHaveLength(1);
+    expect(orgResponse.body.devices).toHaveLength(1);
+    expect(orgResponse.body.consents).toHaveLength(1);
+  });
+});

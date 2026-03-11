@@ -33,6 +33,9 @@ describe('endpoint integration', () => {
   });
 
   it('ingests machine summaries and exposes them through fleet read endpoints', async () => {
+    const reportedAtUtc = new Date().toISOString();
+    const heartbeatUtc = new Date(Date.now() - 1_000).toISOString();
+    const activityUtc = new Date(Date.now() - 2_000).toISOString();
     const summary = {
       machineId: 'machine-a',
       machineName: 'HP-Laptop',
@@ -40,12 +43,12 @@ describe('endpoint integration', () => {
       agentVersion: '1.0.0',
       schemaVersion: '1.0.0',
       policyVersion: 'policy-v2',
-      reportedAtUtc: '2026-03-11T12:00:00.000Z',
+      reportedAtUtc,
       agentRunning: true,
       userSessionConnected: true,
       activityDetected: true,
-      lastActivityUtc: '2026-03-11T11:59:58.000Z',
-      userAgentHeartbeatUtc: '2026-03-11T11:59:59.000Z',
+      lastActivityUtc: activityUtc,
+      userAgentHeartbeatUtc: heartbeatUtc,
       captureContext: 'UserSession',
       keyboardSignalActive: true,
       mouseSignalActive: true,
