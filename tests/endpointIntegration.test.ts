@@ -144,6 +144,14 @@ describe('endpoint integration', () => {
     expect(machineResponse.body[0]?.action).toBe('deep_work_notifications_suppressed');
   });
 
+  it('GET /v1/system/health exposes fleet persistence mode for validation gates', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/system/health'));
+
+    expect(response.status).toBe(200);
+    expect(response.body.fleet_reporting.persistence_mode).toBe('memory');
+    expect(response.body.fleet_reporting.database_configured).toBe(false);
+  });
+
   it('POST /v1/rollout/rollback executes forced rollback and cooldown', async () => {
     runtimeState.rolloutState = 'PROMOTING';
     runtimeState.currentConfigSeq = 15;
