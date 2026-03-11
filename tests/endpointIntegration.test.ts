@@ -8,6 +8,9 @@ import { loadRuntimeState, resetRuntimeStateForTests, runtimeState } from '../sr
 import { appendLedgerRecord } from '../src/core/auditLedger.js';
 import { clearMachineSummaryStoreForTests } from '../src/store/machineSummaryStore.js';
 import { clearMachineActionStoreForTests } from '../src/store/machineActionStore.js';
+import { clearAccountStoreForTests, upsertAccountProfile } from '../src/store/accountStore.js';
+import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
+import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
@@ -28,15 +31,55 @@ describe('endpoint integration', () => {
     resetSLOGateStateForTests();
     clearMachineSummaryStoreForTests();
     clearMachineActionStoreForTests();
+    clearAccountStoreForTests();
+    clearOrganizationStoreForTests();
+    clearMembershipStoreForTests();
     delete process.env.CONTROL_PLANE_ADAPTER_EXPANSION_ENABLED;
     loadRuntimeState();
   });
 
   it('ingests machine summaries and exposes them through fleet read endpoints', async () => {
+    await upsertAccountProfile({
+      accountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+      displayName: 'Alice Porter',
+      primaryEmail: 'alice@porta.test',
+      emailVerified: true,
+      avatarUrl: null,
+      status: 'active',
+      authProvider: 'local',
+      lastLoginAt: '2026-03-11T10:00:00.000Z',
+      createdAt: '2026-03-11T09:00:00.000Z',
+      updatedAt: '2026-03-11T10:00:00.000Z'
+    });
+    await upsertOrganizationProfile({
+      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
+      orgName: 'PORTA Labs',
+      orgSlug: 'porta-labs',
+      planTier: 'pro',
+      billingAccountId: 'billing-1',
+      createdAt: '2026-03-11T09:00:00.000Z',
+      updatedAt: '2026-03-11T09:00:00.000Z'
+    });
+    await upsertMembership({
+      membershipId: '8d2d768b-d6e7-4137-a2ca-e08063eff520',
+      accountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
+      role: 'admin',
+      status: 'active',
+      invitedAt: null,
+      joinedAt: '2026-03-11T09:10:00.000Z',
+      invitedByAccountId: null,
+      createdAt: '2026-03-11T09:10:00.000Z',
+      updatedAt: '2026-03-11T09:10:00.000Z'
+    });
+
     const reportedAtUtc = new Date().toISOString();
     const heartbeatUtc = new Date(Date.now() - 1_000).toISOString();
     const activityUtc = new Date(Date.now() - 2_000).toISOString();
     const summary = {
+      deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
+      accountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
       machineId: 'machine-a',
       machineName: 'HP-Laptop',
       userName: 'DOMAIN\\alice',
@@ -83,11 +126,16 @@ describe('endpoint integration', () => {
     expect(listResponse.body).toHaveLength(1);
     expect(listResponse.body[0]?.machineId).toBe('machine-a');
     expect(listResponse.body[0]?.trustTier).toBe('high');
+    expect(listResponse.body[0]?.displayName).toBe('Alice Porter');
+    expect(listResponse.body[0]?.primaryEmail).toBe('alice@porta.test');
+    expect(listResponse.body[0]?.orgName).toBe('PORTA Labs');
+    expect(listResponse.body[0]?.role).toBe('admin');
 
     const detailResponse = await withOperatorHeaders(request(app).get('/v1/machines/machine-a'));
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.machineName).toBe('HP-Laptop');
     expect(detailResponse.body.breakPendingAction).toBe('stretch_break_suggestion');
+    expect(detailResponse.body.displayName).toBe('Alice Porter');
 
     const compatibilityResponse = await withOperatorHeaders(request(app).get('/v1/nodes/snapshot'));
     expect(compatibilityResponse.status).toBe(200);
@@ -97,8 +145,45 @@ describe('endpoint integration', () => {
   });
 
   it('ingests machine action events and exposes them through fleet action endpoints', async () => {
+    await upsertAccountProfile({
+      accountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+      displayName: 'Alice Porter',
+      primaryEmail: 'alice@porta.test',
+      emailVerified: true,
+      avatarUrl: null,
+      status: 'active',
+      authProvider: 'local',
+      lastLoginAt: '2026-03-11T10:00:00.000Z',
+      createdAt: '2026-03-11T09:00:00.000Z',
+      updatedAt: '2026-03-11T10:00:00.000Z'
+    });
+    await upsertOrganizationProfile({
+      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
+      orgName: 'PORTA Labs',
+      orgSlug: 'porta-labs',
+      planTier: 'pro',
+      billingAccountId: 'billing-1',
+      createdAt: '2026-03-11T09:00:00.000Z',
+      updatedAt: '2026-03-11T09:00:00.000Z'
+    });
+    await upsertMembership({
+      membershipId: '8d2d768b-d6e7-4137-a2ca-e08063eff520',
+      accountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
+      role: 'admin',
+      status: 'active',
+      invitedAt: null,
+      joinedAt: '2026-03-11T09:10:00.000Z',
+      invitedByAccountId: null,
+      createdAt: '2026-03-11T09:10:00.000Z',
+      updatedAt: '2026-03-11T09:10:00.000Z'
+    });
+
     const events = [
       {
+        deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
+        accountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+        orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
         machineId: 'machine-a',
         userName: 'DOMAIN\\alice',
         interventionId: 'int-1',
@@ -115,6 +200,9 @@ describe('endpoint integration', () => {
         howToUndo: 'Dismiss the suggestion overlay.'
       },
       {
+        deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
+        accountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+        orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
         machineId: 'machine-a',
         userName: 'DOMAIN\\alice',
         interventionId: 'int-2',
@@ -140,11 +228,69 @@ describe('endpoint integration', () => {
     expect(recentResponse.status).toBe(200);
     expect(recentResponse.body).toHaveLength(2);
     expect(recentResponse.body[0]?.interventionId).toBe('int-2');
+    expect(recentResponse.body[0]?.displayName).toBe('Alice Porter');
+    expect(recentResponse.body[0]?.orgName).toBe('PORTA Labs');
+    expect(recentResponse.body[0]?.role).toBe('admin');
 
     const machineResponse = await withOperatorHeaders(request(app).get('/v1/machines/machine-a/actions'));
     expect(machineResponse.status).toBe(200);
     expect(machineResponse.body).toHaveLength(2);
     expect(machineResponse.body[0]?.action).toBe('deep_work_notifications_suppressed');
+    expect(machineResponse.body[0]?.primaryEmail).toBe('alice@porta.test');
+  });
+
+  it('returns null joined identity fields for unlinked machine rows', async () => {
+    const summary = {
+      deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
+      accountId: null,
+      orgId: null,
+      machineId: 'machine-unlinked',
+      machineName: 'Kiosk-1',
+      userName: 'unknown',
+      agentVersion: '1.0.0',
+      schemaVersion: '1.0.0',
+      policyVersion: 'policy-v2',
+      reportedAtUtc: new Date().toISOString(),
+      agentRunning: true,
+      userSessionConnected: false,
+      activityDetected: false,
+      lastActivityUtc: null,
+      userAgentHeartbeatUtc: null,
+      captureContext: 'Unknown',
+      keyboardSignalActive: false,
+      mouseSignalActive: false,
+      ownershipWarning: null,
+      captureFailureReason: 'user_session_missing',
+      lastError: null,
+      backendConnected: true,
+      localApiAuthReady: true,
+      dbMigrationFailed: false,
+      taskContinuityScore: 0,
+      taskContinuitySeconds: 0,
+      continuityState: 'reset',
+      deepWorkActive: false,
+      overloadLikelihood: 0,
+      overloadActive: false,
+      breakNeeded: false,
+      breakPendingAction: null,
+      breakPendingReasonCode: null,
+      calibrationStage: 'cold',
+      trustTier: 'low',
+      modelConfidence: 0.2,
+      signalQualityScore: 0.2,
+      partialData: true,
+      missingMajorChannels: ['keyboard', 'mouse']
+    };
+
+    const ingest = await request(app).post('/api/agent/machine-summary').send(summary);
+    expect(ingest.status).toBe(202);
+
+    const response = await withOperatorHeaders(request(app).get('/v1/machines/machine-unlinked'));
+    expect(response.status).toBe(200);
+    expect(response.body.displayName).toBeNull();
+    expect(response.body.primaryEmail).toBeNull();
+    expect(response.body.orgName).toBeNull();
+    expect(response.body.role).toBeNull();
   });
 
   it('GET /v1/system/health exposes fleet persistence mode for validation gates', async () => {

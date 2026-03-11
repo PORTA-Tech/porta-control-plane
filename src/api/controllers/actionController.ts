@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listRecentMachineActionEvents } from '../../store/machineActionStore.js';
+import { listRecentJoinedMachineActionEvents } from '../../core/fleetReadService.js';
 
 export function createActionController(): Router {
   const router = Router();
@@ -8,7 +8,7 @@ export function createActionController(): Router {
     try {
       const parsedLimit = Number.parseInt(String(req.query.limit ?? '100'), 10);
       const limit = Number.isFinite(parsedLimit) ? parsedLimit : 100;
-      const rows = await listRecentMachineActionEvents(limit);
+      const rows = await listRecentJoinedMachineActionEvents(limit);
       res.json(rows);
     } catch (error) {
       next(error);

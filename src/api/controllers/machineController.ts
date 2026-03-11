@@ -1,13 +1,16 @@
 import { Router } from 'express';
-import { getMachineSummary, listMachineSummaries } from '../../store/machineSummaryStore.js';
-import { listMachineActionEventsForMachine } from '../../store/machineActionStore.js';
+import {
+  getJoinedMachineSummary,
+  listJoinedMachineActionEventsForMachine,
+  listJoinedMachineSummaries
+} from '../../core/fleetReadService.js';
 
 export function createMachineController(): Router {
   const router = Router();
 
   router.get('/summary', async (_req, res, next) => {
     try {
-      const rows = await listMachineSummaries();
+      const rows = await listJoinedMachineSummaries();
       res.json(rows);
     } catch (error) {
       next(error);
@@ -22,7 +25,7 @@ export function createMachineController(): Router {
         return;
       }
 
-      const row = await getMachineSummary(machineId);
+      const row = await getJoinedMachineSummary(machineId);
       if (!row) {
         res.status(404).json({ error: 'machine not found' });
         return;
@@ -44,7 +47,7 @@ export function createMachineController(): Router {
 
       const parsedLimit = Number.parseInt(String(req.query.limit ?? '100'), 10);
       const limit = Number.isFinite(parsedLimit) ? parsedLimit : 100;
-      const rows = await listMachineActionEventsForMachine(machineId, limit);
+      const rows = await listJoinedMachineActionEventsForMachine(machineId, limit);
       res.json(rows);
     } catch (error) {
       next(error);
