@@ -3,7 +3,10 @@ export type MachineActionDecisionState = 'decided';
 export type MachineActionExecutionState = 'decision_only' | 'decided' | 'applied' | 'verified' | 'failed';
 export type MachineActionVerifiedState = 'not_applicable' | 'pending' | 'unverified' | 'verified';
 export interface MachineActionEvent {
+    deviceId: string;
     machineId: string;
+    accountId?: string | null;
+    orgId?: string | null;
     userName: string;
     interventionId: string;
     action: string;

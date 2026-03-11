@@ -815,6 +815,38 @@ components:
       type: string
       enum: [low, medium, high]
 
+    AccountStatusValue:
+      type: string
+      enum: [active, suspended, deleted]
+
+    AuthProviderValue:
+      type: string
+      enum: [local, google, microsoft, sso]
+
+    MembershipRoleValue:
+      type: string
+      enum: [owner, admin, member, viewer]
+
+    MembershipStatusValue:
+      type: string
+      enum: [invited, active, suspended, revoked]
+
+    DeviceStatusValue:
+      type: string
+      enum: [active, revoked]
+
+    ConsentScopeValue:
+      type: string
+      enum: [account_legal, device_capture]
+
+    ConsentStateValue:
+      type: string
+      enum: [accepted, declined, revoked]
+
+    TelemetryLevelValue:
+      type: string
+      enum: [essential, enhanced]
+
     MachineActionCategoryValue:
       type: string
       enum: [suggestion, automatic_change, policy_intent, unsupported, decision_record]
@@ -831,10 +863,206 @@ components:
       type: string
       enum: [not_applicable, pending, unverified, verified]
 
+    AccountProfile:
+      type: object
+      required:
+        [
+          account_id,
+          display_name,
+          primary_email,
+          email_verified,
+          status,
+          created_at,
+          updated_at
+        ]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        primary_email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        status:
+          $ref: '#/components/schemas/AccountStatusValue'
+        auth_provider:
+          $ref: '#/components/schemas/AuthProviderValue'
+          nullable: true
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    OrganizationProfile:
+      type: object
+      required:
+        [org_id, org_name, plan_tier, created_at, updated_at]
+      properties:
+        org_id:
+          type: string
+          format: uuid
+        org_name:
+          type: string
+        org_slug:
+          type: string
+          nullable: true
+        plan_tier:
+          type: string
+        billing_account_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Membership:
+      type: object
+      required:
+        [membership_id, account_id, org_id, role, status, created_at, updated_at]
+      properties:
+        membership_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        role:
+          $ref: '#/components/schemas/MembershipRoleValue'
+        status:
+          $ref: '#/components/schemas/MembershipStatusValue'
+        invited_at:
+          type: string
+          format: date-time
+          nullable: true
+        joined_at:
+          type: string
+          format: date-time
+          nullable: true
+        invited_by_account_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DeviceProfile:
+      type: object
+      required:
+        [
+          device_id,
+          machine_name,
+          device_display_name,
+          platform,
+          agent_version,
+          status,
+          first_seen_at,
+          last_seen_at,
+          created_at,
+          updated_at
+        ]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+          nullable: true
+        machine_name:
+          type: string
+        device_display_name:
+          type: string
+        platform:
+          type: string
+        agent_version:
+          type: string
+        status:
+          $ref: '#/components/schemas/DeviceStatusValue'
+        first_seen_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        current_account_id:
+          type: string
+          format: uuid
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ConsentRecord:
+      type: object
+      required:
+        [consent_id, scope, consent_version, consent_state, consented_at, updated_at]
+      properties:
+        consent_id:
+          type: string
+          format: uuid
+        scope:
+          $ref: '#/components/schemas/ConsentScopeValue'
+        account_id:
+          type: string
+          format: uuid
+          nullable: true
+        device_id:
+          type: string
+          format: uuid
+          nullable: true
+        org_id:
+          type: string
+          format: uuid
+          nullable: true
+        consent_version:
+          type: string
+        consent_state:
+          $ref: '#/components/schemas/ConsentStateValue'
+        telemetry_level:
+          $ref: '#/components/schemas/TelemetryLevelValue'
+          nullable: true
+        consented_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
     MachineSummaryReport:
       type: object
       required:
         [
+          device_id,
           machine_id,
           machine_name,
           user_name,
@@ -865,8 +1093,19 @@ components:
           missing_major_channels
         ]
       properties:
+        device_id:
+          type: string
+          format: uuid
         machine_id:
           type: string
+        account_id:
+          type: string
+          format: uuid
+          nullable: true
+        org_id:
+          type: string
+          format: uuid
+          nullable: true
         machine_name:
           type: string
         user_name:
@@ -964,6 +1203,7 @@ components:
       type: object
       required:
         [
+          device_id,
           machine_id,
           user_name,
           intervention_id,
@@ -976,8 +1216,19 @@ components:
           policy_id
         ]
       properties:
+        device_id:
+          type: string
+          format: uuid
         machine_id:
           type: string
+        account_id:
+          type: string
+          format: uuid
+          nullable: true
+        org_id:
+          type: string
+          format: uuid
+          nullable: true
         user_name:
           type: string
         intervention_id:

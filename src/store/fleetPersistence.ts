@@ -55,6 +55,137 @@ async function initializeFleetSchema(): Promise<void> {
   }
 
   await activePool.query(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      account_id UUID PRIMARY KEY,
+      primary_email TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      email_verified BOOLEAN NOT NULL,
+      status TEXT NOT NULL,
+      auth_provider TEXT NULL,
+      last_login_at TIMESTAMPTZ NULL,
+      payload_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    );
+  `);
+
+  await activePool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_primary_email
+      ON accounts (primary_email);
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS organizations (
+      org_id UUID PRIMARY KEY,
+      org_name TEXT NOT NULL,
+      org_slug TEXT NULL,
+      plan_tier TEXT NOT NULL,
+      billing_account_id TEXT NULL,
+      payload_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    );
+  `);
+
+  await activePool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_org_slug
+      ON organizations (org_slug)
+      WHERE org_slug IS NOT NULL;
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS memberships (
+      membership_id UUID PRIMARY KEY,
+      account_id UUID NOT NULL REFERENCES accounts (account_id) ON DELETE CASCADE,
+      org_id UUID NOT NULL REFERENCES organizations (org_id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      invited_at TIMESTAMPTZ NULL,
+      joined_at TIMESTAMPTZ NULL,
+      invited_by_account_id UUID NULL REFERENCES accounts (account_id) ON DELETE SET NULL,
+      payload_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      UNIQUE (account_id, org_id)
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_memberships_account_id
+      ON memberships (account_id);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_memberships_org_id
+      ON memberships (org_id);
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS devices (
+      device_id UUID PRIMARY KEY,
+      org_id UUID NULL REFERENCES organizations (org_id) ON DELETE SET NULL,
+      machine_name TEXT NOT NULL,
+      device_display_name TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      agent_version TEXT NOT NULL,
+      status TEXT NOT NULL,
+      first_seen_at TIMESTAMPTZ NOT NULL,
+      last_seen_at TIMESTAMPTZ NOT NULL,
+      current_account_id UUID NULL REFERENCES accounts (account_id) ON DELETE SET NULL,
+      revoked_at TIMESTAMPTZ NULL,
+      payload_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_devices_org_id
+      ON devices (org_id);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_devices_current_account_id
+      ON devices (current_account_id);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_devices_last_seen_at
+      ON devices (last_seen_at DESC);
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS consent_records (
+      consent_id UUID PRIMARY KEY,
+      scope TEXT NOT NULL,
+      account_id UUID NULL REFERENCES accounts (account_id) ON DELETE SET NULL,
+      device_id UUID NULL REFERENCES devices (device_id) ON DELETE SET NULL,
+      org_id UUID NULL REFERENCES organizations (org_id) ON DELETE SET NULL,
+      consent_version TEXT NOT NULL,
+      consent_state TEXT NOT NULL,
+      telemetry_level TEXT NULL,
+      consented_at TIMESTAMPTZ NOT NULL,
+      payload_json JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_consent_records_account_id
+      ON consent_records (account_id);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_consent_records_device_id
+      ON consent_records (device_id);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_consent_records_org_id
+      ON consent_records (org_id);
+  `);
+
+  await activePool.query(`
     CREATE TABLE IF NOT EXISTS machine_summaries (
       machine_id TEXT PRIMARY KEY,
       machine_name TEXT NOT NULL,
