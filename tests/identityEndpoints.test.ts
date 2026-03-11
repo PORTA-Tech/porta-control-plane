@@ -109,6 +109,47 @@ describe('identity endpoints', () => {
     expect(revokeResponse.status).toBe(200);
     expect(revokeResponse.body.device.status).toBe('revoked');
     expect(revokeResponse.body.device.revokedAt).toBeTruthy();
+
+    const postRevokeDevices = await request(app).get('/v1/me/devices').set('authorization', `Bearer ${token}`);
+    expect(postRevokeDevices.status).toBe(200);
+    expect(postRevokeDevices.body).toHaveLength(1);
+    expect(postRevokeDevices.body[0]?.status).toBe('revoked');
+  });
+
+  it('supports explicit unlink for the signed-in account device list', async () => {
+    const token = await loginAdmin();
+
+    const meResponse = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);
+    expect(meResponse.status).toBe(200);
+    const accountId = meResponse.body.account.accountId as string;
+
+    await upsertDeviceProfile({
+      deviceId: '85ae9f8c-ae1f-4bc2-90d7-46f021ff9300',
+      orgId: '4d69d34a-1ec8-4c60-bf02-7e1fe63fe0ed',
+      machineName: 'ADMIN-BOX',
+      deviceDisplayName: 'Admin Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.0',
+      status: 'active',
+      firstSeenAt: '2026-03-11T10:02:00.000Z',
+      lastSeenAt: '2026-03-11T10:03:00.000Z',
+      currentAccountId: accountId,
+      revokedAt: null,
+      createdAt: '2026-03-11T10:02:00.000Z',
+      updatedAt: '2026-03-11T10:03:00.000Z'
+    });
+
+    const unlinkResponse = await request(app)
+      .post('/v1/me/devices/85ae9f8c-ae1f-4bc2-90d7-46f021ff9300/unlink')
+      .set('authorization', `Bearer ${token}`);
+    expect(unlinkResponse.status).toBe(200);
+    expect(unlinkResponse.body.device.status).toBe('unlinked');
+    expect(unlinkResponse.body.device.currentAccountId).toBeNull();
+    expect(unlinkResponse.body.device.orgId).toBeNull();
+
+    const devicesResponse = await request(app).get('/v1/me/devices').set('authorization', `Bearer ${token}`);
+    expect(devicesResponse.status).toBe(200);
+    expect(devicesResponse.body).toHaveLength(0);
   });
 
   it('serves admin account and organization views from identity stores', async () => {
@@ -186,5 +227,63 @@ describe('identity endpoints', () => {
     expect(orgResponse.body.memberships).toHaveLength(1);
     expect(orgResponse.body.devices).toHaveLength(1);
     expect(orgResponse.body.consents).toHaveLength(1);
+  });
+
+  it('supports admin device listing, revoke, and unlink for an account', async () => {
+    const token = await loginAdmin();
+    const meResponse = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);
+    expect(meResponse.status).toBe(200);
+    const accountId = meResponse.body.account.accountId as string;
+
+    await upsertDeviceProfile({
+      deviceId: '1f3074fa-d7b1-4add-8fc0-86d4e4b31c14',
+      orgId: '338dc68c-0a6f-4d77-ac89-7ba6c3736fec',
+      machineName: 'OPS-BOX',
+      deviceDisplayName: 'Ops Desktop',
+      platform: 'windows',
+      agentVersion: '1.0.0',
+      status: 'active',
+      firstSeenAt: '2026-03-11T11:06:00.000Z',
+      lastSeenAt: '2026-03-11T11:07:00.000Z',
+      currentAccountId: accountId,
+      revokedAt: null,
+      createdAt: '2026-03-11T11:06:00.000Z',
+      updatedAt: '2026-03-11T11:07:00.000Z'
+    });
+
+    const listResponse = await request(app)
+      .get(`/v1/admin/accounts/${accountId}/devices`)
+      .set('authorization', `Bearer ${token}`);
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toHaveLength(1);
+    expect(listResponse.body[0]?.status).toBe('active');
+
+    const revokeResponse = await request(app)
+      .post(`/v1/admin/accounts/${accountId}/devices/1f3074fa-d7b1-4add-8fc0-86d4e4b31c14/revoke`)
+      .set('authorization', `Bearer ${token}`);
+    expect(revokeResponse.status).toBe(200);
+    expect(revokeResponse.body.device.status).toBe('revoked');
+    expect(revokeResponse.body.device.currentAccountId).toBe(accountId);
+
+    const afterRevoke = await request(app)
+      .get(`/v1/admin/accounts/${accountId}/devices`)
+      .set('authorization', `Bearer ${token}`);
+    expect(afterRevoke.status).toBe(200);
+    expect(afterRevoke.body).toHaveLength(1);
+    expect(afterRevoke.body[0]?.status).toBe('revoked');
+
+    const unlinkResponse = await request(app)
+      .post(`/v1/admin/accounts/${accountId}/devices/1f3074fa-d7b1-4add-8fc0-86d4e4b31c14/unlink`)
+      .set('authorization', `Bearer ${token}`);
+    expect(unlinkResponse.status).toBe(200);
+    expect(unlinkResponse.body.device.status).toBe('unlinked');
+    expect(unlinkResponse.body.device.currentAccountId).toBeNull();
+    expect(unlinkResponse.body.device.orgId).toBeNull();
+
+    const afterUnlink = await request(app)
+      .get(`/v1/admin/accounts/${accountId}/devices`)
+      .set('authorization', `Bearer ${token}`);
+    expect(afterUnlink.status).toBe(200);
+    expect(afterUnlink.body).toHaveLength(0);
   });
 });

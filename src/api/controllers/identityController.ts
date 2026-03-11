@@ -1,6 +1,16 @@
 import { Request, Response, Router } from 'express';
 import { updateAuthUserProfile } from '../../core/authSessionStore.js';
-import { buildAdminAccountView, buildAdminOrganizationView, buildMeProfileView, ensureAccountProfileForAuthUser, listDevicesForAuthUser, listOrganizationsForAuthUser, revokeDeviceForAccount } from '../../core/identityProfileService.js';
+import {
+  buildAdminAccountView,
+  buildAdminOrganizationView,
+  buildMeProfileView,
+  ensureAccountProfileForAuthUser,
+  listDevicesForAccount,
+  listDevicesForAuthUser,
+  listOrganizationsForAuthUser,
+  revokeDeviceForAccount,
+  unlinkDeviceForAccount
+} from '../../core/identityProfileService.js';
 import type { OperatorRequest } from '../middleware/auth.js';
 
 function requireSessionUser(req: OperatorRequest, res: Response): string | null {
@@ -117,6 +127,34 @@ export function createIdentityController(): Router {
     });
   });
 
+  router.post('/me/devices/:deviceId/unlink', async (req: Request, res: Response) => {
+    const userId = requireSessionUser(req as OperatorRequest, res);
+    if (!userId) return;
+
+    const account = await ensureAccountProfileForAuthUser(userId);
+    if (!account) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+      return;
+    }
+
+    const deviceId = req.params.deviceId;
+    if (!deviceId) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'deviceId is required.' });
+      return;
+    }
+
+    const updated = await unlinkDeviceForAccount(account.accountId, deviceId);
+    if (!updated) {
+      res.status(404).json({ error_code: 'DEVICE_NOT_FOUND', message: 'Device not found for this account.' });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      device: updated
+    });
+  });
+
   router.get('/admin/accounts/:accountId', async (req: Request, res: Response) => {
     const accountId = req.params.accountId;
     if (!accountId) {
@@ -131,6 +169,62 @@ export function createIdentityController(): Router {
     }
 
     res.json(view);
+  });
+
+  router.get('/admin/accounts/:accountId/devices', async (req: Request, res: Response) => {
+    const accountId = req.params.accountId;
+    if (!accountId) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'accountId is required.' });
+      return;
+    }
+
+    const devices = await listDevicesForAccount(accountId);
+    if (!devices) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+      return;
+    }
+
+    res.json(devices);
+  });
+
+  router.post('/admin/accounts/:accountId/devices/:deviceId/revoke', async (req: Request, res: Response) => {
+    const accountId = req.params.accountId;
+    const deviceId = req.params.deviceId;
+    if (!accountId || !deviceId) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'accountId and deviceId are required.' });
+      return;
+    }
+
+    const updated = await revokeDeviceForAccount(accountId, deviceId);
+    if (!updated) {
+      res.status(404).json({ error_code: 'DEVICE_NOT_FOUND', message: 'Device not found for this account.' });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      device: updated
+    });
+  });
+
+  router.post('/admin/accounts/:accountId/devices/:deviceId/unlink', async (req: Request, res: Response) => {
+    const accountId = req.params.accountId;
+    const deviceId = req.params.deviceId;
+    if (!accountId || !deviceId) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'accountId and deviceId are required.' });
+      return;
+    }
+
+    const updated = await unlinkDeviceForAccount(accountId, deviceId);
+    if (!updated) {
+      res.status(404).json({ error_code: 'DEVICE_NOT_FOUND', message: 'Device not found for this account.' });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      device: updated
+    });
   });
 
   router.get('/admin/organizations/:orgId', async (req: Request, res: Response) => {

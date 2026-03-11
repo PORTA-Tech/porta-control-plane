@@ -11,6 +11,7 @@ import { clearMachineActionStoreForTests } from '../src/store/machineActionStore
 import { clearAccountStoreForTests, upsertAccountProfile } from '../src/store/accountStore.js';
 import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
+import { clearDeviceStoreForTests, upsertDeviceProfile } from '../src/store/deviceStore.js';
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
@@ -34,6 +35,7 @@ describe('endpoint integration', () => {
     clearAccountStoreForTests();
     clearOrganizationStoreForTests();
     clearMembershipStoreForTests();
+    clearDeviceStoreForTests();
     delete process.env.CONTROL_PLANE_ADAPTER_EXPANSION_ENABLED;
     loadRuntimeState();
   });
@@ -71,6 +73,21 @@ describe('endpoint integration', () => {
       invitedByAccountId: null,
       createdAt: '2026-03-11T09:10:00.000Z',
       updatedAt: '2026-03-11T09:10:00.000Z'
+    });
+    await upsertDeviceProfile({
+      deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
+      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
+      machineName: 'HP-Laptop',
+      deviceDisplayName: 'HP Laptop',
+      platform: 'windows',
+      agentVersion: '1.0.0',
+      status: 'active',
+      firstSeenAt: '2026-03-11T09:30:00.000Z',
+      lastSeenAt: '2026-03-11T09:45:00.000Z',
+      currentAccountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+      revokedAt: null,
+      createdAt: '2026-03-11T09:30:00.000Z',
+      updatedAt: '2026-03-11T09:45:00.000Z'
     });
 
     const reportedAtUtc = new Date().toISOString();
@@ -130,12 +147,15 @@ describe('endpoint integration', () => {
     expect(listResponse.body[0]?.primaryEmail).toBe('alice@porta.test');
     expect(listResponse.body[0]?.orgName).toBe('PORTA Labs');
     expect(listResponse.body[0]?.role).toBe('admin');
+    expect(listResponse.body[0]?.deviceStatus).toBe('active');
+    expect(listResponse.body[0]?.deviceRevokedAt).toBeNull();
 
     const detailResponse = await withOperatorHeaders(request(app).get('/v1/machines/machine-a'));
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.machineName).toBe('HP-Laptop');
     expect(detailResponse.body.breakPendingAction).toBe('stretch_break_suggestion');
     expect(detailResponse.body.displayName).toBe('Alice Porter');
+    expect(detailResponse.body.deviceStatus).toBe('active');
 
     const compatibilityResponse = await withOperatorHeaders(request(app).get('/v1/nodes/snapshot'));
     expect(compatibilityResponse.status).toBe(200);
@@ -177,6 +197,21 @@ describe('endpoint integration', () => {
       invitedByAccountId: null,
       createdAt: '2026-03-11T09:10:00.000Z',
       updatedAt: '2026-03-11T09:10:00.000Z'
+    });
+    await upsertDeviceProfile({
+      deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
+      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
+      machineName: 'HP-Laptop',
+      deviceDisplayName: 'HP Laptop',
+      platform: 'windows',
+      agentVersion: '1.0.0',
+      status: 'active',
+      firstSeenAt: '2026-03-11T09:30:00.000Z',
+      lastSeenAt: '2026-03-11T09:45:00.000Z',
+      currentAccountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
+      revokedAt: null,
+      createdAt: '2026-03-11T09:30:00.000Z',
+      updatedAt: '2026-03-11T09:45:00.000Z'
     });
 
     const events = [
@@ -231,12 +266,14 @@ describe('endpoint integration', () => {
     expect(recentResponse.body[0]?.displayName).toBe('Alice Porter');
     expect(recentResponse.body[0]?.orgName).toBe('PORTA Labs');
     expect(recentResponse.body[0]?.role).toBe('admin');
+    expect(recentResponse.body[0]?.deviceStatus).toBe('active');
 
     const machineResponse = await withOperatorHeaders(request(app).get('/v1/machines/machine-a/actions'));
     expect(machineResponse.status).toBe(200);
     expect(machineResponse.body).toHaveLength(2);
     expect(machineResponse.body[0]?.action).toBe('deep_work_notifications_suppressed');
     expect(machineResponse.body[0]?.primaryEmail).toBe('alice@porta.test');
+    expect(machineResponse.body[0]?.deviceStatus).toBe('active');
   });
 
   it('returns null joined identity fields for unlinked machine rows', async () => {
@@ -291,6 +328,8 @@ describe('endpoint integration', () => {
     expect(response.body.primaryEmail).toBeNull();
     expect(response.body.orgName).toBeNull();
     expect(response.body.role).toBeNull();
+    expect(response.body.deviceStatus).toBeNull();
+    expect(response.body.deviceRevokedAt).toBeNull();
   });
 
   it('GET /v1/system/health exposes fleet persistence mode for validation gates', async () => {

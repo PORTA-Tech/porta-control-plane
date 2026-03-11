@@ -61,7 +61,7 @@ function nowIso(): string {
 }
 
 function linkedState(device: DeviceProfile): 'linked' | 'unlinked' {
-  return device.currentAccountId ? 'linked' : 'unlinked';
+  return device.currentAccountId && device.status === 'active' ? 'linked' : 'unlinked';
 }
 
 function success(device: DeviceProfile): DeviceIdentityOperationResult {
@@ -162,34 +162,33 @@ export async function revokeDeviceForAccount(accountId: string, deviceId: string
   return updated;
 }
 
+export async function unlinkDeviceForAccount(accountId: string, deviceId: string): Promise<DeviceProfile | null> {
+  const current = await getDeviceProfile(deviceId);
+  if (!current || current.currentAccountId !== accountId) {
+    return null;
+  }
+
+  const timestamp = nowIso();
+  const updated: DeviceProfile = {
+    ...current,
+    status: 'unlinked',
+    orgId: null,
+    currentAccountId: null,
+    lastSeenAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  await upsertDeviceProfile(updated);
+  return updated;
+}
+
 export async function registerDeviceIdentity(request: DeviceRegistrationRequest): Promise<DeviceIdentityOperationResult> {
   const existing = await getDeviceProfile(request.deviceId);
-
-  if (request.accountId) {
-    const account = await getAccountProfile(request.accountId);
-    if (!account) {
-      return failure(404, 'ACCOUNT_NOT_FOUND', 'Account profile was not found.');
-    }
-  }
-
-  if (request.orgId) {
-    const organization = await getOrganizationProfile(request.orgId);
-    if (!organization) {
-      return failure(404, 'ORGANIZATION_NOT_FOUND', 'Organization profile was not found.');
-    }
-  }
-
-  if (request.accountId && request.orgId) {
-    const membershipActive = await hasActiveMembership(request.accountId, request.orgId);
-    if (!membershipActive) {
-      return failure(409, 'MEMBERSHIP_NOT_ACTIVE', 'Account is not actively linked to the organization.');
-    }
-  }
 
   const timestamp = nowIso();
   const profile: DeviceProfile = {
     deviceId: request.deviceId,
-    orgId: request.orgId ?? existing?.orgId ?? null,
+    orgId: existing?.orgId ?? null,
     machineName: request.machineName,
     deviceDisplayName: request.deviceDisplayName ?? existing?.deviceDisplayName ?? request.machineName,
     platform: request.platform,
@@ -197,7 +196,7 @@ export async function registerDeviceIdentity(request: DeviceRegistrationRequest)
     status: existing?.status ?? 'active',
     firstSeenAt: existing?.firstSeenAt ?? timestamp,
     lastSeenAt: timestamp,
-    currentAccountId: request.accountId ?? existing?.currentAccountId ?? null,
+    currentAccountId: existing?.currentAccountId ?? null,
     revokedAt: existing?.revokedAt ?? null,
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp
@@ -235,6 +234,7 @@ export async function linkDeviceIdentity(request: DeviceAccountLinkRequest): Pro
   const timestamp = nowIso();
   const updated: DeviceProfile = {
     ...device,
+    status: 'active',
     orgId: request.orgId,
     currentAccountId: request.accountId,
     lastSeenAt: timestamp,
@@ -262,6 +262,8 @@ export async function unlinkDeviceIdentity(request: DeviceAccountUnlinkRequest):
   const timestamp = nowIso();
   const updated: DeviceProfile = {
     ...device,
+    status: 'unlinked',
+    orgId: null,
     currentAccountId: null,
     lastSeenAt: timestamp,
     updatedAt: timestamp
@@ -320,4 +322,13 @@ export async function listDevicesForAuthUser(userId: string): Promise<DeviceProf
     return null;
   }
   return listDeviceProfilesForAccount(account.accountId);
+}
+
+export async function listDevicesForAccount(accountId: string): Promise<DeviceProfile[] | null> {
+  const account = await getAccountProfile(accountId);
+  if (!account) {
+    return null;
+  }
+
+  return listDeviceProfilesForAccount(accountId);
 }

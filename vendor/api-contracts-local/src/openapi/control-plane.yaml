@@ -887,7 +887,7 @@ components:
 
     DeviceStatusValue:
       type: string
-      enum: [active, revoked]
+      enum: [active, revoked, unlinked]
 
     ConsentScopeValue:
       type: string

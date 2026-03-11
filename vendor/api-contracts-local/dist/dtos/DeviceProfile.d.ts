@@ -1,4 +1,4 @@
-export type DeviceStatus = 'active' | 'revoked';
+export type DeviceStatus = 'active' | 'revoked' | 'unlinked';
 export interface DeviceProfile {
     deviceId: string;
     orgId?: string | null;
