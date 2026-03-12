@@ -104,7 +104,7 @@ function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
 }
 
 function sessionTtlMinutes(): number {
-  return parsePositiveInt(process.env.AUTH_SESSION_TTL_MINUTES, 8 * 60);
+  return parsePositiveInt(process.env.AUTH_SESSION_TTL_MINUTES, 30 * 24 * 60);
 }
 
 function reauthTtlMinutes(): number {
