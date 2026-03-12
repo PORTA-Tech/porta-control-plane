@@ -5,6 +5,11 @@ import { RolloutTransitionError, clearCooldownIfElapsed, transitionRolloutState 
 import { executeAutoHaltRollback } from '../../core/rolloutAutomation.js';
 import type { CohortId, RolloutState } from '@porta/api-contracts';
 import { buildRolloutEvidencePack, evaluateRollout } from '../../core/rolloutEvaluationEngine.js';
+import {
+  RolloutValidationError,
+  readRolloutValidationReport,
+  upsertRolloutValidationReport
+} from '../../core/rolloutValidationStore.js';
 
 function buildDryRunView(state: RolloutState): {
   blast_radius_node_count: number;
@@ -100,6 +105,34 @@ export function createRolloutController(): Router {
     clearCooldownIfElapsed();
     const actorId = (req as OperatorRequest).operatorId ?? 'operator-unknown';
     res.json(evaluateRollout(actorId));
+  });
+
+  router.get('/validation-gates', (_req, res) => {
+    clearCooldownIfElapsed();
+    const report = readRolloutValidationReport();
+    if (!report) {
+      res.status(404).json({ error_code: 'VALIDATION_REPORT_NOT_FOUND', message: 'No rollout validation report has been published yet.' });
+      return;
+    }
+
+    res.json(report);
+  });
+
+  router.post('/validation-gates', (req: OperatorRequest, res) => {
+    clearCooldownIfElapsed();
+    const actorId = req.operatorId ?? 'unknown';
+
+    try {
+      const report = upsertRolloutValidationReport(req.body ?? {}, actorId);
+      res.status(201).json(report);
+    } catch (error) {
+      if (error instanceof RolloutValidationError) {
+        res.status(error.status).json({ error_code: error.code, message: error.message });
+        return;
+      }
+
+      throw error;
+    }
   });
 
   router.get('/evidence-pack', (req, res) => {

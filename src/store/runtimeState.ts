@@ -13,6 +13,7 @@ export interface RuntimeState {
   appliedAtUtc: string | undefined;
   rolloutState: RolloutState;
   cooldownUntilUtc: string | undefined;
+  rolloutValidationReport: unknown;
   adapterControls: {
     featureAdapterEnabled: boolean;
     allowedCohorts: ('stable' | 'canary-1' | 'canary-5' | 'internal' | 'experimental')[];
@@ -36,6 +37,7 @@ const defaultState: RuntimeState = {
   appliedAtUtc: undefined,
   rolloutState: 'IDLE',
   cooldownUntilUtc: undefined,
+  rolloutValidationReport: undefined,
   adapterControls: {
     featureAdapterEnabled: false,
     allowedCohorts: ['canary-1'],
@@ -67,6 +69,7 @@ function toRuntimeState(raw: unknown): RuntimeState {
     appliedAtUtc: typeof candidate.appliedAtUtc === 'string' ? candidate.appliedAtUtc : undefined,
     rolloutState: typeof candidate.rolloutState === 'string' ? (candidate.rolloutState as RolloutState) : 'IDLE',
     cooldownUntilUtc: typeof candidate.cooldownUntilUtc === 'string' ? candidate.cooldownUntilUtc : undefined,
+    rolloutValidationReport: candidate.rolloutValidationReport,
     adapterControls:
       candidate.adapterControls && typeof candidate.adapterControls === 'object'
         ? {

@@ -30,6 +30,8 @@ const routePolicies: RoutePolicy[] = [
   { method: 'GET', path: /^\/v1\/rollout\/state$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/rollout\/dry-run$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/rollout\/evaluate$/, roles: roleSet('viewer', 'operator', 'admin') },
+  { method: 'GET', path: /^\/v1\/rollout\/validation-gates$/, roles: roleSet('viewer', 'operator', 'admin') },
+  { method: 'POST', path: /^\/v1\/rollout\/validation-gates$/, roles: roleSet('operator', 'admin') },
   { method: 'GET', path: /^\/v1\/rollout\/evidence-pack$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'POST', path: /^\/v1\/rollout\/promote$/, roles: roleSet('operator'), requiresRecentReauth: true },
   { method: 'POST', path: /^\/v1\/rollout\/halt$/, roles: roleSet('operator'), requiresRecentReauth: true },

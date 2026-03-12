@@ -2,6 +2,7 @@ import type { AuditEvent } from '@porta/api-contracts';
 import type { RolloutState } from '@porta/api-contracts';
 import { evaluateCohorts, type CohortId, type CohortEvaluationView, type CohortRegressionMetric } from './cohortEvaluationEngine.js';
 import { readOperatorAuditEvents } from './operatorAudit.js';
+import { readRolloutValidationReport } from './rolloutValidationStore.js';
 import { listAgentPresence } from '../store/agentPresenceStore.js';
 import { runtimeState } from '../store/runtimeState.js';
 
@@ -16,7 +17,8 @@ type RolloutGuardrailId =
   | 'CIRCUIT_BREAKER'
   | 'FSM'
   | 'COOLDOWN'
-  | 'FEATURE_GATE';
+  | 'FEATURE_GATE'
+  | 'VALIDATION_GATES';
 
 type RolloutDecisionReasonCode =
   | 'ALL_GUARDRAILS_PASS'
@@ -30,6 +32,7 @@ type RolloutDecisionReasonCode =
   | 'CIRCUIT_OPEN'
   | 'SIGNATURE_INVALID'
   | 'SLO_RISK_TOO_HIGH'
+  | 'VALIDATION_GATES_FAILED'
   | 'GUARDRAIL_INCONCLUSIVE';
 
 type TrustStatus = 'VALID' | 'INVALID' | 'UNKNOWN';
@@ -196,6 +199,10 @@ function thresholdDegradationDeltaPct(): number {
 function featureGateEnabled(): boolean {
   const raw = process.env.CONTROL_PLANE_ADAPTER_EXPANSION_ENABLED ?? 'false';
   return raw === '1' || raw.toLowerCase() === 'true';
+}
+
+function validationMaxAgeHours(): number {
+  return parsePositiveInt(process.env.ROLLOUT_VALIDATION_MAX_AGE_HOURS, 24);
 }
 
 function nextStage(stage: AdapterPromotionStage): AdapterPromotionStage | null {
@@ -458,6 +465,7 @@ function decisionFromGuardrails(input: {
     if (firstFail.guardrail_id === 'FEATURE_GATE') code = 'FEATURE_GATE_DISABLED';
     if (firstFail.guardrail_id === 'CIRCUIT_BREAKER') code = 'CIRCUIT_OPEN';
     if (firstFail.guardrail_id === 'SIGNATURE_TRUST') code = 'SIGNATURE_INVALID';
+    if (firstFail.guardrail_id === 'VALIDATION_GATES') code = 'VALIDATION_GATES_FAILED';
     return {
       promotion_verdict: 'BLOCK',
       trigger_reason_code: code,
@@ -573,6 +581,22 @@ export function evaluateRollout(actorId: string): RolloutEvaluationView {
     valid: sampleValid && coverageValid && freshnessOk && metricsAvailable && trustStatus === 'VALID',
     messages: dataMessages
   };
+
+  const validationReport = readRolloutValidationReport();
+  const validationAgeLimitHours = validationMaxAgeHours();
+  const validationAgeLimitMs = validationAgeLimitHours * 60 * 60 * 1000;
+  const validationGeneratedMs = validationReport ? Date.parse(validationReport.generatedAtUtc) : NaN;
+  const validationExpiresMs = validationReport?.expiresAtUtc ? Date.parse(validationReport.expiresAtUtc) : NaN;
+  const validationMissing = validationReport === null;
+  const validationExpired = Number.isFinite(validationExpiresMs) && validationExpiresMs <= Date.now();
+  const validationStale = !validationMissing
+    && (!Number.isFinite(validationGeneratedMs)
+      || (Date.now() - validationGeneratedMs) > validationAgeLimitMs
+      || validationExpired);
+  const failedValidationGates = validationReport?.gates.filter((gate) => !gate.success).map((gate) => gate.gateId) ?? [];
+  const validationTraceRefs = validationReport
+    ? [`validation:${validationReport.suiteName}:${validationReport.generatedAtUtc}`]
+    : [];
 
   const errorDelta = baselineRow && targetRow ? round(targetRow.error_rate_pct - baselineRow.error_rate_pct, 3) : null;
   const p99Delta = baselineRow && targetRow ? round(targetRow.p99_latency_ms - baselineRow.p99_latency_ms, 0) : null;
@@ -763,8 +787,76 @@ export function evaluateRollout(actorId: string): RolloutEvaluationView {
           ? {
               reason_code: 'FEATURE_GATE_DISABLED',
               reason_details: { feature_gate_enabled: false }
-            }
-          : {})
+              }
+            : {})
+        };
+    })(),
+    (() => {
+      if (validationMissing) {
+        return {
+          guardrail_id: 'VALIDATION_GATES' as const,
+          status: 'INCONCLUSIVE' as const,
+          value: null,
+          value_label: 'missing',
+          threshold: null,
+          threshold_label: `fresh <= ${validationAgeLimitHours}h and all green`,
+          window: `${validationAgeLimitHours}h`,
+          evidence: { correlation_ids: [], cohorts: [targetCohortId], trace_refs: [] },
+          reason_code: 'VALIDATION_GATES_MISSING',
+          reason_details: {
+            suite_name: 'identity_rollout'
+          }
+        };
+      }
+
+      if (validationStale) {
+        return {
+          guardrail_id: 'VALIDATION_GATES' as const,
+          status: 'INCONCLUSIVE' as const,
+          value: null,
+          value_label: 'stale',
+          threshold: null,
+          threshold_label: `fresh <= ${validationAgeLimitHours}h and all green`,
+          window: `${validationAgeLimitHours}h`,
+          evidence: { correlation_ids: [], cohorts: [targetCohortId], trace_refs: validationTraceRefs },
+          reason_code: 'VALIDATION_GATES_STALE',
+          reason_details: {
+            generated_at_utc: validationReport?.generatedAtUtc ?? null,
+            expires_at_utc: validationReport?.expiresAtUtc ?? null,
+            max_age_hours: validationAgeLimitHours
+          }
+        };
+      }
+
+      if (!validationReport.passed) {
+        return {
+          guardrail_id: 'VALIDATION_GATES' as const,
+          status: 'FAIL' as const,
+          value: failedValidationGates.length,
+          value_label: `${failedValidationGates.length} failed`,
+          threshold: 0,
+          threshold_label: '0 failed',
+          window: `${validationAgeLimitHours}h`,
+          evidence: { correlation_ids: [], cohorts: [targetCohortId], trace_refs: validationTraceRefs },
+          reason_code: 'VALIDATION_GATES_FAILED',
+          reason_details: {
+            failed_gate_ids: failedValidationGates.join(','),
+            generated_at_utc: validationReport.generatedAtUtc,
+            machine_id: validationReport.machineId,
+            device_id: validationReport.deviceId
+          }
+        };
+      }
+
+      return {
+        guardrail_id: 'VALIDATION_GATES' as const,
+        status: 'PASS' as const,
+        value: validationReport.gates.length,
+        value_label: `${validationReport.gates.length}/${validationReport.gates.length} passed`,
+        threshold: validationReport.gates.length,
+        threshold_label: `${validationReport.gates.length} passed`,
+        window: `${validationAgeLimitHours}h`,
+        evidence: { correlation_ids: [], cohorts: [targetCohortId], trace_refs: validationTraceRefs }
       };
     })()
   ];

@@ -54,7 +54,7 @@ function assertSchema(pathKey: string, method: string, status: number, body: unk
 
 describe('openapi contract compliance', () => {
   beforeAll(async () => {
-    const openapiPath = path.resolve('node_modules', '@porta', 'api-contracts', 'src', 'openapi', 'control-plane.yaml');
+    const openapiPath = path.resolve('vendor', 'api-contracts-local', 'src', 'openapi', 'control-plane.yaml');
     openApi = (await SwaggerParser.dereference(openapiPath)) as OpenApiDoc;
   });
 
@@ -82,6 +82,73 @@ describe('openapi contract compliance', () => {
     const response = await withOperatorHeaders(request(app).get('/v1/rollout/dry-run'));
     expect(response.status).toBe(200);
     assertSchema('/v1/rollout/dry-run', 'get', 200, response.body);
+  });
+
+  it('GET /v1/rollout/evaluate matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/rollout/evaluate'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/rollout/evaluate', 'get', 200, response.body);
+  });
+
+  it('POST /v1/rollout/validation-gates (201) matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(
+      request(app).post('/v1/rollout/validation-gates').send({
+        suiteName: 'identity_rollout',
+        machineId: 'machine-openapi',
+        deviceId: '2603b760-7691-4327-95df-78ee53c2e3f8',
+        accountId: '46903c28-9f99-495c-bf40-6f4d2ea8356b',
+        orgId: '89c479b7-3f58-4957-a8aa-dba6bc4d0f65',
+        generatedAtUtc: '2026-03-12T08:00:00.000Z',
+        expiresAtUtc: '2026-03-13T08:00:00.000Z',
+        passed: true,
+        gates: [
+          {
+            gateId: 'stable_device_id',
+            name: 'new install -> stable local device_id exists',
+            success: true,
+            detail: 'device_id is stable',
+            checkedAtUtc: '2026-03-12T08:00:00.000Z'
+          }
+        ]
+      })
+    );
+
+    expect(response.status).toBe(201);
+    assertSchema('/v1/rollout/validation-gates', 'post', 201, response.body);
+  });
+
+  it('GET /v1/rollout/validation-gates matches OpenAPI schema', async () => {
+    await withOperatorHeaders(
+      request(app).post('/v1/rollout/validation-gates').send({
+        suiteName: 'identity_rollout',
+        machineId: 'machine-openapi',
+        deviceId: '2603b760-7691-4327-95df-78ee53c2e3f8',
+        accountId: '46903c28-9f99-495c-bf40-6f4d2ea8356b',
+        orgId: '89c479b7-3f58-4957-a8aa-dba6bc4d0f65',
+        generatedAtUtc: '2026-03-12T08:00:00.000Z',
+        expiresAtUtc: '2026-03-13T08:00:00.000Z',
+        passed: true,
+        gates: [
+          {
+            gateId: 'stable_device_id',
+            name: 'new install -> stable local device_id exists',
+            success: true,
+            detail: 'device_id is stable',
+            checkedAtUtc: '2026-03-12T08:00:00.000Z'
+          }
+        ]
+      })
+    );
+
+    const response = await withOperatorHeaders(request(app).get('/v1/rollout/validation-gates'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/rollout/validation-gates', 'get', 200, response.body);
+  });
+
+  it('GET /v1/rollout/evidence-pack matches OpenAPI schema', async () => {
+    const response = await withOperatorHeaders(request(app).get('/v1/rollout/evidence-pack'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/rollout/evidence-pack', 'get', 200, response.body);
   });
 
   it('POST /v1/rollout/rollback (202) matches OpenAPI schema', async () => {

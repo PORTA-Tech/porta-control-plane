@@ -42,6 +42,15 @@ describe('rbac policy', () => {
     const dryRun = await withHeaders(request(app).get('/v1/rollout/dry-run'), 'viewer');
     expect(dryRun.status).toBe(200);
 
+    const evaluate = await withHeaders(request(app).get('/v1/rollout/evaluate'), 'viewer');
+    expect(evaluate.status).toBe(200);
+
+    const validationRead = await withHeaders(request(app).get('/v1/rollout/validation-gates'), 'viewer');
+    expect(validationRead.status).toBe(404);
+
+    const evidencePack = await withHeaders(request(app).get('/v1/rollout/evidence-pack'), 'viewer');
+    expect(evidencePack.status).toBe(200);
+
     const configDiff = await withHeaders(request(app).get('/v1/config/diff-preview'), 'viewer');
     expect(configDiff.status).toBe(200);
 
@@ -66,6 +75,27 @@ describe('rbac policy', () => {
     const write = await withHeaders(request(app).post('/v1/rollout/rollback'), 'viewer');
     expect(write.status).toBe(403);
 
+    const validationWrite = await withHeaders(request(app).post('/v1/rollout/validation-gates').send({
+      suiteName: 'identity_rollout',
+      machineId: 'machine-rbac',
+      deviceId: '2603b760-7691-4327-95df-78ee53c2e3f8',
+      accountId: '46903c28-9f99-495c-bf40-6f4d2ea8356b',
+      orgId: '89c479b7-3f58-4957-a8aa-dba6bc4d0f65',
+      generatedAtUtc: '2026-03-12T08:00:00.000Z',
+      expiresAtUtc: '2026-03-13T08:00:00.000Z',
+      passed: true,
+      gates: [
+        {
+          gateId: 'stable_device_id',
+          name: 'new install -> stable local device_id exists',
+          success: true,
+          detail: 'device_id is stable',
+          checkedAtUtc: '2026-03-12T08:00:00.000Z'
+        }
+      ]
+    }), 'viewer');
+    expect(validationWrite.status).toBe(403);
+
     const adapterControlsWrite = await withHeaders(request(app).post('/v1/adapter/controls').send({
       feature_adapter_enabled: false,
       allowed_cohorts: ['canary-1'],
@@ -83,6 +113,31 @@ describe('rbac policy', () => {
     const response = await withHeaders(request(app).post('/v1/rollout/rollback'), 'operator');
     expect(response.status).toBe(202);
     expect(response.body.state).toBe('COOLDOWN');
+  });
+
+  it('allows operator to publish rollout validation gates', async () => {
+    const response = await withHeaders(request(app).post('/v1/rollout/validation-gates').send({
+      suiteName: 'identity_rollout',
+      machineId: 'machine-rbac',
+      deviceId: '2603b760-7691-4327-95df-78ee53c2e3f8',
+      accountId: '46903c28-9f99-495c-bf40-6f4d2ea8356b',
+      orgId: '89c479b7-3f58-4957-a8aa-dba6bc4d0f65',
+      generatedAtUtc: '2026-03-12T08:00:00.000Z',
+      expiresAtUtc: '2026-03-13T08:00:00.000Z',
+      passed: true,
+      gates: [
+        {
+          gateId: 'stable_device_id',
+          name: 'new install -> stable local device_id exists',
+          success: true,
+          detail: 'device_id is stable',
+          checkedAtUtc: '2026-03-12T08:00:00.000Z'
+        }
+      ]
+    }), 'operator');
+
+    expect(response.status).toBe(201);
+    expect(response.body.passed).toBe(true);
   });
 
   it('blocks admin from rollout write actions by policy', async () => {
