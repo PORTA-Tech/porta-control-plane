@@ -4,6 +4,7 @@ import { runtimeState } from '../../store/runtimeState.js';
 import { listAgentPresence, upsertAgentPresence, upsertPresenceFromTelemetryBatch } from '../../store/agentPresenceStore.js';
 import { appendMachineActionEvent } from '../../store/machineActionStore.js';
 import { upsertMachineSummary } from '../../store/machineSummaryStore.js';
+import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileService.js';
 
 interface AgentStatusPayload {
   agentId?: string;
@@ -146,6 +147,14 @@ export function createAgentController(): Router {
         return;
       }
 
+      await reconcileDeviceProfileFromTelemetry({
+        deviceId: payload.deviceId ?? null,
+        machineName: payload.machineName,
+        agentVersion: payload.agentVersion,
+        reportedAtUtc: payload.reportedAtUtc,
+        accountId: payload.accountId ?? null,
+        orgId: payload.orgId ?? null
+      });
       await upsertMachineSummary(payload);
       res.status(202).json({ accepted: true, machineId: payload.machineId, reportedAtUtc: payload.reportedAtUtc });
     } catch (error) {
@@ -161,7 +170,20 @@ export function createAgentController(): Router {
         return;
       }
 
+      const seenDeviceIds = new Set<string>();
       for (const event of payload) {
+        const deviceId = typeof event.deviceId === 'string' ? event.deviceId.trim() : '';
+        if (deviceId && !seenDeviceIds.has(deviceId)) {
+          await reconcileDeviceProfileFromTelemetry({
+            deviceId,
+            machineName: event.machineId,
+            reportedAtUtc: event.timestampUtc,
+            accountId: event.accountId ?? null,
+            orgId: event.orgId ?? null
+          });
+          seenDeviceIds.add(deviceId);
+        }
+
         await appendMachineActionEvent(event);
       }
 

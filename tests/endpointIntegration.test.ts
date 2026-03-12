@@ -11,7 +11,7 @@ import { clearMachineActionStoreForTests } from '../src/store/machineActionStore
 import { clearAccountStoreForTests, upsertAccountProfile } from '../src/store/accountStore.js';
 import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
-import { clearDeviceStoreForTests, upsertDeviceProfile } from '../src/store/deviceStore.js';
+import { clearDeviceStoreForTests, getDeviceProfile } from '../src/store/deviceStore.js';
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
@@ -74,22 +74,6 @@ describe('endpoint integration', () => {
       createdAt: '2026-03-11T09:10:00.000Z',
       updatedAt: '2026-03-11T09:10:00.000Z'
     });
-    await upsertDeviceProfile({
-      deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
-      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
-      machineName: 'HP-Laptop',
-      deviceDisplayName: 'HP Laptop',
-      platform: 'windows',
-      agentVersion: '1.0.0',
-      status: 'active',
-      firstSeenAt: '2026-03-11T09:30:00.000Z',
-      lastSeenAt: '2026-03-11T09:45:00.000Z',
-      currentAccountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
-      revokedAt: null,
-      createdAt: '2026-03-11T09:30:00.000Z',
-      updatedAt: '2026-03-11T09:45:00.000Z'
-    });
-
     const reportedAtUtc = new Date().toISOString();
     const heartbeatUtc = new Date(Date.now() - 1_000).toISOString();
     const activityUtc = new Date(Date.now() - 2_000).toISOString();
@@ -157,6 +141,14 @@ describe('endpoint integration', () => {
     expect(detailResponse.body.displayName).toBe('Alice Porter');
     expect(detailResponse.body.deviceStatus).toBe('active');
 
+    const device = await getDeviceProfile('d26b9f02-34b7-41c3-9dd4-6cbb4d281ac4');
+    expect(device).not.toBeNull();
+    expect(device?.status).toBe('active');
+    expect(device?.currentAccountId).toBe('34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f');
+    expect(device?.orgId).toBe('9be62dd8-ea7b-47ca-b818-e7c8f8477d0b');
+    expect(device?.machineName).toBe('HP-Laptop');
+    expect(device?.agentVersion).toBe('1.0.0');
+
     const compatibilityResponse = await withOperatorHeaders(request(app).get('/v1/nodes/snapshot'));
     expect(compatibilityResponse.status).toBe(200);
     expect(compatibilityResponse.body).toHaveLength(1);
@@ -198,22 +190,6 @@ describe('endpoint integration', () => {
       createdAt: '2026-03-11T09:10:00.000Z',
       updatedAt: '2026-03-11T09:10:00.000Z'
     });
-    await upsertDeviceProfile({
-      deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
-      orgId: '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b',
-      machineName: 'HP-Laptop',
-      deviceDisplayName: 'HP Laptop',
-      platform: 'windows',
-      agentVersion: '1.0.0',
-      status: 'active',
-      firstSeenAt: '2026-03-11T09:30:00.000Z',
-      lastSeenAt: '2026-03-11T09:45:00.000Z',
-      currentAccountId: '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f',
-      revokedAt: null,
-      createdAt: '2026-03-11T09:30:00.000Z',
-      updatedAt: '2026-03-11T09:45:00.000Z'
-    });
-
     const events = [
       {
         deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
@@ -274,9 +250,17 @@ describe('endpoint integration', () => {
     expect(machineResponse.body[0]?.action).toBe('deep_work_notifications_suppressed');
     expect(machineResponse.body[0]?.primaryEmail).toBe('alice@porta.test');
     expect(machineResponse.body[0]?.deviceStatus).toBe('active');
+
+    const device = await getDeviceProfile('d26b9f02-34b7-41c3-9dd4-6cbb4d281ac4');
+    expect(device).not.toBeNull();
+    expect(device?.status).toBe('active');
+    expect(device?.currentAccountId).toBe('34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f');
+    expect(device?.orgId).toBe('9be62dd8-ea7b-47ca-b818-e7c8f8477d0b');
+    expect(device?.machineName).toBe('machine-a');
+    expect(device?.agentVersion).toBe('unknown');
   });
 
-  it('returns null joined identity fields for unlinked machine rows', async () => {
+  it('backfills an unlinked device row for machine summaries without an account link', async () => {
     const summary = {
       deviceId: 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4',
       accountId: null,
@@ -323,6 +307,65 @@ describe('endpoint integration', () => {
     expect(ingest.status).toBe(202);
 
     const response = await withOperatorHeaders(request(app).get('/v1/machines/machine-unlinked'));
+    expect(response.status).toBe(200);
+    expect(response.body.displayName).toBeNull();
+    expect(response.body.primaryEmail).toBeNull();
+    expect(response.body.orgName).toBeNull();
+    expect(response.body.role).toBeNull();
+    expect(response.body.deviceStatus).toBe('unlinked');
+    expect(response.body.deviceRevokedAt).toBeNull();
+
+    const device = await getDeviceProfile('d26b9f02-34b7-41c3-9dd4-6cbb4d281ac4');
+    expect(device).not.toBeNull();
+    expect(device?.status).toBe('unlinked');
+    expect(device?.currentAccountId).toBeNull();
+    expect(device?.orgId).toBeNull();
+  });
+
+  it('keeps legacy machine rows readable when they predate device identity refs', async () => {
+    const summary = {
+      machineId: 'machine-legacy',
+      machineName: 'Legacy-Kiosk',
+      userName: 'unknown',
+      agentVersion: '0.9.0',
+      schemaVersion: '0.9.0',
+      policyVersion: 'policy-v1',
+      reportedAtUtc: new Date().toISOString(),
+      agentRunning: true,
+      userSessionConnected: false,
+      activityDetected: false,
+      lastActivityUtc: null,
+      userAgentHeartbeatUtc: null,
+      captureContext: 'Unknown',
+      keyboardSignalActive: false,
+      mouseSignalActive: false,
+      ownershipWarning: null,
+      captureFailureReason: 'user_session_missing',
+      lastError: null,
+      backendConnected: true,
+      localApiAuthReady: true,
+      dbMigrationFailed: false,
+      taskContinuityScore: 0,
+      taskContinuitySeconds: 0,
+      continuityState: 'reset',
+      deepWorkActive: false,
+      overloadLikelihood: 0,
+      overloadActive: false,
+      breakNeeded: false,
+      breakPendingAction: null,
+      breakPendingReasonCode: null,
+      calibrationStage: 'cold',
+      trustTier: 'low',
+      modelConfidence: 0.2,
+      signalQualityScore: 0.2,
+      partialData: true,
+      missingMajorChannels: ['keyboard', 'mouse']
+    };
+
+    const ingest = await request(app).post('/api/agent/machine-summary').send(summary);
+    expect(ingest.status).toBe(202);
+
+    const response = await withOperatorHeaders(request(app).get('/v1/machines/machine-legacy'));
     expect(response.status).toBe(200);
     expect(response.body.displayName).toBeNull();
     expect(response.body.primaryEmail).toBeNull();

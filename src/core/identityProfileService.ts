@@ -61,9 +61,34 @@ export type DeviceIdentityOperationResult =
   | { ok: false; error: IdentityOperationError };
 
 const ACCOUNT_LEGAL_CONSENT_VERSION = 'v1';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeOptionalUuid(value: string | null | undefined): string | null {
+  const trimmed = normalizeOptionalString(value);
+  return trimmed && UUID_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+function normalizeTelemetryTimestamp(value: string | null | undefined): string {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return nowIso();
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isNaN(parsed) ? nowIso() : new Date(parsed).toISOString();
+}
+
+function maxIso(left: string, right: string): string {
+  return Date.parse(left) >= Date.parse(right) ? left : right;
 }
 
 function deriveStableConsentId(scope: string, accountId: string | null, deviceId: string | null, orgId: string | null): string {
@@ -107,6 +132,18 @@ function failure(status: number, errorCode: string, message: string): DeviceIden
 async function hasActiveMembership(accountId: string, orgId: string): Promise<boolean> {
   const memberships = await listMembershipsForAccount(accountId);
   return memberships.some((membership) => membership.orgId === orgId && membership.status === 'active');
+}
+
+async function canBackfillLinkedDevice(accountId: string, orgId: string): Promise<boolean> {
+  const [account, organization] = await Promise.all([
+    getAccountProfile(accountId),
+    getOrganizationProfile(orgId)
+  ]);
+  if (!account || !organization) {
+    return false;
+  }
+
+  return hasActiveMembership(accountId, orgId);
 }
 
 function selectLatestConsentRecord(
@@ -246,6 +283,67 @@ export async function buildMeProfileView(userId: string): Promise<MeProfileView 
     devices,
     consents
   };
+}
+
+export async function reconcileDeviceProfileFromTelemetry(input: {
+  deviceId: string | null | undefined;
+  machineName: string | null | undefined;
+  agentVersion?: string | null | undefined;
+  platform?: string | null | undefined;
+  reportedAtUtc: string | null | undefined;
+  accountId?: string | null | undefined;
+  orgId?: string | null | undefined;
+}): Promise<DeviceProfile | null> {
+  const deviceId = normalizeOptionalUuid(input.deviceId);
+  if (!deviceId) {
+    return null;
+  }
+
+  const existing = await getDeviceProfile(deviceId);
+  const timestamp = normalizeTelemetryTimestamp(input.reportedAtUtc);
+  const machineName = normalizeOptionalString(input.machineName) ?? existing?.machineName ?? deviceId;
+  const agentVersion = normalizeOptionalString(input.agentVersion) ?? existing?.agentVersion ?? 'unknown';
+  const platform = normalizeOptionalString(input.platform) ?? existing?.platform ?? 'unknown';
+
+  if (existing) {
+    const updated: DeviceProfile = {
+      ...existing,
+      machineName,
+      deviceDisplayName: existing.deviceDisplayName === existing.machineName ? machineName : existing.deviceDisplayName,
+      platform,
+      agentVersion,
+      lastSeenAt: maxIso(existing.lastSeenAt, timestamp),
+      updatedAt: nowIso()
+    };
+
+    await upsertDeviceProfile(updated);
+    return updated;
+  }
+
+  const accountId = normalizeOptionalUuid(input.accountId);
+  const orgId = normalizeOptionalUuid(input.orgId);
+  const canLink = accountId !== null
+    && orgId !== null
+    && await canBackfillLinkedDevice(accountId, orgId);
+
+  const profile: DeviceProfile = {
+    deviceId,
+    orgId: canLink ? orgId : null,
+    machineName,
+    deviceDisplayName: machineName,
+    platform,
+    agentVersion,
+    status: canLink ? 'active' : 'unlinked',
+    firstSeenAt: timestamp,
+    lastSeenAt: timestamp,
+    currentAccountId: canLink ? accountId : null,
+    revokedAt: null,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  await upsertDeviceProfile(profile);
+  return profile;
 }
 
 export async function revokeDeviceForAccount(accountId: string, deviceId: string): Promise<DeviceProfile | null> {
