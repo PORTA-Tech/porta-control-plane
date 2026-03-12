@@ -1,5 +1,5 @@
 import { Request, Response, Router } from 'express';
-import type { DeviceAccountLinkRequest, DeviceAccountUnlinkRequest, DeviceRegistrationRequest } from '@porta/api-contracts';
+import type { ConsentState, DeviceAccountLinkRequest, DeviceAccountUnlinkRequest, DeviceRegistrationRequest, TelemetryLevel } from '@porta/api-contracts';
 import { linkDeviceIdentity, registerDeviceIdentity, unlinkDeviceIdentity } from '../../core/identityProfileService.js';
 
 function isNonEmptyString(value: unknown): value is string {
@@ -8,6 +8,21 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isOptionalString(value: unknown): value is string | null | undefined {
   return value === undefined || value === null || typeof value === 'string';
+}
+
+function isOptionalConsentState(value: unknown): value is ConsentState | null | undefined {
+  return value === undefined
+    || value === null
+    || value === 'accepted'
+    || value === 'declined'
+    || value === 'revoked';
+}
+
+function isOptionalTelemetryLevel(value: unknown): value is TelemetryLevel | null | undefined {
+  return value === undefined
+    || value === null
+    || value === 'essential'
+    || value === 'enhanced';
 }
 
 function parseDeviceRegistrationRequest(body: unknown): DeviceRegistrationRequest | null {
@@ -24,6 +39,10 @@ function parseDeviceRegistrationRequest(body: unknown): DeviceRegistrationReques
     !isOptionalString(payload.deviceDisplayName) ||
     !isOptionalString(payload.accountId) ||
     !isOptionalString(payload.orgId) ||
+    !isOptionalConsentState(payload.deviceCaptureConsentState) ||
+    !isOptionalString(payload.deviceCaptureConsentVersion) ||
+    !isOptionalString(payload.deviceCaptureConsentedAt) ||
+    !isOptionalTelemetryLevel(payload.deviceCaptureTelemetryLevel) ||
     !isOptionalString(payload.sessionToken) ||
     !isOptionalString(payload.localProofToken)
   ) {
@@ -38,6 +57,10 @@ function parseDeviceRegistrationRequest(body: unknown): DeviceRegistrationReques
     agentVersion: payload.agentVersion.trim(),
     accountId: payload.accountId?.trim() ?? null,
     orgId: payload.orgId?.trim() ?? null,
+    deviceCaptureConsentState: payload.deviceCaptureConsentState ?? null,
+    deviceCaptureConsentVersion: payload.deviceCaptureConsentVersion?.trim() ?? null,
+    deviceCaptureConsentedAt: payload.deviceCaptureConsentedAt?.trim() ?? null,
+    deviceCaptureTelemetryLevel: payload.deviceCaptureTelemetryLevel ?? null,
     sessionToken: payload.sessionToken?.trim() ?? null,
     localProofToken: payload.localProofToken?.trim() ?? null
   };

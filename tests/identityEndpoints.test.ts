@@ -45,6 +45,9 @@ describe('identity endpoints', () => {
     const meResponse = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);
     expect(meResponse.status).toBe(200);
     expect(meResponse.body.account.displayName).toBe('Admin');
+    expect(meResponse.body.consents).toHaveLength(1);
+    expect(meResponse.body.consents[0]?.scope).toBe('account_legal');
+    expect(meResponse.body.consents[0]?.consentState).toBe('accepted');
     const accountId = meResponse.body.account.accountId as string;
 
     await upsertOrganizationProfile({
@@ -114,6 +117,75 @@ describe('identity endpoints', () => {
     expect(postRevokeDevices.status).toBe(200);
     expect(postRevokeDevices.body).toHaveLength(1);
     expect(postRevokeDevices.body[0]?.status).toBe('revoked');
+  });
+
+  it('distinguishes account legal consent from device capture consent on /v1/me', async () => {
+    const token = await loginAdmin();
+
+    const meResponse = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);
+    expect(meResponse.status).toBe(200);
+    const accountId = meResponse.body.account.accountId as string;
+
+    await upsertOrganizationProfile({
+      orgId: '4d69d34a-1ec8-4c60-bf02-7e1fe63fe0ed',
+      orgName: 'PORTA Labs',
+      orgSlug: 'porta-labs',
+      planTier: 'pro',
+      billingAccountId: 'billing-1',
+      createdAt: '2026-03-11T10:00:00.000Z',
+      updatedAt: '2026-03-11T10:00:00.000Z'
+    });
+
+    await upsertMembership({
+      membershipId: '7e063ff7-3112-426e-8f60-6b9d6414dbe5',
+      accountId,
+      orgId: '4d69d34a-1ec8-4c60-bf02-7e1fe63fe0ed',
+      role: 'owner',
+      status: 'active',
+      invitedAt: null,
+      joinedAt: '2026-03-11T10:01:00.000Z',
+      invitedByAccountId: null,
+      createdAt: '2026-03-11T10:01:00.000Z',
+      updatedAt: '2026-03-11T10:01:00.000Z'
+    });
+
+    await upsertDeviceProfile({
+      deviceId: '64df6801-ce5f-4832-8b6d-752b6c5f18e9',
+      orgId: '4d69d34a-1ec8-4c60-bf02-7e1fe63fe0ed',
+      machineName: 'ADMIN-BOX',
+      deviceDisplayName: 'Admin Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.0',
+      status: 'active',
+      firstSeenAt: '2026-03-11T10:02:00.000Z',
+      lastSeenAt: '2026-03-11T10:03:00.000Z',
+      currentAccountId: accountId,
+      revokedAt: null,
+      createdAt: '2026-03-11T10:02:00.000Z',
+      updatedAt: '2026-03-11T10:03:00.000Z'
+    });
+
+    await upsertConsentRecord({
+      consentId: 'cc28b71e-c01c-44b9-8c06-2d98585d71ea',
+      scope: 'device_capture',
+      accountId,
+      deviceId: '64df6801-ce5f-4832-8b6d-752b6c5f18e9',
+      orgId: '4d69d34a-1ec8-4c60-bf02-7e1fe63fe0ed',
+      consentVersion: 'v1',
+      consentState: 'revoked',
+      telemetryLevel: 'essential',
+      consentedAt: '2026-03-11T11:08:00.000Z',
+      updatedAt: '2026-03-11T11:08:00.000Z'
+    });
+
+    const refreshed = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.devices).toHaveLength(1);
+    expect(refreshed.body.consents).toHaveLength(2);
+    expect(refreshed.body.consents.some((entry: { scope?: string; consentState?: string; deviceId?: string | null; }) =>
+      entry.scope === 'account_legal' && entry.consentState === 'accepted' && (entry.deviceId ?? null) === null)).toBe(true);
+    expect(refreshed.body.consents.some((entry: { scope?: string; consentState?: string; deviceId?: string | null; }) =>
+      entry.scope === 'device_capture' && entry.consentState === 'revoked' && entry.deviceId === '64df6801-ce5f-4832-8b6d-752b6c5f18e9')).toBe(true);
   });
 
   it('supports explicit unlink for the signed-in account device list', async () => {
@@ -217,7 +289,7 @@ describe('identity endpoints', () => {
     expect(accountResponse.body.account.accountId).toBe(accountId);
     expect(accountResponse.body.memberships).toHaveLength(1);
     expect(accountResponse.body.devices).toHaveLength(1);
-    expect(accountResponse.body.consents).toHaveLength(1);
+    expect(accountResponse.body.consents).toHaveLength(2);
 
     const orgResponse = await request(app)
       .get('/v1/admin/organizations/338dc68c-0a6f-4d77-ac89-7ba6c3736fec')

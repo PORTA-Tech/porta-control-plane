@@ -1,19 +1,22 @@
+import { createHash } from 'node:crypto';
 import type {
   AccountProfile,
   ConsentRecord,
+  ConsentState,
   DeviceAccountLinkRequest,
   DeviceAccountUnlinkRequest,
   DeviceLinkResult,
   DeviceProfile,
   DeviceRegistrationRequest,
   Membership,
-  OrganizationProfile
+  OrganizationProfile,
+  TelemetryLevel
 } from '@porta/api-contracts';
 import { getAccountProfile, getAccountProfileByPrimaryEmail, listAccountProfiles, upsertAccountProfile } from '../store/accountStore.js';
 import { getOrganizationProfile, listOrganizationProfiles } from '../store/organizationStore.js';
 import { getDeviceProfile, listDeviceProfilesForAccount, listDeviceProfilesForOrganization, upsertDeviceProfile } from '../store/deviceStore.js';
 import { listMembershipsForAccount, listMembershipsForOrganization } from '../store/membershipStore.js';
-import { listConsentRecordsForAccount, listConsentRecordsForOrganization } from '../store/consentRecordStore.js';
+import { listConsentRecordsForAccount, listConsentRecordsForOrganization, upsertConsentRecord } from '../store/consentRecordStore.js';
 import { readAuthUserIdentity } from './authSessionStore.js';
 
 export interface AccountMembershipView {
@@ -25,6 +28,7 @@ export interface MeProfileView {
   account: AccountProfile;
   organizations: AccountMembershipView[];
   devices: DeviceProfile[];
+  consents: ConsentRecord[];
 }
 
 export interface AdminAccountView {
@@ -56,8 +60,22 @@ export type DeviceIdentityOperationResult =
   | { ok: true; value: DeviceLinkResult }
   | { ok: false; error: IdentityOperationError };
 
+const ACCOUNT_LEGAL_CONSENT_VERSION = 'v1';
+
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function deriveStableConsentId(scope: string, accountId: string | null, deviceId: string | null, orgId: string | null): string {
+  const digest = createHash('sha256')
+    .update(`porta-consent:${scope}:${accountId ?? ''}:${deviceId ?? ''}:${orgId ?? ''}`)
+    .digest('hex');
+  const raw = digest.slice(0, 32).split('');
+  raw[12] = '4';
+  const variant = Number.parseInt(raw[16] ?? '8', 16);
+  raw[16] = ((variant & 0x3) | 0x8).toString(16);
+  const hex = raw.join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 function linkedState(device: DeviceProfile): 'linked' | 'unlinked' {
@@ -89,6 +107,87 @@ function failure(status: number, errorCode: string, message: string): DeviceIden
 async function hasActiveMembership(accountId: string, orgId: string): Promise<boolean> {
   const memberships = await listMembershipsForAccount(accountId);
   return memberships.some((membership) => membership.orgId === orgId && membership.status === 'active');
+}
+
+function selectLatestConsentRecord(
+  records: ConsentRecord[],
+  scope: 'account_legal' | 'device_capture',
+  deviceId: string | null,
+  orgId: string | null
+): ConsentRecord | null {
+  const matches = records
+    .filter((record) => record.scope === scope)
+    .filter((record) => (record.deviceId ?? null) === deviceId)
+    .filter((record) => (record.orgId ?? null) === orgId)
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+
+  return matches[0] ?? null;
+}
+
+async function ensureAccountLegalConsent(account: AccountProfile): Promise<ConsentRecord> {
+  const records = await listConsentRecordsForAccount(account.accountId);
+  const existing = selectLatestConsentRecord(records, 'account_legal', null, null);
+  if (existing && existing.consentState === 'accepted' && existing.consentVersion === ACCOUNT_LEGAL_CONSENT_VERSION) {
+    return existing;
+  }
+
+  const timestamp = nowIso();
+  const consentedAt = existing?.consentState === 'accepted' ? existing.consentedAt : timestamp;
+  const record: ConsentRecord = {
+    consentId: existing?.consentId ?? deriveStableConsentId('account_legal', account.accountId, null, null),
+    scope: 'account_legal',
+    accountId: account.accountId,
+    deviceId: null,
+    orgId: null,
+    consentVersion: ACCOUNT_LEGAL_CONSENT_VERSION,
+    consentState: 'accepted',
+    telemetryLevel: null,
+    consentedAt,
+    updatedAt: timestamp
+  };
+
+  await upsertConsentRecord(record);
+  return record;
+}
+
+async function syncDeviceCaptureConsent(input: {
+  accountId: string;
+  deviceId: string;
+  orgId: string;
+  consentState: ConsentState;
+  consentVersion: string;
+  consentedAt: string;
+  telemetryLevel: TelemetryLevel | null;
+}): Promise<ConsentRecord | null> {
+  const [account, organization] = await Promise.all([
+    getAccountProfile(input.accountId),
+    getOrganizationProfile(input.orgId)
+  ]);
+  if (!account || !organization) {
+    return null;
+  }
+
+  if (!(await hasActiveMembership(input.accountId, input.orgId))) {
+    return null;
+  }
+
+  const records = await listConsentRecordsForAccount(input.accountId);
+  const existing = selectLatestConsentRecord(records, 'device_capture', input.deviceId, input.orgId);
+  const record: ConsentRecord = {
+    consentId: existing?.consentId ?? deriveStableConsentId('device_capture', input.accountId, input.deviceId, input.orgId),
+    scope: 'device_capture',
+    accountId: input.accountId,
+    deviceId: input.deviceId,
+    orgId: input.orgId,
+    consentVersion: input.consentVersion,
+    consentState: input.consentState,
+    telemetryLevel: input.telemetryLevel,
+    consentedAt: input.consentedAt,
+    updatedAt: nowIso()
+  };
+
+  await upsertConsentRecord(record);
+  return record;
 }
 
 export async function ensureAccountProfileForAuthUser(userId: string): Promise<AccountProfile | null> {
@@ -135,13 +234,17 @@ export async function buildMeProfileView(userId: string): Promise<MeProfileView 
     return null;
   }
 
+  await ensureAccountLegalConsent(account);
+
   const organizations = await listAccountMembershipViews(account.accountId);
   const devices = await listDeviceProfilesForAccount(account.accountId);
+  const consents = await listConsentRecordsForAccount(account.accountId);
 
   return {
     account,
     organizations,
-    devices
+    devices,
+    consents
   };
 }
 
@@ -203,6 +306,28 @@ export async function registerDeviceIdentity(request: DeviceRegistrationRequest)
   };
 
   await upsertDeviceProfile(profile);
+
+  const captureConsentState = request.deviceCaptureConsentState ?? null;
+  const captureConsentVersion = request.deviceCaptureConsentVersion?.trim() ?? '';
+  const captureConsentedAt = request.deviceCaptureConsentedAt ?? null;
+  if (request.accountId
+    && request.orgId
+    && profile.currentAccountId === request.accountId
+    && profile.orgId === request.orgId
+    && captureConsentState
+    && captureConsentVersion.length > 0)
+  {
+    await syncDeviceCaptureConsent({
+      accountId: request.accountId,
+      deviceId: request.deviceId,
+      orgId: request.orgId,
+      consentState: captureConsentState,
+      consentVersion: captureConsentVersion,
+      consentedAt: captureConsentedAt ?? timestamp,
+      telemetryLevel: request.deviceCaptureTelemetryLevel ?? null
+    });
+  }
+
   return success(profile);
 }
 

@@ -1141,6 +1141,19 @@ components:
           type: string
           format: uuid
           nullable: true
+        device_capture_consent_state:
+          $ref: '#/components/schemas/ConsentStateValue'
+          nullable: true
+        device_capture_consent_version:
+          type: string
+          nullable: true
+        device_capture_consented_at:
+          type: string
+          format: date-time
+          nullable: true
+        device_capture_telemetry_level:
+          $ref: '#/components/schemas/TelemetryLevelValue'
+          nullable: true
         session_token:
           type: string
           nullable: true

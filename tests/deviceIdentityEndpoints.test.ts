@@ -9,7 +9,7 @@ import { clearAccountStoreForTests, upsertAccountProfile } from '../src/store/ac
 import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests } from '../src/store/deviceStore.js';
-import { clearConsentRecordStoreForTests } from '../src/store/consentRecordStore.js';
+import { clearConsentRecordStoreForTests, listConsentRecordsForDevice } from '../src/store/consentRecordStore.js';
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
@@ -178,5 +178,83 @@ describe('device identity endpoints', () => {
     expect(relinkAttempt.body.device.status).toBe('active');
     expect(relinkAttempt.body.device.currentAccountId).toBeNull();
     expect(relinkAttempt.body.device.orgId).toBeNull();
+    expect(await listConsentRecordsForDevice('f58fc1f8-a478-4302-9702-6d774936748d')).toHaveLength(0);
+  });
+
+  it('syncs device capture consent only for an already linked device', async () => {
+    await upsertAccountProfile({
+      accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
+      displayName: 'Alice',
+      primaryEmail: 'alice@example.com',
+      emailVerified: true,
+      avatarUrl: null,
+      status: 'active',
+      authProvider: 'local',
+      lastLoginAt: null,
+      createdAt: '2026-03-11T12:00:00.000Z',
+      updatedAt: '2026-03-11T12:00:00.000Z'
+    });
+
+    await upsertOrganizationProfile({
+      orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1',
+      orgName: 'PORTA Labs',
+      orgSlug: 'porta-labs',
+      planTier: 'pro',
+      billingAccountId: 'billing-1',
+      createdAt: '2026-03-11T12:00:00.000Z',
+      updatedAt: '2026-03-11T12:00:00.000Z'
+    });
+
+    await upsertMembership({
+      membershipId: 'f86b5272-1f29-4a52-a7af-8382d800d448',
+      accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
+      orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1',
+      role: 'member',
+      status: 'active',
+      invitedAt: null,
+      joinedAt: '2026-03-11T12:01:00.000Z',
+      invitedByAccountId: null,
+      createdAt: '2026-03-11T12:01:00.000Z',
+      updatedAt: '2026-03-11T12:01:00.000Z'
+    });
+
+    await request(app).post('/api/device/register').send({
+      deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
+      machineName: 'ALICE-BOX',
+      deviceDisplayName: 'Alice Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.0'
+    });
+
+    const linkResponse = await request(app).post('/api/device/link-account').send({
+      deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
+      accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
+      orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1'
+    });
+    expect(linkResponse.status).toBe(200);
+
+    const registerResponse = await request(app).post('/api/device/register').send({
+      deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
+      machineName: 'ALICE-BOX',
+      deviceDisplayName: 'Alice Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.1',
+      accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
+      orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1',
+      deviceCaptureConsentState: 'revoked',
+      deviceCaptureConsentVersion: '1.0.0',
+      deviceCaptureConsentedAt: '2026-03-11T12:05:00.000Z',
+      deviceCaptureTelemetryLevel: 'essential'
+    });
+
+    expect(registerResponse.status).toBe(200);
+    expect(registerResponse.body.linkState).toBe('linked');
+
+    const consentRecords = await listConsentRecordsForDevice('d93d90c1-a120-4c72-89ee-5c7d16efea31');
+    expect(consentRecords).toHaveLength(1);
+    expect(consentRecords[0]?.scope).toBe('device_capture');
+    expect(consentRecords[0]?.consentState).toBe('revoked');
+    expect(consentRecords[0]?.accountId).toBe('2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b');
+    expect(consentRecords[0]?.orgId).toBe('6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1');
   });
 });
