@@ -82,6 +82,24 @@ npm run start
 - Fleet/account/device/consent state is not allowed to run in memory in production-like environments.
 - Local or test-only in-memory mode can still be used outside production, or explicitly allowed with `PORTA_CONTROL_PLANE_ALLOW_IN_MEMORY_FLEET=true`.
 
+### Windows Client Updates
+
+Set these env vars on the control plane to publish a Windows in-app update prompt:
+
+- `PORTA_WINDOWS_RELEASE_VERSION`
+- `PORTA_WINDOWS_RELEASE_MSI_URL`
+
+Optional:
+
+- `PORTA_WINDOWS_RELEASE_PUBLISHED_AT_UTC`
+- `PORTA_WINDOWS_RELEASE_MIN_SUPPORTED_VERSION`
+- `PORTA_WINDOWS_RELEASE_REQUIRED`
+- `PORTA_WINDOWS_RELEASE_TITLE`
+- `PORTA_WINDOWS_RELEASE_SUMMARY`
+- `PORTA_WINDOWS_RELEASE_SHA256`
+
+When `PORTA_WINDOWS_RELEASE_VERSION` is newer than the installed Windows client version, Control Center can show an update prompt, download the MSI, and launch the installer from inside the app.
+
 ### Type-check and tests
 
 ```bash
