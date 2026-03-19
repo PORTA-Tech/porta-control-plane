@@ -2,32 +2,92 @@ import { Pool } from 'pg';
 
 export type FleetPersistenceMode = 'postgres' | 'memory';
 
-const databaseUrl = process.env.PORTA_CONTROL_PLANE_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || '';
-
 let pool: Pool | null = null;
 let schemaReadyPromise: Promise<void> | null = null;
+let activeDatabaseUrl: string | null = null;
+
+function parseBoolean(raw: string | undefined): boolean | null {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true;
+  }
+
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false;
+  }
+
+  return null;
+}
+
+function readFleetDatabaseUrl(): string {
+  return process.env.PORTA_CONTROL_PLANE_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || '';
+}
+
+function isProductionLikeEnvironment(): boolean {
+  const nodeEnv = (process.env.NODE_ENV ?? '').trim().toLowerCase();
+  return nodeEnv === 'production' || parseBoolean(process.env.RENDER) === true;
+}
 
 function isSslRequired(connectionString: string): boolean {
   return /render\.com/i.test(connectionString) || /sslmode=require/i.test(connectionString);
 }
 
 export function getFleetPersistenceMode(): FleetPersistenceMode {
-  return databaseUrl.length > 0 ? 'postgres' : 'memory';
+  return readFleetDatabaseUrl().length > 0 ? 'postgres' : 'memory';
 }
 
 export function getFleetDatabaseUrl(): string | null {
+  const databaseUrl = readFleetDatabaseUrl();
   return databaseUrl.length > 0 ? databaseUrl : null;
 }
 
+export function shouldRequirePersistentFleetState(): boolean {
+  const explicitRequirement = parseBoolean(process.env.PORTA_CONTROL_PLANE_REQUIRE_PERSISTENT_FLEET);
+  if (explicitRequirement !== null) {
+    return explicitRequirement;
+  }
+
+  if (parseBoolean(process.env.PORTA_CONTROL_PLANE_ALLOW_IN_MEMORY_FLEET) === true) {
+    return false;
+  }
+
+  return isProductionLikeEnvironment();
+}
+
+export function assertFleetPersistenceConfigured(): void {
+  if (getFleetPersistenceMode() !== 'memory') {
+    return;
+  }
+
+  if (!shouldRequirePersistentFleetState()) {
+    return;
+  }
+
+  throw new Error(
+    'Fleet persistence is running in memory. Configure PORTA_CONTROL_PLANE_DATABASE_URL or DATABASE_URL before starting this control-plane node.'
+  );
+}
+
 export function getFleetPool(): Pool | null {
-  if (getFleetPersistenceMode() !== 'postgres') {
+  const databaseUrl = getFleetDatabaseUrl();
+  if (!databaseUrl) {
     return null;
   }
 
-  if (pool) {
+  if (pool && activeDatabaseUrl === databaseUrl) {
     return pool;
   }
 
+  if (pool) {
+    void pool.end().catch(() => undefined);
+    pool = null;
+  }
+
+  activeDatabaseUrl = databaseUrl;
   pool = new Pool({
     connectionString: databaseUrl,
     ssl: isSslRequired(databaseUrl) ? { rejectUnauthorized: false } : undefined
@@ -251,6 +311,7 @@ async function initializeFleetSchema(): Promise<void> {
 
 export async function resetFleetPersistenceForTests(): Promise<void> {
   schemaReadyPromise = null;
+  activeDatabaseUrl = null;
 
   if (pool) {
     await pool.end().catch(() => undefined);

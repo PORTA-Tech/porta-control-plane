@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { MachineActionEvent, MachineSummaryReport } from '@porta/api-contracts';
 import { clearMachineActionStoreForTests, appendMachineActionEvent, listMachineActionEventsForMachine, listRecentMachineActionEvents } from '../src/store/machineActionStore.js';
 import { clearMachineSummaryStoreForTests, getMachineSummary, listMachineSummaries, upsertMachineSummary } from '../src/store/machineSummaryStore.js';
-import { getFleetPersistenceMode, resetFleetPersistenceForTests } from '../src/store/fleetPersistence.js';
+import {
+  assertFleetPersistenceConfigured,
+  getFleetPersistenceMode,
+  resetFleetPersistenceForTests
+} from '../src/store/fleetPersistence.js';
 
 const summaryA: MachineSummaryReport = {
   machineId: 'machine-a',
@@ -83,6 +87,12 @@ const actionB: MachineActionEvent = {
 
 describe('fleet stores', () => {
   beforeEach(async () => {
+    delete process.env.PORTA_CONTROL_PLANE_DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    delete process.env.PORTA_CONTROL_PLANE_REQUIRE_PERSISTENT_FLEET;
+    delete process.env.PORTA_CONTROL_PLANE_ALLOW_IN_MEMORY_FLEET;
+    delete process.env.RENDER;
+    process.env.NODE_ENV = 'test';
     expect(getFleetPersistenceMode()).toBe('memory');
     clearMachineSummaryStoreForTests();
     clearMachineActionStoreForTests();
@@ -120,5 +130,16 @@ describe('fleet stores', () => {
     const machineRows = await listMachineActionEventsForMachine('machine-a');
     expect(machineRows).toHaveLength(1);
     expect(machineRows[0]?.whatChanged).toBe('Updated wording');
+  });
+
+  it('fails fast when production-like env would start with in-memory fleet state', () => {
+    process.env.NODE_ENV = 'production';
+    expect(() => assertFleetPersistenceConfigured()).toThrow(/PORTA_CONTROL_PLANE_DATABASE_URL|DATABASE_URL/);
+  });
+
+  it('allows in-memory fleet state when explicitly overridden', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.PORTA_CONTROL_PLANE_ALLOW_IN_MEMORY_FLEET = 'true';
+    expect(() => assertFleetPersistenceConfigured()).not.toThrow();
   });
 });

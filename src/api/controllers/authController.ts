@@ -1,4 +1,4 @@
-import { Request, Response, Router } from 'express';
+import { NextFunction, Request, Response, Router } from 'express';
 import {
   authenticateUser,
   hasAuthUser,
@@ -13,6 +13,7 @@ import {
   updateAuthUserProfile,
   revokeAuthSession
 } from '../../core/authSessionStore.js';
+import { materializeAuthUserIdentity } from '../../core/identityProfileService.js';
 import {
   generatePasswordResetCode,
   generateSignupCode,
@@ -44,43 +45,56 @@ function readSessionOrReject(req: Request, res: Response) {
 export function createAuthController(): Router {
   const router = Router();
 
-  router.post('/login', (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const userId = typeof body.user_id === 'string'
-      ? body.user_id
-      : typeof body.username === 'string'
-        ? body.username
-        : '';
-    const password = typeof body.password === 'string' ? body.password : '';
-    if (!userId.trim() || !password) {
-      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'user_id and password are required.' });
-      return;
-    }
-    const user = authenticateUser(userId.trim(), password);
-    if (!user) {
-      const exists = hasAuthUser(userId.trim());
-      res.status(401).json({
-        error_code: exists ? 'INVALID_CREDENTIALS' : 'USER_NOT_FOUND',
-        message: exists ? 'Invalid username or password.' : 'Account not found. Create an account on this control-plane node.'
-      });
-      return;
-    }
+  router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const userId = typeof body.user_id === 'string'
+        ? body.user_id
+        : typeof body.username === 'string'
+          ? body.username
+          : '';
+      const password = typeof body.password === 'string' ? body.password : '';
+      if (!userId.trim() || !password) {
+        res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'user_id and password are required.' });
+        return;
+      }
+      const user = authenticateUser(userId.trim(), password);
+      if (!user) {
+        const exists = hasAuthUser(userId.trim());
+        res.status(401).json({
+          error_code: exists ? 'INVALID_CREDENTIALS' : 'USER_NOT_FOUND',
+          message: exists ? 'Invalid username or password.' : 'Account not found. Create an account on this control-plane node.'
+        });
+        return;
+      }
 
-    const issued = issueAuthSession(user);
-    res.json({
-      access_token: issued.access_token,
-      token_type: 'Bearer',
-      user: {
-        account_id: issued.session.account_id,
-        user_id: issued.session.user_id,
-        role: issued.session.role,
-        display_name: issued.session.display_name,
-        avatar_url: issued.session.avatar_url ?? null,
-        auth_provider: issued.session.auth_provider ?? null
-      },
-      session_expires_at_utc: issued.session.expires_at_utc,
-      reauth_expires_at_utc: issued.session.reauth_expires_at_utc
-    });
+      const materialized = await materializeAuthUserIdentity(user.user_id);
+      if (!materialized) {
+        res.status(500).json({
+          error_code: 'ACCOUNT_PROFILE_INIT_FAILED',
+          message: 'Account profile could not be prepared for this sign-in.'
+        });
+        return;
+      }
+
+      const issued = issueAuthSession(user, { account_id: materialized.account.accountId });
+      res.json({
+        access_token: issued.access_token,
+        token_type: 'Bearer',
+        user: {
+          account_id: materialized.account.accountId,
+          user_id: issued.session.user_id,
+          role: issued.session.role,
+          display_name: issued.session.display_name,
+          avatar_url: issued.session.avatar_url ?? null,
+          auth_provider: issued.session.auth_provider ?? null
+        },
+        session_expires_at_utc: issued.session.expires_at_utc,
+        reauth_expires_at_utc: issued.session.reauth_expires_at_utc
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get('/me', (req, res) => {
@@ -156,47 +170,64 @@ export function createAuthController(): Router {
     res.json(readAuthAccessHelp());
   });
 
-  router.post('/register', (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const userId = typeof body.user_id === 'string' ? body.user_id : '';
-    const password = typeof body.password === 'string' ? body.password : '';
-    const displayName = typeof body.display_name === 'string' ? body.display_name : userId;
-    const role = typeof body.role === 'string' ? body.role : 'developer';
-    const signupCode = typeof body.signup_code === 'string' ? body.signup_code : '';
-    if (!userId.trim() || !password || !displayName.trim()) {
-      res.status(400).json({
-        error_code: 'VALIDATION_ERROR',
-        message: 'user_id, display_name and password are required.'
+  router.post('/register', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const userId = typeof body.user_id === 'string' ? body.user_id : '';
+      const password = typeof body.password === 'string' ? body.password : '';
+      const displayName = typeof body.display_name === 'string' ? body.display_name : userId;
+      const role = typeof body.role === 'string' ? body.role : 'developer';
+      const signupCode = typeof body.signup_code === 'string' ? body.signup_code : '';
+      if (!userId.trim() || !password || !displayName.trim()) {
+        res.status(400).json({
+          error_code: 'VALIDATION_ERROR',
+          message: 'user_id, display_name and password are required.'
+        });
+        return;
+      }
+      const allowedRoles = new Set(['viewer', 'developer', 'auditor', 'operator', 'admin']);
+      if (!allowedRoles.has(role)) {
+        res.status(400).json({
+          error_code: 'VALIDATION_ERROR',
+          message: 'Unsupported role.'
+        });
+        return;
+      }
+      const created = registerAuthUser({
+        user_id: userId.trim(),
+        password,
+        display_name: displayName.trim(),
+        role: role as 'viewer' | 'developer' | 'auditor' | 'operator' | 'admin',
+        signup_code: signupCode
       });
-      return;
-    }
-    const allowedRoles = new Set(['viewer', 'developer', 'auditor', 'operator', 'admin']);
-    if (!allowedRoles.has(role)) {
-      res.status(400).json({
-        error_code: 'VALIDATION_ERROR',
-        message: 'Unsupported role.'
+      if (!created.ok) {
+        const status = created.error_code === 'USER_EXISTS' ? 409 : created.error_code === 'SIGNUP_DISABLED' || created.error_code === 'ADMIN_SIGNUP_DISABLED' ? 403 : 400;
+        res.status(status).json({
+          error_code: created.error_code,
+          message: created.message
+        });
+        return;
+      }
+
+      const materialized = await materializeAuthUserIdentity(created.user.user_id);
+      if (!materialized) {
+        res.status(500).json({
+          error_code: 'ACCOUNT_PROFILE_INIT_FAILED',
+          message: 'Account was created, but the account profile could not be prepared.'
+        });
+        return;
+      }
+
+      res.status(201).json({
+        ok: true,
+        user: {
+          ...created.user,
+          account_id: materialized.account.accountId
+        }
       });
-      return;
+    } catch (error) {
+      next(error);
     }
-    const created = registerAuthUser({
-      user_id: userId.trim(),
-      password,
-      display_name: displayName.trim(),
-      role: role as 'viewer' | 'developer' | 'auditor' | 'operator' | 'admin',
-      signup_code: signupCode
-    });
-    if (!created.ok) {
-      const status = created.error_code === 'USER_EXISTS' ? 409 : created.error_code === 'SIGNUP_DISABLED' || created.error_code === 'ADMIN_SIGNUP_DISABLED' ? 403 : 400;
-      res.status(status).json({
-        error_code: created.error_code,
-        message: created.message
-      });
-      return;
-    }
-    res.status(201).json({
-      ok: true,
-      user: created.user
-    });
   });
 
   router.post('/forgot-password/reset', (req, res) => {

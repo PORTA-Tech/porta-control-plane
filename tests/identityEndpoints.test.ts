@@ -224,6 +224,80 @@ describe('identity endpoints', () => {
     expect(devicesResponse.body).toHaveLength(0);
   });
 
+  it('materializes the account profile on login before /v1/me is opened', async () => {
+    const loginResponse = await request(app).post('/auth/login').send({
+      user_id: 'admin',
+      password: 'porta-admin'
+    });
+
+    expect(loginResponse.status).toBe(200);
+    const token = loginResponse.body.access_token as string;
+    const accountId = loginResponse.body.user.account_id as string;
+
+    const accountResponse = await request(app)
+      .get(`/v1/admin/accounts/${accountId}`)
+      .set('authorization', `Bearer ${token}`);
+    expect(accountResponse.status).toBe(200);
+    expect(accountResponse.body.account.primaryEmail).toBe('admin');
+    expect(accountResponse.body.consents).toHaveLength(1);
+    expect(accountResponse.body.consents[0]?.scope).toBe('account_legal');
+  });
+
+  it('materializes newly registered users into admin account views immediately', async () => {
+    const adminToken = await loginAdmin();
+    const userId = `new.user+${Date.now()}@example.com`;
+
+    const registerResponse = await request(app).post('/auth/register').send({
+      user_id: userId,
+      password: 'ValidPass1',
+      display_name: 'New User'
+    });
+
+    expect(registerResponse.status).toBe(201);
+    const accountId = registerResponse.body.user.account_id as string;
+
+    const accountResponse = await request(app)
+      .get(`/v1/admin/accounts/${accountId}`)
+      .set('authorization', `Bearer ${adminToken}`);
+    expect(accountResponse.status).toBe(200);
+    expect(accountResponse.body.account.primaryEmail).toBe(userId);
+    expect(accountResponse.body.memberships).toHaveLength(1);
+    expect(accountResponse.body.memberships[0]?.membership?.status).toBe('active');
+    expect(accountResponse.body.memberships[0]?.membership?.role).toBe('owner');
+    expect(accountResponse.body.memberships[0]?.organization?.orgName).toContain('Workspace');
+    expect(accountResponse.body.consents).toHaveLength(1);
+    expect(accountResponse.body.consents[0]?.scope).toBe('account_legal');
+  });
+
+  it('auto-provisions a workspace for self-registered users on /v1/me', async () => {
+    const userId = `workspace.user+${Date.now()}@example.com`;
+
+    const registerResponse = await request(app).post('/auth/register').send({
+      user_id: userId,
+      password: 'ValidPass1',
+      display_name: 'Workspace User'
+    });
+
+    expect(registerResponse.status).toBe(201);
+
+    const loginResponse = await request(app).post('/auth/login').send({
+      user_id: userId,
+      password: 'ValidPass1'
+    });
+
+    expect(loginResponse.status).toBe(200);
+    const token = loginResponse.body.access_token as string;
+
+    const meResponse = await request(app)
+      .get('/v1/me')
+      .set('authorization', `Bearer ${token}`);
+    expect(meResponse.status).toBe(200);
+    expect(meResponse.body.organizations).toHaveLength(1);
+    expect(meResponse.body.organizations[0]?.membership?.status).toBe('active');
+    expect(meResponse.body.organizations[0]?.membership?.role).toBe('owner');
+    expect(meResponse.body.organizations[0]?.organization?.orgName).toBe('Workspace User Workspace');
+  });
+
   it('serves admin account and organization views from identity stores', async () => {
     const token = await loginAdmin();
     const meResponse = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);

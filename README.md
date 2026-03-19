@@ -76,6 +76,12 @@ npm run build
 npm run start
 ```
 
+### Fleet Persistence
+
+- Production deployments must set `PORTA_CONTROL_PLANE_DATABASE_URL` or `DATABASE_URL`.
+- Fleet/account/device/consent state is not allowed to run in memory in production-like environments.
+- Local or test-only in-memory mode can still be used outside production, or explicitly allowed with `PORTA_CONTROL_PLANE_ALLOW_IN_MEMORY_FLEET=true`.
+
 ### Type-check and tests
 
 ```bash

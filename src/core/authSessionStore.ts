@@ -55,6 +55,7 @@ export interface AuthUserIdentityView {
   display_name: string;
   avatar_url?: string;
   auth_provider?: AuthProvider | null;
+  source: 'default' | 'env' | 'custom';
 }
 
 export interface AuthAccessHelpView {
@@ -301,7 +302,10 @@ export function authenticateUser(userId: string, password: string): AuthUserReco
   };
 }
 
-export function issueAuthSession(user: AuthUserPublicView): { access_token: string; session: AuthSessionView } {
+export function issueAuthSession(
+  user: AuthUserPublicView,
+  overrides: { account_id?: string } = {}
+): { access_token: string; session: AuthSessionView } {
   cleanupExpiredSessions();
   const issuedAt = new Date();
   const expiresAt = new Date(issuedAt.getTime() + sessionTtlMinutes() * 60_000);
@@ -309,7 +313,7 @@ export function issueAuthSession(user: AuthUserPublicView): { access_token: stri
   const token = randomBytes(32).toString('base64url');
   const record: SessionRecord = {
     token,
-    account_id: user.account_id,
+    account_id: overrides.account_id ?? user.account_id,
     user_id: user.user_id,
     role: user.role,
     display_name: user.display_name,
@@ -336,12 +340,10 @@ export function readAuthSession(token: string): AuthSessionView | null {
     const changed = assignedRole !== record.role
       || record.display_name !== user.display_name
       || record.avatar_url !== user.avatar_url
-      || record.account_id !== user.account_id
       || record.auth_provider !== user.auth_provider;
     if (changed) {
       record.role = assignedRole;
       record.display_name = user.display_name;
-      record.account_id = user.account_id;
       if (user.avatar_url) {
         record.avatar_url = user.avatar_url;
       } else {
@@ -396,7 +398,8 @@ export function readAuthUserIdentity(userId: string): AuthUserIdentityView | nul
     role: resolveAssignedRoleForUser(user.user_id, user.role),
     display_name: user.display_name,
     ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
-    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {})
+    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
+    source: user.source
   };
 }
 

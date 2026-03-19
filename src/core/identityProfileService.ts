@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   AccountProfile,
   ConsentRecord,
@@ -13,11 +13,11 @@ import type {
   TelemetryLevel
 } from '@porta/api-contracts';
 import { getAccountProfile, getAccountProfileByPrimaryEmail, listAccountProfiles, upsertAccountProfile } from '../store/accountStore.js';
-import { getOrganizationProfile, listOrganizationProfiles } from '../store/organizationStore.js';
+import { getOrganizationProfile, listOrganizationProfiles, upsertOrganizationProfile } from '../store/organizationStore.js';
 import { getDeviceProfile, listDeviceProfilesForAccount, listDeviceProfilesForOrganization, upsertDeviceProfile } from '../store/deviceStore.js';
-import { listMembershipsForAccount, listMembershipsForOrganization } from '../store/membershipStore.js';
+import { listMembershipsForAccount, listMembershipsForOrganization, upsertMembership } from '../store/membershipStore.js';
 import { listConsentRecordsForAccount, listConsentRecordsForOrganization, upsertConsentRecord } from '../store/consentRecordStore.js';
-import { readAuthUserIdentity } from './authSessionStore.js';
+import { readAuthUserIdentity, type AuthUserIdentityView } from './authSessionStore.js';
 
 export interface AccountMembershipView {
   membership: Membership;
@@ -50,6 +50,11 @@ export interface AdminOrganizationView {
   consents: ConsentRecord[];
 }
 
+export interface MaterializedAuthUserIdentity {
+  account: AccountProfile;
+  accountLegalConsent: ConsentRecord;
+}
+
 export interface IdentityOperationError {
   status: number;
   errorCode: string;
@@ -61,6 +66,7 @@ export type DeviceIdentityOperationResult =
   | { ok: false; error: IdentityOperationError };
 
 const ACCOUNT_LEGAL_CONSENT_VERSION = 'v1';
+const AUTO_WORKSPACE_PLAN_TIER = 'starter';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function nowIso(): string {
@@ -89,6 +95,35 @@ function normalizeTelemetryTimestamp(value: string | null | undefined): string {
 
 function maxIso(left: string, right: string): string {
   return Date.parse(left) >= Date.parse(right) ? left : right;
+}
+
+function slugifySegment(value: string): string {
+  const normalized = value
+    .normalize('NFKD')
+    .replace(/[^\x00-\x7F]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return normalized || 'workspace';
+}
+
+function buildAutoWorkspaceName(account: AccountProfile): string {
+  const displayName = normalizeOptionalString(account.displayName) ?? 'Personal';
+  return `${displayName} Workspace`;
+}
+
+function buildAutoWorkspaceSlug(account: AccountProfile): string {
+  const emailSeed = normalizeOptionalString(account.primaryEmail)?.split('@')[0] ?? account.accountId;
+  return `${slugifySegment(emailSeed)}-${account.accountId.slice(0, 8)}`;
+}
+
+function shouldAutoProvisionWorkspace(authUser: AuthUserIdentityView): boolean {
+  if (authUser.source === 'default') {
+    return false;
+  }
+
+  return authUser.user_id.includes('@');
 }
 
 function deriveStableConsentId(scope: string, accountId: string | null, deviceId: string | null, orgId: string | null): string {
@@ -187,6 +222,48 @@ async function ensureAccountLegalConsent(account: AccountProfile): Promise<Conse
   return record;
 }
 
+async function ensureAutoProvisionedWorkspace(
+  authUser: AuthUserIdentityView,
+  account: AccountProfile
+): Promise<void> {
+  if (!shouldAutoProvisionWorkspace(authUser)) {
+    return;
+  }
+
+  const memberships = await listMembershipsForAccount(account.accountId);
+  const activeMemberships = memberships.filter((membership) => membership.status === 'active');
+  if (activeMemberships.length > 0) {
+    return;
+  }
+
+  const timestamp = nowIso();
+  const organization: OrganizationProfile = {
+    orgId: randomUUID(),
+    orgName: buildAutoWorkspaceName(account),
+    orgSlug: buildAutoWorkspaceSlug(account),
+    planTier: AUTO_WORKSPACE_PLAN_TIER,
+    billingAccountId: null,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  const membership: Membership = {
+    membershipId: randomUUID(),
+    accountId: account.accountId,
+    orgId: organization.orgId,
+    role: 'owner',
+    status: 'active',
+    invitedAt: timestamp,
+    joinedAt: timestamp,
+    invitedByAccountId: account.accountId,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  await upsertOrganizationProfile(organization);
+  await upsertMembership(membership);
+}
+
 async function syncDeviceCaptureConsent(input: {
   accountId: string;
   deviceId: string;
@@ -255,6 +332,21 @@ export async function ensureAccountProfileForAuthUser(userId: string): Promise<A
   return profile;
 }
 
+export async function materializeAuthUserIdentity(userId: string): Promise<MaterializedAuthUserIdentity | null> {
+  const authUser = readAuthUserIdentity(userId);
+  const account = await ensureAccountProfileForAuthUser(userId);
+  if (!authUser || !account) {
+    return null;
+  }
+
+  await ensureAutoProvisionedWorkspace(authUser, account);
+  const accountLegalConsent = await ensureAccountLegalConsent(account);
+  return {
+    account,
+    accountLegalConsent
+  };
+}
+
 export async function listAccountMembershipViews(accountId: string): Promise<AccountMembershipView[]> {
   const memberships = await listMembershipsForAccount(accountId);
   return Promise.all(
@@ -266,12 +358,11 @@ export async function listAccountMembershipViews(accountId: string): Promise<Acc
 }
 
 export async function buildMeProfileView(userId: string): Promise<MeProfileView | null> {
-  const account = await ensureAccountProfileForAuthUser(userId);
-  if (!account) {
+  const materialized = await materializeAuthUserIdentity(userId);
+  if (!materialized) {
     return null;
   }
-
-  await ensureAccountLegalConsent(account);
+  const { account } = materialized;
 
   const organizations = await listAccountMembershipViews(account.accountId);
   const devices = await listDeviceProfilesForAccount(account.accountId);

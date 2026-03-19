@@ -21,6 +21,7 @@ import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middlewar
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
 import { recordSystemApiRequest } from './core/systemHealthEngine.js';
+import { assertFleetPersistenceConfigured, getFleetDatabaseUrl, getFleetPersistenceMode } from './store/fleetPersistence.js';
 import { loadRuntimeState, runtimeState } from './store/runtimeState.js';
 
 const defaultAllowedOrigins = ['https://porta-operations-console.onrender.com', 'http://localhost:5173'];
@@ -31,6 +32,7 @@ function getAllowedOrigins(): Set<string> {
 }
 
 export function initializeControlPlane(): void {
+  assertFleetPersistenceConfigured();
   const startupIdentity = refreshInstanceId(loadOrCreateNodeIdentity());
   const state = loadRuntimeState();
   const integrity = verifyLedgerIntegrity();
@@ -43,6 +45,9 @@ export function initializeControlPlane(): void {
   );
   console.log(
     `[control-plane] config_seq=${state.currentConfigSeq} config_version=${state.currentConfigVersion} rollout_state=${runtimeState.rolloutState}`
+  );
+  console.log(
+    `[control-plane] fleet_persistence=${getFleetPersistenceMode()} database_configured=${getFleetDatabaseUrl() !== null}`
   );
 }
 
