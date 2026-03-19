@@ -31,14 +31,18 @@ function buildValidationReport(success: boolean): {
     checkedAtUtc: string;
   }>;
 } {
+  const now = new Date();
+  const generatedAtUtc = now.toISOString();
+  const expiresAtUtc = new Date(now.getTime() + (24 * 60 * 60 * 1000)).toISOString();
+
   return {
     suiteName: 'identity_rollout',
     machineId: 'machine-identity',
     deviceId: '2603b760-7691-4327-95df-78ee53c2e3f8',
     accountId: '46903c28-9f99-495c-bf40-6f4d2ea8356b',
     orgId: '89c479b7-3f58-4957-a8aa-dba6bc4d0f65',
-    generatedAtUtc: '2026-03-12T08:00:00.000Z',
-    expiresAtUtc: '2026-03-13T08:00:00.000Z',
+    generatedAtUtc,
+    expiresAtUtc,
     passed: success,
     gates: [
       {
@@ -46,7 +50,7 @@ function buildValidationReport(success: boolean): {
         name: 'new install -> stable local device_id exists',
         success,
         detail: success ? 'device_id is stable' : 'device_id could not be confirmed',
-        checkedAtUtc: '2026-03-12T08:00:00.000Z'
+        checkedAtUtc: generatedAtUtc
       }
     ]
   };
