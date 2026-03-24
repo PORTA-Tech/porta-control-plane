@@ -1715,6 +1715,27 @@ components:
           type: string
           format: date-time
           nullable: true
+        user_agent_heartbeat_age_seconds:
+          type: number
+          minimum: 0
+          nullable: true
+        last_accepted_input_age_seconds:
+          type: number
+          minimum: 0
+          nullable: true
+        user_agent_startup_source:
+          type: string
+          nullable: true
+        user_agent_startup_state:
+          type: string
+          nullable: true
+        user_agent_last_launch_reason:
+          type: string
+          nullable: true
+        user_agent_heartbeat_write_failure_count:
+          type: integer
+          minimum: 0
+          nullable: true
         capture_context:
           $ref: '#/components/schemas/CaptureContextValue'
         keyboard_signal_active:

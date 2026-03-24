@@ -53,6 +53,12 @@ function isMachineSummaryReport(value: unknown): value is MachineSummaryReport {
     isBoolean(row.activityDetected) &&
     isOptionalString(row.lastActivityUtc) &&
     isOptionalString(row.userAgentHeartbeatUtc) &&
+    (row.userAgentHeartbeatAgeSeconds === null || row.userAgentHeartbeatAgeSeconds === undefined || isFiniteNumber(row.userAgentHeartbeatAgeSeconds)) &&
+    (row.lastAcceptedInputAgeSeconds === null || row.lastAcceptedInputAgeSeconds === undefined || isFiniteNumber(row.lastAcceptedInputAgeSeconds)) &&
+    isOptionalString(row.userAgentStartupSource) &&
+    isOptionalString(row.userAgentStartupState) &&
+    isOptionalString(row.userAgentLastLaunchReason) &&
+    (row.userAgentHeartbeatWriteFailureCount === null || row.userAgentHeartbeatWriteFailureCount === undefined || isFiniteNumber(row.userAgentHeartbeatWriteFailureCount)) &&
     isNonEmptyString(row.captureContext) &&
     isBoolean(row.keyboardSignalActive) &&
     isBoolean(row.mouseSignalActive) &&
