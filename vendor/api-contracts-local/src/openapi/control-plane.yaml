@@ -549,6 +549,122 @@ paths:
                 items:
                   $ref: '#/components/schemas/AuditLedgerRow'
 
+  /v1/growth/summary:
+    get:
+      summary: Read growth KPI summary for registered and activated users
+      tags: [Growth]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: window_days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+      responses:
+        '200':
+          description: Growth KPI summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrowthSummary'
+
+  /v1/growth/series:
+    get:
+      summary: Read growth metric series by time bucket
+      tags: [Growth]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: metric
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/GrowthSeriesMetric'
+        - name: interval
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/GrowthSeriesInterval'
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Growth series points
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrowthSeries'
+
+  /v1/growth/cohorts:
+    get:
+      summary: Read user retention and churn cohorts
+      tags: [Growth]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+      responses:
+        '200':
+          description: Growth cohort rows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrowthCohorts'
+
+  /v1/growth/users/{accountId}/journey:
+    get:
+      summary: Read lifecycle and activity journey for one user
+      tags: [Growth]
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Growth user journey
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrowthUserJourney'
+        '404':
+          description: User journey not found
+
 components:
   parameters:
     OperatorIdHeader:
@@ -1864,6 +1980,253 @@ components:
         how_to_undo:
           type: string
           nullable: true
+
+    GrowthSummary:
+      type: object
+      required:
+        [
+          timezone,
+          generated_at_utc,
+          window_start_utc,
+          window_end_utc,
+          total_registered_users,
+          new_registered_users,
+          activated_users,
+          activation_rate_pct,
+          retention_rate_d1_pct,
+          retention_rate_d7_pct,
+          retention_rate_d30_pct,
+          churn_rate_d1_pct,
+          churn_rate_d7_pct,
+          churn_rate_d30_pct
+        ]
+      properties:
+        timezone:
+          type: string
+        generated_at_utc:
+          type: string
+          format: date-time
+        window_start_utc:
+          type: string
+          format: date-time
+        window_end_utc:
+          type: string
+          format: date-time
+        total_registered_users:
+          type: integer
+          minimum: 0
+        new_registered_users:
+          type: integer
+          minimum: 0
+        activated_users:
+          type: integer
+          minimum: 0
+        activation_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+        retention_rate_d1_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+        retention_rate_d7_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+        retention_rate_d30_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+        churn_rate_d1_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+        churn_rate_d7_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+        churn_rate_d30_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+
+    GrowthSeriesMetric:
+      type: string
+      enum: [registrations, activations, active_users]
+
+    GrowthSeriesInterval:
+      type: string
+      enum: [day, week, month]
+
+    GrowthSeriesPoint:
+      type: object
+      required: [bucket_start_utc, bucket_end_utc, value]
+      properties:
+        bucket_start_utc:
+          type: string
+          format: date-time
+        bucket_end_utc:
+          type: string
+          format: date-time
+        value:
+          type: integer
+          minimum: 0
+
+    GrowthSeries:
+      type: object
+      required: [metric, interval, timezone, points]
+      properties:
+        metric:
+          $ref: '#/components/schemas/GrowthSeriesMetric'
+        interval:
+          $ref: '#/components/schemas/GrowthSeriesInterval'
+        timezone:
+          type: string
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrowthSeriesPoint'
+
+    GrowthCohortWindow:
+      type: object
+      required: [day, eligible_users, retained_users, retention_rate_pct, churned_users, churn_rate_pct]
+      properties:
+        day:
+          type: integer
+          minimum: 0
+        eligible_users:
+          type: integer
+          minimum: 0
+        retained_users:
+          type: integer
+          minimum: 0
+        retention_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+        churned_users:
+          type: integer
+          minimum: 0
+        churn_rate_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+          nullable: true
+
+    GrowthCohortRow:
+      type: object
+      required: [cohort_date, registered_users, activated_users, windows]
+      properties:
+        cohort_date:
+          type: string
+          format: date
+        registered_users:
+          type: integer
+          minimum: 0
+        activated_users:
+          type: integer
+          minimum: 0
+        windows:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrowthCohortWindow'
+
+    GrowthCohorts:
+      type: object
+      required: [timezone, rows]
+      properties:
+        timezone:
+          type: string
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrowthCohortRow'
+
+    GrowthUserSource:
+      type: string
+      enum: [default, env, custom]
+
+    GrowthUserJourneyEventType:
+      type: string
+      enum:
+        [
+          account_registered,
+          membership_joined,
+          device_linked,
+          device_capture_consented,
+          account_activated,
+          account_active_day
+        ]
+
+    GrowthUserJourneyEvent:
+      type: object
+      required: [event_type, occurred_at_utc]
+      properties:
+        event_type:
+          $ref: '#/components/schemas/GrowthUserJourneyEventType'
+        occurred_at_utc:
+          type: string
+          format: date-time
+        activity_date:
+          type: string
+          format: date
+          nullable: true
+        device_id:
+          type: string
+          format: uuid
+          nullable: true
+        org_id:
+          type: string
+          format: uuid
+          nullable: true
+        machine_id:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+              - type: 'null'
+
+    GrowthUserJourney:
+      type: object
+      required: [account_id, user_id, source, events, active_days]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        source:
+          $ref: '#/components/schemas/GrowthUserSource'
+        registration_at_utc:
+          type: string
+          format: date-time
+          nullable: true
+        activation_at_utc:
+          type: string
+          format: date-time
+          nullable: true
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrowthUserJourneyEvent'
+        active_days:
+          type: array
+          items:
+            type: string
+            format: date
 
     NodeSnapshotView:
       type: object
