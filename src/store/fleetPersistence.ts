@@ -307,6 +307,135 @@ async function initializeFleetSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_machine_action_events_execution
       ON machine_action_events (execution_state, verified_state, timestamp_utc DESC);
   `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS auth_users (
+      account_id UUID PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      password_algo TEXT NOT NULL,
+      role TEXT NOT NULL,
+      source TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      avatar_url TEXT NULL,
+      auth_provider TEXT NULL,
+      status TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      last_login_at TIMESTAMPTZ NULL
+    );
+  `);
+
+  await activePool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_users_user_id_lower
+      ON auth_users (LOWER(user_id));
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_auth_users_source_status
+      ON auth_users (source, status);
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      session_id UUID PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      account_id UUID NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      avatar_url TEXT NULL,
+      auth_provider TEXT NULL,
+      issued_at_utc TIMESTAMPTZ NOT NULL,
+      expires_at_utc TIMESTAMPTZ NOT NULL,
+      reauth_expires_at_utc TIMESTAMPTZ NOT NULL,
+      revoked_at_utc TIMESTAMPTZ NULL,
+      created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await activePool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_sessions_token_hash
+      ON auth_sessions (token_hash);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_account_id
+      ON auth_sessions (account_id, expires_at_utc DESC);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id
+      ON auth_sessions (LOWER(user_id), expires_at_utc DESC);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_active_expiry
+      ON auth_sessions (expires_at_utc ASC, reauth_expires_at_utc ASC)
+      WHERE revoked_at_utc IS NULL;
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS growth_events (
+      event_id UUID PRIMARY KEY,
+      event_key TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      account_id UUID NULL,
+      user_id TEXT NULL,
+      device_id UUID NULL,
+      org_id UUID NULL,
+      machine_id TEXT NULL,
+      occurred_at_utc TIMESTAMPTZ NOT NULL,
+      source TEXT NOT NULL,
+      payload_json JSONB NOT NULL,
+      created_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await activePool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_growth_events_event_key
+      ON growth_events (event_key);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_growth_events_account_ts
+      ON growth_events (account_id, occurred_at_utc DESC);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_growth_events_user_ts
+      ON growth_events (LOWER(user_id), occurred_at_utc DESC)
+      WHERE user_id IS NOT NULL;
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_growth_events_type_ts
+      ON growth_events (event_type, occurred_at_utc DESC);
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS account_active_day (
+      account_id UUID NOT NULL,
+      activity_date DATE NOT NULL,
+      first_activity_at_utc TIMESTAMPTZ NOT NULL,
+      last_activity_at_utc TIMESTAMPTZ NOT NULL,
+      last_machine_id TEXT NULL,
+      source_count INTEGER NOT NULL CHECK (source_count >= 0),
+      updated_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (account_id, activity_date)
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_account_active_day_date
+      ON account_active_day (activity_date DESC);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_account_active_day_last_activity
+      ON account_active_day (last_activity_at_utc DESC);
+  `);
 }
 
 export async function resetFleetPersistenceForTests(): Promise<void> {
