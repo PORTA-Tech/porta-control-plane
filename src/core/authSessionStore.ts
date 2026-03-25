@@ -3,14 +3,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { resolveAssignedRoleForUser } from './rbacStore.js';
-import { consumePasswordResetCode, consumeSignupCode } from './authAccessCodeStore.js';
 import type { AuthProvider } from '@porta/api-contracts';
+import {
+  createAuthUserRecord,
+  findAuthUserRecordByUserId,
+  importLegacyAuthUsers,
+  listAuthUserRecords,
+  updateAuthUserPasswordRecord,
+  updateAuthUserRecord,
+  verifyAuthUserPassword,
+  type AuthRole,
+  type LegacyAuthUserImportRow,
+  type StoredAuthUserRecord,
+  type UserSource
+} from '../store/authUserStore.js';
+import { getFleetPersistenceMode } from '../store/fleetPersistence.js';
+import { consumePasswordResetCode, consumeSignupCode } from './authAccessCodeStore.js';
+import { resolveAssignedRoleForUser } from './rbacStore.js';
 
-type AuthRole = 'viewer' | 'operator' | 'admin' | 'auditor' | 'developer' | 'agent';
-type UserSource = 'default' | 'env' | 'custom';
-
-interface AuthUserRecord {
+interface LocalAuthUserRecord {
   account_id: string;
   user_id: string;
   password: string;
@@ -25,16 +36,23 @@ interface SessionRecord {
   token: string;
   account_id: string;
   user_id: string;
+  base_role: AuthRole;
   role: AuthRole;
   display_name: string;
   avatar_url?: string;
   auth_provider?: AuthProvider | null;
+  source: UserSource;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
 }
 
-type AuthUserPublicView = Pick<AuthUserRecord, 'account_id' | 'user_id' | 'role' | 'display_name' | 'avatar_url' | 'auth_provider'>;
+type AuthUserPublicView = Pick<LocalAuthUserRecord, 'account_id' | 'user_id' | 'role' | 'display_name' | 'avatar_url' | 'auth_provider'>;
+
+interface AuthenticatedAuthUserView extends AuthUserPublicView {
+  base_role: AuthRole;
+  source: UserSource;
+}
 
 export interface AuthSessionView {
   account_id: string;
@@ -55,7 +73,7 @@ export interface AuthUserIdentityView {
   display_name: string;
   avatar_url?: string;
   auth_provider?: AuthProvider | null;
-  source: 'default' | 'env' | 'custom';
+  source: UserSource;
 }
 
 export interface AuthAccessHelpView {
@@ -90,6 +108,10 @@ const USER_ID_PATTERN_STRING = '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$';
 const USER_ID_MIN = 5;
 const USER_ID_MAX = 128;
 const PASSWORD_MIN = 8;
+
+let baseUsers: LocalAuthUserRecord[] = loadBaseUsers();
+let memoryCustomUsers: LocalAuthUserRecord[] = loadCustomUsersFromFiles();
+let legacyImportPromise: Promise<void> | null = null;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
@@ -134,7 +156,7 @@ function deriveStableAccountId(userId: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
-function stableUsers(): AuthUserRecord[] {
+function stableUsers(): LocalAuthUserRecord[] {
   const adminPassword = process.env.AUTH_DEFAULT_ADMIN_PASSWORD ?? 'porta-admin';
   const operatorPassword = process.env.AUTH_DEFAULT_OPERATOR_PASSWORD ?? 'porta-operator';
   const auditorPassword = process.env.AUTH_DEFAULT_AUDITOR_PASSWORD ?? 'porta-auditor';
@@ -147,11 +169,11 @@ function stableUsers(): AuthUserRecord[] {
   ];
 }
 
-function parseUserRows(raw: unknown, source: UserSource): AuthUserRecord[] {
+function parseUserRows(raw: unknown, source: UserSource): LocalAuthUserRecord[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     return [];
   }
-  const users: AuthUserRecord[] = [];
+  const users: LocalAuthUserRecord[] = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== 'object') continue;
     const row = entry as Record<string, unknown>;
@@ -183,26 +205,24 @@ function parseUserRows(raw: unknown, source: UserSource): AuthUserRecord[] {
   return users;
 }
 
-function loadUsers(): AuthUserRecord[] {
-  const table = new Map<string, AuthUserRecord>();
-
+function loadBaseUsers(): LocalAuthUserRecord[] {
   const envRaw = process.env.AUTH_USERS_JSON;
-  const baseUsers = (() => {
-    if (!envRaw || envRaw.trim().length === 0) return stableUsers();
-    try {
-      const parsed = JSON.parse(envRaw);
-      const users = parseUserRows(parsed, 'env');
-      return users.length > 0 ? users : stableUsers();
-    } catch {
-      return stableUsers();
-    }
-  })();
-
-  for (const user of baseUsers) {
-    table.set(user.user_id.toLowerCase(), user);
+  if (!envRaw || envRaw.trim().length === 0) {
+    return stableUsers();
   }
 
-  const candidatePaths = new Set([usersPath, moduleUsersPath, legacyUsersPath]);
+  try {
+    const parsed = JSON.parse(envRaw);
+    const users = parseUserRows(parsed, 'env');
+    return users.length > 0 ? users : stableUsers();
+  } catch {
+    return stableUsers();
+  }
+}
+
+function loadCustomUsersFromFiles(): LocalAuthUserRecord[] {
+  const table = new Map<string, LocalAuthUserRecord>();
+  const candidatePaths = new Set([usersPath, homeUsersPath, moduleUsersPath, legacyUsersPath]);
   for (const candidate of candidatePaths) {
     if (!fs.existsSync(candidate)) continue;
     try {
@@ -215,14 +235,11 @@ function loadUsers(): AuthUserRecord[] {
       // ignore malformed user store in R&D mode
     }
   }
-
   return [...table.values()];
 }
 
-let authUsers: AuthUserRecord[] = loadUsers();
-
-function persistCustomUsers(): void {
-  const custom = authUsers.filter((user) => user.source === 'custom').map((user) => ({
+function persistMemoryCustomUsers(): void {
+  const custom = memoryCustomUsers.map((user) => ({
     account_id: user.account_id,
     user_id: user.user_id,
     password: user.password,
@@ -259,6 +276,48 @@ function safeEquals(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+function resolveRole(userId: string, role: AuthRole): AuthRole {
+  return resolveAssignedRoleForUser(userId, role);
+}
+
+function toAuthenticatedViewFromLocal(user: LocalAuthUserRecord): AuthenticatedAuthUserView {
+  return {
+    account_id: user.account_id,
+    user_id: user.user_id,
+    base_role: user.role,
+    role: resolveRole(user.user_id, user.role),
+    display_name: user.display_name,
+    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
+    source: user.source
+  };
+}
+
+function toAuthenticatedViewFromStored(user: StoredAuthUserRecord): AuthenticatedAuthUserView {
+  return {
+    account_id: user.account_id,
+    user_id: user.user_id,
+    base_role: user.role,
+    role: resolveRole(user.user_id, user.role),
+    display_name: user.display_name,
+    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
+    source: user.source
+  };
+}
+
+function toIdentityView(user: AuthenticatedAuthUserView): AuthUserIdentityView {
+  return {
+    account_id: user.account_id,
+    user_id: user.user_id,
+    role: user.role,
+    display_name: user.display_name,
+    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
+    source: user.source
+  };
+}
+
 function cleanupExpiredSessions(): void {
   const nowMs = Date.now();
   for (const [token, session] of sessions.entries()) {
@@ -283,27 +342,144 @@ function toSessionView(record: SessionRecord): AuthSessionView {
   };
 }
 
-function findUser(userId: string): AuthUserRecord | undefined {
+function findLocalUser(userId: string): LocalAuthUserRecord | undefined {
   const normalized = userId.trim().toLowerCase();
-  return authUsers.find((row) => row.user_id.toLowerCase() === normalized);
+  return memoryCustomUsers.find((row) => row.user_id.toLowerCase() === normalized)
+    ?? baseUsers.find((row) => row.user_id.toLowerCase() === normalized);
 }
 
-export function hasAuthUser(userId: string): boolean {
-  return Boolean(findUser(userId));
+async function ensureLegacyCustomUsersImported(): Promise<void> {
+  if (getFleetPersistenceMode() !== 'postgres') {
+    return;
+  }
+
+  if (!legacyImportPromise) {
+    legacyImportPromise = (async () => {
+      const legacyUsers = loadCustomUsersFromFiles();
+      if (legacyUsers.length === 0) {
+        return;
+      }
+
+      const importRows: LegacyAuthUserImportRow[] = legacyUsers.map((user) => ({
+        account_id: user.account_id,
+        user_id: user.user_id,
+        password: user.password,
+        role: user.role,
+        display_name: user.display_name,
+        ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+        ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
+        source: user.source
+      }));
+      await importLegacyAuthUsers(importRows);
+    })().catch((error) => {
+      legacyImportPromise = null;
+      throw error;
+    });
+  }
+
+  await legacyImportPromise;
 }
 
-export function authenticateUser(userId: string, password: string): AuthUserRecord | null {
-  const user = findUser(userId);
-  if (!user) return null;
-  if (!safeEquals(user.password, password)) return null;
-  return {
-    ...user,
-    role: resolveAssignedRoleForUser(user.user_id, user.role)
-  };
+async function findResolvedUser(userId: string): Promise<AuthenticatedAuthUserView | null> {
+  const normalized = userId.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (getFleetPersistenceMode() === 'postgres') {
+    await ensureLegacyCustomUsersImported();
+    const custom = await findAuthUserRecordByUserId(normalized);
+    if (custom) {
+      return toAuthenticatedViewFromStored(custom);
+    }
+  }
+
+  const local = findLocalUser(normalized);
+  return local ? toAuthenticatedViewFromLocal(local) : null;
+}
+
+function listLocalUsers(): AuthenticatedAuthUserView[] {
+  const table = new Map<string, AuthenticatedAuthUserView>();
+  for (const user of baseUsers) {
+    table.set(user.user_id.toLowerCase(), toAuthenticatedViewFromLocal(user));
+  }
+  for (const user of memoryCustomUsers) {
+    table.set(user.user_id.toLowerCase(), toAuthenticatedViewFromLocal(user));
+  }
+  return [...table.values()];
+}
+
+function syncSessionSnapshots(user: AuthenticatedAuthUserView): void {
+  for (const record of sessions.values()) {
+    if (record.user_id.toLowerCase() !== user.user_id.toLowerCase()) {
+      continue;
+    }
+
+    record.base_role = user.base_role;
+    record.role = user.role;
+    record.display_name = user.display_name;
+    record.source = user.source;
+    if (user.avatar_url) {
+      record.avatar_url = user.avatar_url;
+    } else {
+      delete record.avatar_url;
+    }
+    if (user.auth_provider) {
+      record.auth_provider = user.auth_provider;
+    } else {
+      delete record.auth_provider;
+    }
+  }
+}
+
+function validateAvatarUrl(value: string): boolean {
+  if (!value) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateStrongPassword(password: string, prefix: string): string | null {
+  if (password.length < PASSWORD_MIN) {
+    return `${prefix} must be at least ${PASSWORD_MIN} characters.`;
+  }
+  if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+    return `${prefix} must include uppercase, lowercase, and number.`;
+  }
+  return null;
+}
+
+export async function hasAuthUser(userId: string): Promise<boolean> {
+  return Boolean(await findResolvedUser(userId));
+}
+
+export async function authenticateUser(userId: string, password: string): Promise<AuthenticatedAuthUserView | null> {
+  const normalized = userId.trim();
+  if (!normalized || !password) {
+    return null;
+  }
+
+  if (getFleetPersistenceMode() === 'postgres') {
+    await ensureLegacyCustomUsersImported();
+    const existingCustom = await findAuthUserRecordByUserId(normalized);
+    if (existingCustom) {
+      const custom = await verifyAuthUserPassword(normalized, password);
+      return custom ? toAuthenticatedViewFromStored(custom) : null;
+    }
+  }
+
+  const local = findLocalUser(normalized);
+  if (!local || !safeEquals(local.password, password)) {
+    return null;
+  }
+  return toAuthenticatedViewFromLocal(local);
 }
 
 export function issueAuthSession(
-  user: AuthUserPublicView,
+  user: AuthenticatedAuthUserView,
   overrides: { account_id?: string } = {}
 ): { access_token: string; session: AuthSessionView } {
   cleanupExpiredSessions();
@@ -315,10 +491,12 @@ export function issueAuthSession(
     token,
     account_id: overrides.account_id ?? user.account_id,
     user_id: user.user_id,
+    base_role: user.base_role,
     role: user.role,
     display_name: user.display_name,
     ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
     ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
+    source: user.source,
     issued_at_utc: issuedAt.toISOString(),
     expires_at_utc: expiresAt.toISOString(),
     reauth_expires_at_utc: reauthExpiresAt.toISOString()
@@ -334,29 +512,44 @@ export function readAuthSession(token: string): AuthSessionView | null {
   cleanupExpiredSessions();
   const record = sessions.get(token);
   if (!record) return null;
-  const user = findUser(record.user_id);
-  if (user) {
-    const assignedRole = resolveAssignedRoleForUser(record.user_id, user.role);
-    const changed = assignedRole !== record.role
-      || record.display_name !== user.display_name
-      || record.avatar_url !== user.avatar_url
-      || record.auth_provider !== user.auth_provider;
-    if (changed) {
+
+  const canRefreshFromLocal = record.source !== 'custom' || getFleetPersistenceMode() === 'memory';
+  if (canRefreshFromLocal) {
+    const local = findLocalUser(record.user_id);
+    if (local) {
+      const refreshed = toAuthenticatedViewFromLocal(local);
+      const changed = record.base_role !== refreshed.base_role
+        || record.role !== refreshed.role
+        || record.display_name !== refreshed.display_name
+        || record.avatar_url !== refreshed.avatar_url
+        || record.auth_provider !== refreshed.auth_provider
+        || record.source !== refreshed.source;
+      if (changed) {
+        record.base_role = refreshed.base_role;
+        record.role = refreshed.role;
+        record.display_name = refreshed.display_name;
+        record.source = refreshed.source;
+        if (refreshed.avatar_url) {
+          record.avatar_url = refreshed.avatar_url;
+        } else {
+          delete record.avatar_url;
+        }
+        if (refreshed.auth_provider) {
+          record.auth_provider = refreshed.auth_provider;
+        } else {
+          delete record.auth_provider;
+        }
+        sessions.set(token, record);
+      }
+    }
+  } else {
+    const assignedRole = resolveRole(record.user_id, record.base_role);
+    if (assignedRole !== record.role) {
       record.role = assignedRole;
-      record.display_name = user.display_name;
-      if (user.avatar_url) {
-        record.avatar_url = user.avatar_url;
-      } else {
-        delete record.avatar_url;
-      }
-      if (user.auth_provider) {
-        record.auth_provider = user.auth_provider;
-      } else {
-        delete record.auth_provider;
-      }
       sessions.set(token, record);
     }
   }
+
   return toSessionView(record);
 }
 
@@ -379,34 +572,37 @@ export function hasValidReauth(session: AuthSessionView): boolean {
   return Number.isFinite(expiresMs) && expiresMs > Date.now();
 }
 
-export function listAuthUsers(): Array<Pick<AuthUserRecord, 'user_id' | 'role' | 'display_name'>> {
-  return [...authUsers]
+export async function listAuthUsers(): Promise<Array<Pick<AuthUserPublicView, 'user_id' | 'role' | 'display_name'>>> {
+  const table = new Map<string, AuthenticatedAuthUserView>();
+  for (const user of listLocalUsers()) {
+    table.set(user.user_id.toLowerCase(), user);
+  }
+
+  if (getFleetPersistenceMode() === 'postgres') {
+    await ensureLegacyCustomUsersImported();
+    const storedUsers = await listAuthUserRecords();
+    for (const user of storedUsers) {
+      table.set(user.user_id.toLowerCase(), toAuthenticatedViewFromStored(user));
+    }
+  }
+
+  return [...table.values()]
     .sort((a, b) => a.user_id.localeCompare(b.user_id))
     .map((row) => ({
       user_id: row.user_id,
-      role: resolveAssignedRoleForUser(row.user_id, row.role),
+      role: row.role,
       display_name: row.display_name
     }));
 }
 
-export function readAuthUserIdentity(userId: string): AuthUserIdentityView | null {
-  const user = findUser(userId);
-  if (!user) return null;
-  return {
-    account_id: user.account_id,
-    user_id: user.user_id,
-    role: resolveAssignedRoleForUser(user.user_id, user.role),
-    display_name: user.display_name,
-    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
-    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
-    source: user.source
-  };
+export async function readAuthUserIdentity(userId: string): Promise<AuthUserIdentityView | null> {
+  const user = await findResolvedUser(userId);
+  return user ? toIdentityView(user) : null;
 }
 
-export function resolveAuthUserRole(userId: string): AuthRole | null {
-  const user = findUser(userId);
-  if (!user) return null;
-  return resolveAssignedRoleForUser(user.user_id, user.role);
+export async function resolveAuthUserRole(userId: string): Promise<AuthRole | null> {
+  const user = await findResolvedUser(userId);
+  return user?.role ?? null;
 }
 
 export function readAuthAccessHelp(): AuthAccessHelpView {
@@ -430,7 +626,7 @@ export function readAuthAccessHelp(): AuthAccessHelpView {
   };
 }
 
-export function registerAuthUser(input: {
+export async function registerAuthUser(input: {
   user_id: string;
   password: string;
   role: AuthRole;
@@ -438,8 +634,11 @@ export function registerAuthUser(input: {
   avatar_url?: string;
   signup_code?: string;
 }):
-  | { ok: true; user: AuthUserPublicView }
-  | { ok: false; error_code: string; message: string } {
+  Promise<
+    | { ok: true; user: AuthUserPublicView }
+    | { ok: false; error_code: string; message: string }
+  >
+{
   if (!allowSelfRegister()) {
     return { ok: false, error_code: 'SIGNUP_DISABLED', message: 'Self registration is disabled.' };
   }
@@ -499,7 +698,7 @@ export function registerAuthUser(input: {
     };
   }
 
-  if (findUser(userId)) {
+  if (await findResolvedUser(userId)) {
     return {
       ok: false,
       error_code: 'USER_EXISTS',
@@ -514,7 +713,36 @@ export function registerAuthUser(input: {
     }
   }
 
-  const record: AuthUserRecord = {
+  if (getFleetPersistenceMode() === 'postgres') {
+    const created = await createAuthUserRecord({
+      account_id: randomUUID(),
+      user_id: userId,
+      password,
+      role,
+      display_name: displayName,
+      ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+      auth_provider: 'local',
+      source: 'custom'
+    });
+    if (!created) {
+      return { ok: false, error_code: 'USER_CREATE_FAILED', message: 'User could not be created.' };
+    }
+
+    const publicView = toAuthenticatedViewFromStored(created);
+    return {
+      ok: true,
+      user: {
+        account_id: publicView.account_id,
+        user_id: publicView.user_id,
+        role: publicView.role,
+        display_name: publicView.display_name,
+        ...(publicView.avatar_url ? { avatar_url: publicView.avatar_url } : {}),
+        ...(publicView.auth_provider ? { auth_provider: publicView.auth_provider } : {})
+      }
+    };
+  }
+
+  const record: LocalAuthUserRecord = {
     account_id: randomUUID(),
     user_id: userId,
     password,
@@ -524,38 +752,80 @@ export function registerAuthUser(input: {
     auth_provider: 'local',
     source: 'custom'
   };
-  authUsers = [...authUsers, record];
-  persistCustomUsers();
+  memoryCustomUsers = [...memoryCustomUsers, record];
+  persistMemoryCustomUsers();
 
+  const publicView = toAuthenticatedViewFromLocal(record);
   return {
     ok: true,
     user: {
-      user_id: record.user_id,
-      role: record.role,
-      display_name: record.display_name,
-      ...(record.avatar_url ? { avatar_url: record.avatar_url } : {}),
-      account_id: record.account_id,
-      ...(record.auth_provider ? { auth_provider: record.auth_provider } : {})
+      account_id: publicView.account_id,
+      user_id: publicView.user_id,
+      role: publicView.role,
+      display_name: publicView.display_name,
+      ...(publicView.avatar_url ? { avatar_url: publicView.avatar_url } : {}),
+      ...(publicView.auth_provider ? { auth_provider: publicView.auth_provider } : {})
     }
   };
 }
 
-function validateAvatarUrl(value: string): boolean {
-  if (!value) return true;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-export function updateAuthUserProfile(input: {
+export async function updateAuthUserProfile(input: {
   user_id: string;
   display_name?: string;
   avatar_url?: string | null;
-}): { ok: true; user: AuthUserPublicView } | { ok: false; error_code: string; message: string } {
-  const user = findUser(input.user_id);
+}): Promise<{ ok: true; user: AuthUserPublicView } | { ok: false; error_code: string; message: string }> {
+  const normalizedUserId = input.user_id.trim();
+  if (!normalizedUserId) {
+    return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+  }
+
+  if (getFleetPersistenceMode() === 'postgres') {
+    await ensureLegacyCustomUsersImported();
+    const existing = await findAuthUserRecordByUserId(normalizedUserId);
+    if (existing) {
+      const nextDisplay = typeof input.display_name === 'string' ? input.display_name.trim() : existing.display_name;
+      if (!nextDisplay) {
+        return { ok: false, error_code: 'VALIDATION_ERROR', message: 'display_name is required.' };
+      }
+
+      let nextAvatar: string | null | undefined = existing.avatar_url;
+      if (input.avatar_url === null) {
+        nextAvatar = null;
+      } else if (typeof input.avatar_url === 'string') {
+        const trimmed = input.avatar_url.trim();
+        if (!validateAvatarUrl(trimmed)) {
+          return { ok: false, error_code: 'VALIDATION_ERROR', message: 'avatar_url must be http/https URL.' };
+        }
+        nextAvatar = trimmed.length > 0 ? trimmed : null;
+      }
+
+      const updated = await updateAuthUserRecord({
+        user_id: normalizedUserId,
+        display_name: nextDisplay,
+        ...(nextAvatar !== undefined ? { avatar_url: nextAvatar } : {}),
+        updated_at: new Date().toISOString()
+      });
+      if (!updated) {
+        return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+      }
+
+      const publicView = toAuthenticatedViewFromStored(updated);
+      syncSessionSnapshots(publicView);
+      return {
+        ok: true,
+        user: {
+          account_id: publicView.account_id,
+          user_id: publicView.user_id,
+          role: publicView.role,
+          display_name: publicView.display_name,
+          ...(publicView.avatar_url ? { avatar_url: publicView.avatar_url } : {}),
+          ...(publicView.auth_provider ? { auth_provider: publicView.auth_provider } : {})
+        }
+      };
+    }
+  }
+
+  const user = findLocalUser(normalizedUserId);
   if (!user) {
     return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
   }
@@ -582,81 +852,135 @@ export function updateAuthUserProfile(input: {
   } else {
     delete user.avatar_url;
   }
-  authUsers = [...authUsers];
-  persistCustomUsers();
 
+  if (user.source === 'custom') {
+    memoryCustomUsers = [...memoryCustomUsers];
+    persistMemoryCustomUsers();
+  } else {
+    baseUsers = [...baseUsers];
+  }
+
+  const publicView = toAuthenticatedViewFromLocal(user);
+  syncSessionSnapshots(publicView);
   return {
     ok: true,
     user: {
-      account_id: user.account_id,
-      user_id: user.user_id,
-      role: resolveAssignedRoleForUser(user.user_id, user.role),
-      display_name: user.display_name,
-      ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
-      ...(user.auth_provider ? { auth_provider: user.auth_provider } : {})
+      account_id: publicView.account_id,
+      user_id: publicView.user_id,
+      role: publicView.role,
+      display_name: publicView.display_name,
+      ...(publicView.avatar_url ? { avatar_url: publicView.avatar_url } : {}),
+      ...(publicView.auth_provider ? { auth_provider: publicView.auth_provider } : {})
     }
   };
 }
 
-export function updateAuthUserPassword(input: {
+export async function updateAuthUserPassword(input: {
   user_id: string;
   current_password: string;
   new_password: string;
-}): { ok: true } | { ok: false; error_code: string; message: string } {
-  const user = findUser(input.user_id);
+}): Promise<{ ok: true } | { ok: false; error_code: string; message: string }> {
+  const normalizedUserId = input.user_id.trim();
+  if (!normalizedUserId) {
+    return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+  }
+
+  if (getFleetPersistenceMode() === 'postgres') {
+    await ensureLegacyCustomUsersImported();
+    const existing = await findAuthUserRecordByUserId(normalizedUserId);
+    if (existing) {
+      const verified = await verifyAuthUserPassword(normalizedUserId, input.current_password);
+      if (!verified) {
+        return { ok: false, error_code: 'INVALID_CREDENTIALS', message: 'Current password is incorrect.' };
+      }
+
+      const passwordMessage = validateStrongPassword(input.new_password, 'New password');
+      if (passwordMessage) {
+        return { ok: false, error_code: 'WEAK_PASSWORD', message: passwordMessage };
+      }
+
+      const updated = await updateAuthUserPasswordRecord(normalizedUserId, input.new_password);
+      return updated
+        ? { ok: true }
+        : { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+    }
+  }
+
+  const user = findLocalUser(normalizedUserId);
   if (!user) {
     return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
   }
   if (!safeEquals(user.password, input.current_password)) {
     return { ok: false, error_code: 'INVALID_CREDENTIALS', message: 'Current password is incorrect.' };
   }
-  if (input.new_password.length < PASSWORD_MIN) {
-    return { ok: false, error_code: 'WEAK_PASSWORD', message: `New password must be at least ${PASSWORD_MIN} characters.` };
+
+  const passwordMessage = validateStrongPassword(input.new_password, 'New password');
+  if (passwordMessage) {
+    return { ok: false, error_code: 'WEAK_PASSWORD', message: passwordMessage };
   }
-  if (!/[A-Z]/.test(input.new_password) || !/[a-z]/.test(input.new_password) || !/[0-9]/.test(input.new_password)) {
-    return {
-      ok: false,
-      error_code: 'WEAK_PASSWORD',
-      message: 'New password must include uppercase, lowercase, and number.'
-    };
-  }
+
   user.password = input.new_password;
-  authUsers = [...authUsers];
-  persistCustomUsers();
+  if (user.source === 'custom') {
+    memoryCustomUsers = [...memoryCustomUsers];
+    persistMemoryCustomUsers();
+  } else {
+    baseUsers = [...baseUsers];
+  }
   return { ok: true };
 }
 
-export function resetAuthUserPasswordWithCode(input: {
+export async function resetAuthUserPasswordWithCode(input: {
   user_id: string;
   reset_code: string;
   new_password: string;
-}): { ok: true } | { ok: false; error_code: string; message: string } {
+}): Promise<{ ok: true } | { ok: false; error_code: string; message: string }> {
   const userId = input.user_id.trim();
   const resetCode = input.reset_code.trim();
   const newPassword = input.new_password;
-  const user = findUser(userId);
-  if (!user) {
+  if (!userId) {
     return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
   }
   if (!/^\d{6}$/.test(resetCode)) {
     return { ok: false, error_code: 'INVALID_RESET_CODE', message: 'reset_code must be a 6-digit code.' };
   }
-  if (newPassword.length < PASSWORD_MIN) {
-    return { ok: false, error_code: 'WEAK_PASSWORD', message: `New password must be at least ${PASSWORD_MIN} characters.` };
+
+  let existingCustom: StoredAuthUserRecord | null = null;
+  if (getFleetPersistenceMode() === 'postgres') {
+    await ensureLegacyCustomUsersImported();
+    existingCustom = await findAuthUserRecordByUserId(userId);
+    if (!existingCustom && !findLocalUser(userId)) {
+      return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+    }
+  } else if (!findLocalUser(userId)) {
+    return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
   }
-  if (!/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
-    return {
-      ok: false,
-      error_code: 'WEAK_PASSWORD',
-      message: 'New password must include uppercase, lowercase, and number.'
-    };
+
+  const passwordMessage = validateStrongPassword(newPassword, 'New password');
+  if (passwordMessage) {
+    return { ok: false, error_code: 'WEAK_PASSWORD', message: passwordMessage };
   }
 
   const consumed = consumePasswordResetCode({ code: resetCode, userId });
   if (!consumed.ok) return consumed;
 
+  if (existingCustom) {
+    const updated = await updateAuthUserPasswordRecord(userId, newPassword);
+    return updated
+      ? { ok: true }
+      : { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+  }
+
+  const user = findLocalUser(userId);
+  if (!user) {
+    return { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
+  }
+
   user.password = newPassword;
-  authUsers = [...authUsers];
-  persistCustomUsers();
+  if (user.source === 'custom') {
+    memoryCustomUsers = [...memoryCustomUsers];
+    persistMemoryCustomUsers();
+  } else {
+    baseUsers = [...baseUsers];
+  }
   return { ok: true };
 }

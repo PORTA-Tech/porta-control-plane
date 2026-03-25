@@ -50,7 +50,7 @@ export function createIdentityController(): Router {
         ? body.avatar_url
         : undefined;
 
-    const updated = updateAuthUserProfile({
+    const updated = await updateAuthUserProfile({
       user_id: userId,
       ...(displayName !== undefined ? { display_name: displayName } : {}),
       ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {})

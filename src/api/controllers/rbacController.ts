@@ -81,7 +81,8 @@ export function createRbacController(): Router {
     res.json({ ok: true, removed });
   });
 
-  router.get('/effective-permissions', (req, res) => {
+  router.get('/effective-permissions', async (req, res, next) => {
+    try {
     const caller = req as OperatorRequest;
     const requested = typeof req.query.user_id === 'string' && req.query.user_id.trim().length > 0
       ? req.query.user_id.trim()
@@ -101,15 +102,17 @@ export function createRbacController(): Router {
       return;
     }
 
-    const role = resolveAuthUserRole(requested) ?? 'viewer';
+    const role = (await resolveAuthUserRole(requested)) ?? 'viewer';
     res.json({
       user_id: requested,
       role,
       permissions: readPermissionsForRole(role),
       source: 'control_plane_rbac'
     });
+    } catch (error) {
+      next(error);
+    }
   });
 
   return router;
 }
-

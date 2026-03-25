@@ -305,7 +305,7 @@ async function syncDeviceCaptureConsent(input: {
 }
 
 export async function ensureAccountProfileForAuthUser(userId: string): Promise<AccountProfile | null> {
-  const authUser = readAuthUserIdentity(userId);
+  const authUser = await readAuthUserIdentity(userId);
   if (!authUser) {
     return null;
   }
@@ -333,7 +333,7 @@ export async function ensureAccountProfileForAuthUser(userId: string): Promise<A
 }
 
 export async function materializeAuthUserIdentity(userId: string): Promise<MaterializedAuthUserIdentity | null> {
-  const authUser = readAuthUserIdentity(userId);
+  const authUser = await readAuthUserIdentity(userId);
   const account = await ensureAccountProfileForAuthUser(userId);
   if (!authUser || !account) {
     return null;
