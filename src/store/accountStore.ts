@@ -3,6 +3,11 @@ import { ensureFleetPersistenceReady, getFleetPersistenceMode, getFleetPool } fr
 
 const accountMemoryStore = new Map<string, AccountProfile>();
 
+function normalizeTimestamp(input: string): string {
+  const parsed = Date.parse(input);
+  return Number.isNaN(parsed) ? new Date().toISOString() : new Date(parsed).toISOString();
+}
+
 export async function upsertAccountProfile(profile: AccountProfile): Promise<void> {
   if (getFleetPersistenceMode() === 'memory') {
     accountMemoryStore.set(profile.accountId, profile);
@@ -104,6 +109,68 @@ export async function getAccountProfileByPrimaryEmail(primaryEmail: string): Pro
   );
 
   return result.rows[0]?.payload_json ?? null;
+}
+
+export async function touchAccountLastLogin(accountId: string, atUtc: string): Promise<AccountProfile | null> {
+  const timestamp = normalizeTimestamp(atUtc);
+
+  if (getFleetPersistenceMode() === 'memory') {
+    const existing = accountMemoryStore.get(accountId);
+    if (!existing) {
+      return null;
+    }
+
+    const updated: AccountProfile = {
+      ...existing,
+      lastLoginAt: timestamp,
+      updatedAt: timestamp
+    };
+    accountMemoryStore.set(accountId, updated);
+    return updated;
+  }
+
+  const existing = await getAccountProfile(accountId);
+  if (!existing) {
+    return null;
+  }
+
+  await ensureFleetPersistenceReady();
+  const pool = getFleetPool();
+  if (!pool) {
+    const updated: AccountProfile = {
+      ...existing,
+      lastLoginAt: timestamp,
+      updatedAt: timestamp
+    };
+    accountMemoryStore.set(accountId, updated);
+    return updated;
+  }
+
+  const updated: AccountProfile = {
+    ...existing,
+    lastLoginAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  const result = await pool.query<{ payload_json: AccountProfile }>(
+    `
+      UPDATE accounts
+      SET
+        last_login_at = $2::timestamptz,
+        payload_json = $3::jsonb,
+        updated_at = $4::timestamptz
+      WHERE account_id = $1::uuid
+      RETURNING payload_json;
+    `,
+    [
+      accountId,
+      timestamp,
+      JSON.stringify(updated),
+      timestamp
+    ]
+  );
+
+  return result.rows[0]?.payload_json ?? updated;
 }
 
 export async function listAccountProfiles(): Promise<AccountProfile[]> {

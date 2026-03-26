@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
 import { loadRuntimeState, resetRuntimeStateForTests } from '../src/store/runtimeState.js';
-import { clearAccountStoreForTests } from '../src/store/accountStore.js';
+import { clearAccountStoreForTests, getAccountProfile } from '../src/store/accountStore.js';
 import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests, upsertDeviceProfile } from '../src/store/deviceStore.js';
@@ -241,6 +241,33 @@ describe('identity endpoints', () => {
     expect(accountResponse.body.account.primaryEmail).toBe('admin');
     expect(accountResponse.body.consents).toHaveLength(1);
     expect(accountResponse.body.consents[0]?.scope).toBe('account_legal');
+  });
+
+  it('updates lastLoginAt on successful login but not on /v1/me read endpoints', async () => {
+    const loginResponse = await request(app).post('/auth/login').send({
+      user_id: 'admin',
+      password: 'porta-admin'
+    });
+
+    expect(loginResponse.status).toBe(200);
+    const token = loginResponse.body.access_token as string;
+    const accountId = loginResponse.body.user.account_id as string;
+
+    const afterLogin = await getAccountProfile(accountId);
+    expect(afterLogin?.lastLoginAt).toBeTruthy();
+    const touchedAt = afterLogin?.lastLoginAt ?? null;
+
+    const meResponse = await request(app).get('/v1/me').set('authorization', `Bearer ${token}`);
+    expect(meResponse.status).toBe(200);
+
+    const organizationsResponse = await request(app).get('/v1/me/organizations').set('authorization', `Bearer ${token}`);
+    expect(organizationsResponse.status).toBe(200);
+
+    const devicesResponse = await request(app).get('/v1/me/devices').set('authorization', `Bearer ${token}`);
+    expect(devicesResponse.status).toBe(200);
+
+    const afterReads = await getAccountProfile(accountId);
+    expect(afterReads?.lastLoginAt).toBe(touchedAt);
   });
 
   it('materializes newly registered users into admin account views immediately', async () => {

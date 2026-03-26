@@ -19,6 +19,7 @@ import {
   generateSignupCode,
   listActiveAccessCodes
 } from '../../core/authAccessCodeStore.js';
+import { touchAccountLastLogin } from '../../store/accountStore.js';
 
 function parseBearerToken(header: string | undefined): string | null {
   if (!header) return null;
@@ -76,6 +77,8 @@ export function createAuthController(): Router {
         });
         return;
       }
+
+      await touchAccountLastLogin(materialized.account.accountId, new Date().toISOString());
 
       const issued = await issueAuthSession(user, { account_id: materialized.account.accountId });
       res.json({
