@@ -17,6 +17,13 @@ import {
   type StoredAuthUserRecord,
   type UserSource
 } from '../store/authUserStore.js';
+import {
+  createAuthSessionRecord,
+  findAuthSessionRecordByToken,
+  revokeAuthSessionRecord,
+  updateAuthSessionRecord,
+  type StoredAuthSessionRecord
+} from '../store/authSessionDbStore.js';
 import { getFleetPersistenceMode } from '../store/fleetPersistence.js';
 import { consumePasswordResetCode, consumeSignupCode } from './authAccessCodeStore.js';
 import { resolveAssignedRoleForUser } from './rbacStore.js';
@@ -342,6 +349,20 @@ function toSessionView(record: SessionRecord): AuthSessionView {
   };
 }
 
+function toSessionViewFromStored(record: StoredAuthSessionRecord): AuthSessionView {
+  return {
+    account_id: record.account_id,
+    user_id: record.user_id,
+    role: record.role,
+    display_name: record.display_name,
+    ...(record.avatar_url ? { avatar_url: record.avatar_url } : {}),
+    ...(record.auth_provider ? { auth_provider: record.auth_provider } : {}),
+    issued_at_utc: record.issued_at_utc,
+    expires_at_utc: record.expires_at_utc,
+    reauth_expires_at_utc: record.reauth_expires_at_utc
+  };
+}
+
 function findLocalUser(userId: string): LocalAuthUserRecord | undefined {
   const normalized = userId.trim().toLowerCase();
   return memoryCustomUsers.find((row) => row.user_id.toLowerCase() === normalized)
@@ -478,15 +499,38 @@ export async function authenticateUser(userId: string, password: string): Promis
   return toAuthenticatedViewFromLocal(local);
 }
 
-export function issueAuthSession(
+export async function issueAuthSession(
   user: AuthenticatedAuthUserView,
   overrides: { account_id?: string } = {}
-): { access_token: string; session: AuthSessionView } {
-  cleanupExpiredSessions();
+): Promise<{ access_token: string; session: AuthSessionView }> {
   const issuedAt = new Date();
   const expiresAt = new Date(issuedAt.getTime() + sessionTtlMinutes() * 60_000);
   const reauthExpiresAt = new Date(issuedAt.getTime() + reauthTtlMinutes() * 60_000);
   const token = randomBytes(32).toString('base64url');
+
+  if (getFleetPersistenceMode() === 'postgres') {
+    const stored = await createAuthSessionRecord({
+      token,
+      account_id: overrides.account_id ?? user.account_id,
+      user_id: user.user_id,
+      role: user.role,
+      display_name: user.display_name,
+      ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
+      ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
+      issued_at_utc: issuedAt.toISOString(),
+      expires_at_utc: expiresAt.toISOString(),
+      reauth_expires_at_utc: reauthExpiresAt.toISOString()
+    });
+    if (!stored) {
+      throw new Error('Auth session could not be persisted.');
+    }
+    return {
+      access_token: token,
+      session: toSessionViewFromStored(stored)
+    };
+  }
+
+  cleanupExpiredSessions();
   const record: SessionRecord = {
     token,
     account_id: overrides.account_id ?? user.account_id,
@@ -508,7 +552,46 @@ export function issueAuthSession(
   };
 }
 
-export function readAuthSession(token: string): AuthSessionView | null {
+export async function readAuthSession(token: string): Promise<AuthSessionView | null> {
+  if (getFleetPersistenceMode() === 'postgres') {
+    const record = await findAuthSessionRecordByToken(token);
+    if (!record || record.revoked_at_utc) {
+      return null;
+    }
+
+    const expiryMs = Date.parse(record.expires_at_utc);
+    if (!Number.isFinite(expiryMs) || expiryMs <= Date.now()) {
+      return null;
+    }
+
+    const identity = await readAuthUserIdentity(record.user_id);
+    if (!identity) {
+      return toSessionViewFromStored(record);
+    }
+
+    const changed = record.account_id !== identity.account_id
+      || record.role !== identity.role
+      || record.display_name !== identity.display_name
+      || record.avatar_url !== (identity.avatar_url ?? null)
+      || record.auth_provider !== (identity.auth_provider ?? null);
+
+    if (!changed) {
+      return toSessionViewFromStored(record);
+    }
+
+    const updated = await updateAuthSessionRecord({
+      session_id: record.session_id,
+      account_id: identity.account_id,
+      role: identity.role,
+      display_name: identity.display_name,
+      avatar_url: identity.avatar_url ?? null,
+      auth_provider: identity.auth_provider ?? null,
+      updated_at_utc: new Date().toISOString()
+    });
+
+    return updated ? toSessionViewFromStored(updated) : toSessionViewFromStored(record);
+  }
+
   cleanupExpiredSessions();
   const record = sessions.get(token);
   if (!record) return null;
@@ -553,11 +636,36 @@ export function readAuthSession(token: string): AuthSessionView | null {
   return toSessionView(record);
 }
 
-export function revokeAuthSession(token: string): void {
+export async function revokeAuthSession(token: string): Promise<void> {
+  if (getFleetPersistenceMode() === 'postgres') {
+    await revokeAuthSessionRecord(token, new Date().toISOString());
+    return;
+  }
+
   sessions.delete(token);
 }
 
-export function refreshReauth(token: string): AuthSessionView | null {
+export async function refreshReauth(token: string): Promise<AuthSessionView | null> {
+  if (getFleetPersistenceMode() === 'postgres') {
+    const record = await findAuthSessionRecordByToken(token);
+    if (!record || record.revoked_at_utc) {
+      return null;
+    }
+
+    const expiryMs = Date.parse(record.expires_at_utc);
+    if (!Number.isFinite(expiryMs) || expiryMs <= Date.now()) {
+      return null;
+    }
+
+    const reauthExpiresAt = new Date(Date.now() + reauthTtlMinutes() * 60_000).toISOString();
+    const updated = await updateAuthSessionRecord({
+      session_id: record.session_id,
+      reauth_expires_at_utc: reauthExpiresAt,
+      updated_at_utc: reauthExpiresAt
+    });
+    return updated ? toSessionViewFromStored(updated) : null;
+  }
+
   cleanupExpiredSessions();
   const record = sessions.get(token);
   if (!record) return null;
@@ -983,4 +1091,8 @@ export async function resetAuthUserPasswordWithCode(input: {
     baseUsers = [...baseUsers];
   }
   return { ok: true };
+}
+
+export function clearAuthSessionStoreForTests(): void {
+  sessions.clear();
 }

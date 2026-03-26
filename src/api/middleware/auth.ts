@@ -98,35 +98,39 @@ function parseBearerToken(header: string | undefined): string | null {
   return token.length > 0 ? token : null;
 }
 
-export function requireAuthenticatedOperator(req: OperatorRequest, res: Response, next: NextFunction): void {
-  const bearerToken = parseBearerToken(req.header('authorization'));
-  if (bearerToken) {
-    const session = readAuthSession(bearerToken);
-    if (!session) {
-      res.status(401).json({ error: 'unauthorized', error_code: 'SESSION_EXPIRED' });
+export async function requireAuthenticatedOperator(req: OperatorRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const bearerToken = parseBearerToken(req.header('authorization'));
+    if (bearerToken) {
+      const session = await readAuthSession(bearerToken);
+      if (!session) {
+        res.status(401).json({ error: 'unauthorized', error_code: 'SESSION_EXPIRED' });
+        return;
+      }
+      req.operatorId = session.user_id;
+      req.operatorRole = session.role;
+      req.authSessionToken = bearerToken;
+      req.authMode = 'session';
+      req.reauthExpiresAtUtc = session.reauth_expires_at_utc;
+      next();
       return;
     }
-    req.operatorId = session.user_id;
-    req.operatorRole = session.role;
-    req.authSessionToken = bearerToken;
-    req.authMode = 'session';
-    req.reauthExpiresAtUtc = session.reauth_expires_at_utc;
+
+    const operatorId = req.header('x-operator-id');
+    const operatorRole = req.header('x-operator-role')?.toLowerCase() as OperatorRole | undefined;
+
+    if (!operatorId || !operatorRole || !allowedRoles.has(operatorRole)) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+
+    req.operatorId = operatorId;
+    req.operatorRole = operatorRole;
+    req.authMode = 'header';
     next();
-    return;
+  } catch (error) {
+    next(error);
   }
-
-  const operatorId = req.header('x-operator-id');
-  const operatorRole = req.header('x-operator-role')?.toLowerCase() as OperatorRole | undefined;
-
-  if (!operatorId || !operatorRole || !allowedRoles.has(operatorRole)) {
-    res.status(401).json({ error: 'unauthorized' });
-    return;
-  }
-
-  req.operatorId = operatorId;
-  req.operatorRole = operatorRole;
-  req.authMode = 'header';
-  next();
 }
 
 function resolvePolicy(req: Request): RoutePolicy | undefined {
