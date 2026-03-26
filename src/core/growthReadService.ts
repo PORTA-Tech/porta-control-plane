@@ -86,7 +86,15 @@ function parseDateTime(input: string | null | undefined): Date | null {
   return Number.isNaN(parsed) ? null : new Date(parsed);
 }
 
-function normalizeDate(input: string): string {
+function normalizeDate(input: string | number | Date): string {
+  if (input instanceof Date) {
+    return toUtcDateString(input);
+  }
+
+  if (typeof input === 'number') {
+    return Number.isFinite(input) ? new Date(input).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+  }
+
   const trimmed = input.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
     return trimmed;
