@@ -153,6 +153,24 @@ function requireSignupCode(): boolean {
   return parseBoolean(process.env.AUTH_REQUIRE_SIGNUP_CODE, false);
 }
 
+// Compatibility-release toggle: allow postgres nodes to keep reading legacy
+// file-backed custom users until the rollout is complete everywhere.
+function allowLegacyCustomUserFallback(): boolean {
+  if (getFleetPersistenceMode() !== 'postgres') {
+    return true;
+  }
+  return parseBoolean(process.env.AUTH_COMPAT_LEGACY_USER_FALLBACK, true);
+}
+
+// Compatibility-release toggle: mirror new custom-user mutations back to the
+// legacy JSON store so mixed-version nodes do not diverge during rollout.
+function shouldMirrorLegacyCustomUsers(): boolean {
+  if (getFleetPersistenceMode() !== 'postgres') {
+    return false;
+  }
+  return parseBoolean(process.env.AUTH_COMPAT_DUAL_WRITE_LEGACY_USERS, true);
+}
+
 function deriveStableAccountId(userId: string): string {
   const digest = createHash('sha256').update(`porta-auth-account:${userId.trim().toLowerCase()}`).digest('hex');
   const raw = digest.slice(0, 32).split('');
@@ -363,10 +381,55 @@ function toSessionViewFromStored(record: StoredAuthSessionRecord): AuthSessionVi
   };
 }
 
-function findLocalUser(userId: string): LocalAuthUserRecord | undefined {
+function findMemoryCustomUser(userId: string): LocalAuthUserRecord | undefined {
   const normalized = userId.trim().toLowerCase();
-  return memoryCustomUsers.find((row) => row.user_id.toLowerCase() === normalized)
-    ?? baseUsers.find((row) => row.user_id.toLowerCase() === normalized);
+  return memoryCustomUsers.find((row) => row.user_id.toLowerCase() === normalized);
+}
+
+function findBaseUser(userId: string): LocalAuthUserRecord | undefined {
+  const normalized = userId.trim().toLowerCase();
+  return baseUsers.find((row) => row.user_id.toLowerCase() === normalized);
+}
+
+function findLocalUser(userId: string): LocalAuthUserRecord | undefined {
+  return (allowLegacyCustomUserFallback() ? findMemoryCustomUser(userId) : undefined)
+    ?? findBaseUser(userId);
+}
+
+function upsertMemoryCustomUser(record: LocalAuthUserRecord): void {
+  const table = new Map(memoryCustomUsers.map((entry) => [entry.user_id.toLowerCase(), entry]));
+  table.set(record.user_id.toLowerCase(), record);
+  memoryCustomUsers = [...table.values()];
+}
+
+function buildLegacyCustomUserRecord(input: {
+  account_id: string;
+  user_id: string;
+  password: string;
+  role: AuthRole;
+  display_name: string;
+  avatar_url?: string | null;
+  auth_provider?: AuthProvider | null;
+}): LocalAuthUserRecord {
+  return {
+    account_id: input.account_id,
+    user_id: input.user_id,
+    password: input.password,
+    role: input.role,
+    display_name: input.display_name,
+    ...(input.avatar_url ? { avatar_url: input.avatar_url } : {}),
+    ...(input.auth_provider ? { auth_provider: input.auth_provider } : {}),
+    source: 'custom'
+  };
+}
+
+function mirrorLegacyCustomUser(record: LocalAuthUserRecord): void {
+  if (!shouldMirrorLegacyCustomUsers()) {
+    return;
+  }
+
+  upsertMemoryCustomUser(record);
+  persistMemoryCustomUsers();
 }
 
 async function ensureLegacyCustomUsersImported(): Promise<void> {
@@ -424,8 +487,10 @@ function listLocalUsers(): AuthenticatedAuthUserView[] {
   for (const user of baseUsers) {
     table.set(user.user_id.toLowerCase(), toAuthenticatedViewFromLocal(user));
   }
-  for (const user of memoryCustomUsers) {
-    table.set(user.user_id.toLowerCase(), toAuthenticatedViewFromLocal(user));
+  if (allowLegacyCustomUserFallback()) {
+    for (const user of memoryCustomUsers) {
+      table.set(user.user_id.toLowerCase(), toAuthenticatedViewFromLocal(user));
+    }
   }
   return [...table.values()];
 }
@@ -836,6 +901,16 @@ export async function registerAuthUser(input: {
       return { ok: false, error_code: 'USER_CREATE_FAILED', message: 'User could not be created.' };
     }
 
+    mirrorLegacyCustomUser(buildLegacyCustomUserRecord({
+      account_id: created.account_id,
+      user_id: created.user_id,
+      password,
+      role,
+      display_name: displayName,
+      ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
+      auth_provider: 'local'
+    }));
+
     const publicView = toAuthenticatedViewFromStored(created);
     return {
       ok: true,
@@ -918,6 +993,20 @@ export async function updateAuthUserProfile(input: {
       }
 
       const publicView = toAuthenticatedViewFromStored(updated);
+      if (shouldMirrorLegacyCustomUsers()) {
+        const mirrored = findMemoryCustomUser(normalizedUserId);
+        if (mirrored) {
+          mirrorLegacyCustomUser(buildLegacyCustomUserRecord({
+            account_id: updated.account_id,
+            user_id: updated.user_id,
+            password: mirrored.password,
+            role: updated.role,
+            display_name: updated.display_name,
+            avatar_url: updated.avatar_url ?? null,
+            auth_provider: updated.auth_provider ?? null
+          }));
+        }
+      }
       syncSessionSnapshots(publicView);
       return {
         ok: true,
@@ -1008,6 +1097,17 @@ export async function updateAuthUserPassword(input: {
       }
 
       const updated = await updateAuthUserPasswordRecord(normalizedUserId, input.new_password);
+      if (updated && shouldMirrorLegacyCustomUsers()) {
+        mirrorLegacyCustomUser(buildLegacyCustomUserRecord({
+          account_id: existing.account_id,
+          user_id: existing.user_id,
+          password: input.new_password,
+          role: existing.role,
+          display_name: existing.display_name,
+          avatar_url: existing.avatar_url ?? null,
+          auth_provider: existing.auth_provider ?? null
+        }));
+      }
       return updated
         ? { ok: true }
         : { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
@@ -1073,6 +1173,17 @@ export async function resetAuthUserPasswordWithCode(input: {
 
   if (existingCustom) {
     const updated = await updateAuthUserPasswordRecord(userId, newPassword);
+    if (updated && shouldMirrorLegacyCustomUsers()) {
+      mirrorLegacyCustomUser(buildLegacyCustomUserRecord({
+        account_id: existingCustom.account_id,
+        user_id: existingCustom.user_id,
+        password: newPassword,
+        role: existingCustom.role,
+        display_name: existingCustom.display_name,
+        avatar_url: existingCustom.avatar_url ?? null,
+        auth_provider: existingCustom.auth_provider ?? null
+      }));
+    }
     return updated
       ? { ok: true }
       : { ok: false, error_code: 'USER_NOT_FOUND', message: 'User not found.' };
