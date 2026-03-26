@@ -72,6 +72,24 @@ describe('rbac policy', () => {
     const adapterPromotionRead = await withHeaders(request(app).get('/v1/adapter/promotion-path'), 'viewer');
     expect(adapterPromotionRead.status).toBe(200);
 
+    const growthSummaryRead = await withHeaders(request(app).get('/v1/growth/summary'), 'viewer');
+    expect(growthSummaryRead.status).toBe(200);
+
+    const growthSeriesRead = await withHeaders(
+      request(app).get('/v1/growth/series').query({ metric: 'registrations', interval: 'day' }),
+      'viewer'
+    );
+    expect(growthSeriesRead.status).toBe(200);
+
+    const growthCohortsRead = await withHeaders(request(app).get('/v1/growth/cohorts'), 'viewer');
+    expect(growthCohortsRead.status).toBe(200);
+
+    const growthJourneyRead = await withHeaders(
+      request(app).get('/v1/growth/users/00000000-0000-0000-0000-000000000000/journey'),
+      'viewer'
+    );
+    expect(growthJourneyRead.status).toBe(404);
+
     const write = await withHeaders(request(app).post('/v1/rollout/rollback'), 'viewer');
     expect(write.status).toBe(403);
 
