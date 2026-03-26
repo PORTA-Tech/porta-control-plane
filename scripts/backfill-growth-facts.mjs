@@ -195,6 +195,15 @@ const existingDeviceLinkIdentities = new Set(
     .filter((event) => event.accountId && event.deviceId && event.orgId)
     .map((event) => buildDeviceLinkIdentity(event.accountId, event.deviceId, event.orgId))
 );
+const existingConsentIdentities = new Set(
+  existingGrowthEvents
+    .filter((event) => event.eventType === 'device_capture_consented')
+    .map((event) => {
+      const consentId = event.metadata?.consentId;
+      return typeof consentId === 'string' && consentId.trim().length > 0 ? consentId : null;
+    })
+    .filter((value) => value !== null)
+);
 
 const stats = {
   account_registered: createStats(),
@@ -335,6 +344,11 @@ for (const consent of consents) {
     continue;
   }
 
+  if (existingConsentIdentities.has(consent.consentId)) {
+    stats.device_capture_consented.existing += 1;
+    continue;
+  }
+
   await appendBackfillEvent({
     eventKey: `device_capture_consented:${consent.consentId}:${consent.consentVersion}:${occurredAtUtc}`,
     eventType: 'device_capture_consented',
@@ -351,6 +365,7 @@ for (const consent of consents) {
       telemetryLevel: consent.telemetryLevel ?? null
     }
   }, stats.device_capture_consented);
+  existingConsentIdentities.add(consent.consentId);
 }
 
 let activationEventsCreated = 0;
