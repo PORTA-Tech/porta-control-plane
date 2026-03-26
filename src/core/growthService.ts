@@ -72,7 +72,12 @@ async function isGrowthEligibleAccount(accountId: string, userId: string): Promi
   }
 
   const authUser = await findAuthUserRecordByUserId(userId);
-  return Boolean(authUser && authUser.account_id === accountId && authUser.source === 'custom' && authUser.status === 'active');
+  if (!authUser) {
+    // Production may temporarily have materialized account/device state before auth_users is backfilled.
+    return looksLikeSelfServeUserId(userId);
+  }
+
+  return Boolean(authUser.account_id === accountId && authUser.source === 'custom' && authUser.status === 'active');
 }
 
 export async function shouldTrackGrowthAccount(accountId: string, userId?: string | null): Promise<boolean> {

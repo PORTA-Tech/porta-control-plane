@@ -67,6 +67,10 @@ interface SeriesRange {
   to: Date;
 }
 
+function looksLikeSelfServeUserId(userId: string): boolean {
+  return userId.includes('@');
+}
+
 function normalizeTimestamp(input: string): string {
   const parsed = Date.parse(input);
   return Number.isNaN(parsed) ? new Date().toISOString() : new Date(parsed).toISOString();
@@ -175,15 +179,36 @@ function uniqueSortedDates(values: Iterable<string>): string[] {
 
 async function listGrowthAccounts(): Promise<GrowthAccountView[]> {
   if (getFleetPersistenceMode() === 'postgres') {
-    const authUsers = await listAuthUserRecords();
-    return authUsers
+    const [authUsers, accounts] = await Promise.all([
+      listAuthUserRecords(),
+      listAccountProfiles()
+    ]);
+
+    const accountById = new Map(accounts.map((account) => [account.accountId, account]));
+    const growthAccounts = authUsers
       .filter((user) => user.source === 'custom')
       .map((user) => ({
         accountId: user.account_id,
         userId: user.user_id,
         source: user.source,
-        registrationAtUtc: normalizeTimestamp(user.created_at)
-      }))
+        registrationAtUtc: normalizeTimestamp(accountById.get(user.account_id)?.createdAt ?? user.created_at)
+      }));
+
+    const seenAccountIds = new Set(growthAccounts.map((account) => account.accountId));
+    for (const account of accounts) {
+      if (seenAccountIds.has(account.accountId) || !looksLikeSelfServeUserId(account.primaryEmail)) {
+        continue;
+      }
+
+      growthAccounts.push({
+        accountId: account.accountId,
+        userId: account.primaryEmail,
+        source: 'custom',
+        registrationAtUtc: normalizeTimestamp(account.createdAt)
+      });
+    }
+
+    return growthAccounts
       .sort((left, right) => Date.parse(left.registrationAtUtc) - Date.parse(right.registrationAtUtc));
   }
 

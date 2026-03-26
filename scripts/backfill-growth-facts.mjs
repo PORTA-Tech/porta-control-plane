@@ -110,6 +110,10 @@ function createDeviceLinkStats() {
   };
 }
 
+function looksLikeSelfServeUserId(userId) {
+  return typeof userId === 'string' && userId.includes('@');
+}
+
 function buildMembershipKey(accountId, orgId) {
   return `${accountId}|${orgId}`;
 }
@@ -166,8 +170,21 @@ const [
 ]);
 
 const customUsers = authUsers.filter((user) => user.source === 'custom');
-const customUserByAccountId = new Map(customUsers.map((user) => [user.account_id, user]));
 const accountById = new Map(accounts.map((account) => [account.accountId, account]));
+const growthUserByAccountId = new Map(customUsers.map((user) => [user.account_id, {
+  account_id: user.account_id,
+  user_id: user.user_id
+}]));
+for (const account of accounts) {
+  if (growthUserByAccountId.has(account.accountId) || !looksLikeSelfServeUserId(account.primaryEmail)) {
+    continue;
+  }
+
+  growthUserByAccountId.set(account.accountId, {
+    account_id: account.accountId,
+    user_id: account.primaryEmail
+  });
+}
 const membershipByAccountOrg = new Map(
   memberships.map((membership) => [buildMembershipKey(membership.accountId, membership.orgId), membership])
 );
@@ -203,7 +220,7 @@ async function appendBackfillEvent(input, eventStats) {
 
 for (const account of accounts) {
   stats.account_registered.discovered += 1;
-  const authUser = customUserByAccountId.get(account.accountId);
+  const authUser = growthUserByAccountId.get(account.accountId);
   const occurredAtUtc = normalizeTimestamp(account.createdAt);
   if (!authUser || !occurredAtUtc) {
     stats.account_registered.skippedMissingData += 1;
@@ -225,7 +242,7 @@ for (const account of accounts) {
 
 for (const membership of memberships) {
   stats.membership_joined.discovered += 1;
-  const authUser = customUserByAccountId.get(membership.accountId);
+  const authUser = growthUserByAccountId.get(membership.accountId);
   const occurredAtUtc = normalizeTimestamp(membership.joinedAt);
   if (!authUser || !occurredAtUtc) {
     stats.membership_joined.skippedMissingData += 1;
@@ -258,7 +275,7 @@ for (const device of devices) {
     continue;
   }
 
-  const authUser = customUserByAccountId.get(accountId);
+  const authUser = growthUserByAccountId.get(accountId);
   const account = accountById.get(accountId);
   const membership = membershipByAccountOrg.get(buildMembershipKey(accountId, orgId));
   if (!authUser || !account || !membership) {
@@ -303,7 +320,7 @@ for (const device of devices) {
 
 for (const consent of consents) {
   stats.device_capture_consented.discovered += 1;
-  const authUser = consent.accountId ? customUserByAccountId.get(consent.accountId) : null;
+  const authUser = consent.accountId ? growthUserByAccountId.get(consent.accountId) : null;
   const occurredAtUtc = normalizeTimestamp(consent.consentedAt);
   if (
     !authUser
@@ -337,11 +354,11 @@ for (const consent of consents) {
 }
 
 let activationEventsCreated = 0;
-for (const authUser of customUsers) {
-  const activationKey = `account_activated:${authUser.account_id}`;
+for (const growthUser of growthUserByAccountId.values()) {
+  const activationKey = `account_activated:${growthUser.account_id}`;
   const hadActivation = existingEventKeys.has(activationKey);
   if (!dryRun) {
-    const activation = await maybeActivateAccount(authUser.account_id);
+    const activation = await maybeActivateAccount(growthUser.account_id);
     if (!hadActivation && activation) {
       existingEventKeys.add(activationKey);
       activationEventsCreated += 1;
@@ -352,12 +369,12 @@ for (const authUser of customUsers) {
 emit({
   dryRun,
   persistenceMode,
-  customUsers: customUsers.length,
+  customUsers: growthUserByAccountId.size,
   accountProfiles: accounts.length,
   memberships: memberships.length,
   devices: devices.length,
   consents: consents.length,
-  activationEvaluated: customUsers.length,
+  activationEvaluated: growthUserByAccountId.size,
   activationEventsCreated,
   events: stats,
   retentionBackfilled: false
