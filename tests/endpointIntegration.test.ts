@@ -4,11 +4,13 @@ import * as supertest from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
+import { clearGrowthEventStoreForTests, listGrowthEventsForAccount } from '../src/store/growthEventStore.js';
 import { loadRuntimeState, resetRuntimeStateForTests, runtimeState } from '../src/store/runtimeState.js';
 import { appendLedgerRecord } from '../src/core/auditLedger.js';
 import { clearMachineSummaryStoreForTests } from '../src/store/machineSummaryStore.js';
 import { clearMachineActionStoreForTests } from '../src/store/machineActionStore.js';
 import { clearAccountStoreForTests, upsertAccountProfile } from '../src/store/accountStore.js';
+import { clearAccountActiveDayStoreForTests, listAccountActiveDaysForAccount } from '../src/store/accountActiveDayStore.js';
 import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests, getDeviceProfile } from '../src/store/deviceStore.js';
@@ -27,12 +29,14 @@ function withAdminHeaders(req: supertest.Test): supertest.Test {
 
 describe('endpoint integration', () => {
   beforeEach(() => {
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();
     clearMachineSummaryStoreForTests();
     clearMachineActionStoreForTests();
     clearAccountStoreForTests();
+    clearGrowthEventStoreForTests();
+    clearAccountActiveDayStoreForTests();
     clearOrganizationStoreForTests();
     clearMembershipStoreForTests();
     clearDeviceStoreForTests();
@@ -149,6 +153,14 @@ describe('endpoint integration', () => {
     expect(device?.machineName).toBe('HP-Laptop');
     expect(device?.agentVersion).toBe('1.0.0');
 
+    const growthEvents = await listGrowthEventsForAccount('34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f');
+    expect(growthEvents.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(['device_linked', 'account_active_day'])
+    );
+    const activeDays = await listAccountActiveDaysForAccount('34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f');
+    expect(activeDays).toHaveLength(1);
+    expect(activeDays[0]?.activityDate).toBe(activityUtc.slice(0, 10));
+
     const compatibilityResponse = await withOperatorHeaders(request(app).get('/v1/nodes/snapshot'));
     expect(compatibilityResponse.status).toBe(200);
     expect(compatibilityResponse.body).toHaveLength(1);
@@ -258,6 +270,125 @@ describe('endpoint integration', () => {
     expect(device?.orgId).toBe('9be62dd8-ea7b-47ca-b818-e7c8f8477d0b');
     expect(device?.machineName).toBe('machine-a');
     expect(device?.agentVersion).toBe('unknown');
+  });
+
+  it('activates an account only after trusted link, consent, and machine activity are observed', async () => {
+    const accountId = '34f55d95-d7c0-4d2e-86f5-c2a06dbf2f9f';
+    const orgId = '9be62dd8-ea7b-47ca-b818-e7c8f8477d0b';
+    const deviceId = 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4';
+
+    await upsertAccountProfile({
+      accountId,
+      displayName: 'Alice Porter',
+      primaryEmail: 'alice@porta.test',
+      emailVerified: true,
+      avatarUrl: null,
+      status: 'active',
+      authProvider: 'local',
+      lastLoginAt: '2026-03-11T10:00:00.000Z',
+      createdAt: '2026-03-11T09:00:00.000Z',
+      updatedAt: '2026-03-11T10:00:00.000Z'
+    });
+    await upsertOrganizationProfile({
+      orgId,
+      orgName: 'PORTA Labs',
+      orgSlug: 'porta-labs',
+      planTier: 'pro',
+      billingAccountId: 'billing-1',
+      createdAt: '2026-03-11T09:00:00.000Z',
+      updatedAt: '2026-03-11T09:00:00.000Z'
+    });
+    await upsertMembership({
+      membershipId: '8d2d768b-d6e7-4137-a2ca-e08063eff520',
+      accountId,
+      orgId,
+      role: 'admin',
+      status: 'active',
+      invitedAt: null,
+      joinedAt: '2026-03-11T09:10:00.000Z',
+      invitedByAccountId: null,
+      createdAt: '2026-03-11T09:10:00.000Z',
+      updatedAt: '2026-03-11T09:10:00.000Z'
+    });
+
+    const registerResponse = await request(app).post('/api/device/register').send({
+      deviceId,
+      machineName: 'HP-Laptop',
+      deviceDisplayName: 'Alice Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.0'
+    });
+    expect(registerResponse.status).toBe(200);
+
+    const linkResponse = await request(app).post('/api/device/link-account').send({
+      deviceId,
+      accountId,
+      orgId
+    });
+    expect(linkResponse.status).toBe(200);
+
+    const consentResponse = await request(app).post('/api/device/register').send({
+      deviceId,
+      machineName: 'HP-Laptop',
+      deviceDisplayName: 'Alice Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.1',
+      accountId,
+      orgId,
+      deviceCaptureConsentState: 'accepted',
+      deviceCaptureConsentVersion: '1.0.0',
+      deviceCaptureConsentedAt: '2026-03-11T12:05:00.000Z',
+      deviceCaptureTelemetryLevel: 'enhanced'
+    });
+    expect(consentResponse.status).toBe(200);
+
+    const ingest = await request(app).post('/api/agent/machine-summary').send({
+      deviceId,
+      accountId,
+      orgId,
+      machineId: 'machine-activation',
+      machineName: 'HP-Laptop',
+      userName: 'DOMAIN\\alice',
+      agentVersion: '1.0.1',
+      schemaVersion: '1.0.0',
+      policyVersion: 'policy-v2',
+      reportedAtUtc: '2026-03-11T12:06:00.000Z',
+      agentRunning: true,
+      userSessionConnected: true,
+      activityDetected: true,
+      lastActivityUtc: '2026-03-11T12:05:30.000Z',
+      userAgentHeartbeatUtc: '2026-03-11T12:05:50.000Z',
+      captureContext: 'UserSession',
+      keyboardSignalActive: true,
+      mouseSignalActive: true,
+      ownershipWarning: null,
+      captureFailureReason: null,
+      lastError: null,
+      backendConnected: true,
+      localApiAuthReady: true,
+      dbMigrationFailed: false,
+      taskContinuityScore: 0.88,
+      taskContinuitySeconds: 2400,
+      continuityState: 'keep',
+      deepWorkActive: true,
+      overloadLikelihood: 0.34,
+      overloadActive: false,
+      breakNeeded: false,
+      breakPendingAction: null,
+      breakPendingReasonCode: null,
+      calibrationStage: 'calibrated',
+      trustTier: 'high',
+      modelConfidence: 0.87,
+      signalQualityScore: 0.91,
+      partialData: false,
+      missingMajorChannels: []
+    });
+    expect(ingest.status).toBe(202);
+
+    const growthEvents = await listGrowthEventsForAccount(accountId);
+    expect(growthEvents.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(['device_linked', 'device_capture_consented', 'account_active_day', 'account_activated'])
+    );
   });
 
   it('backfills an unlinked device row for machine summaries without an account link', async () => {

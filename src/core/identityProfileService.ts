@@ -18,6 +18,7 @@ import { getDeviceProfile, listDeviceProfilesForAccount, listDeviceProfilesForOr
 import { listMembershipsForAccount, listMembershipsForOrganization, upsertMembership } from '../store/membershipStore.js';
 import { listConsentRecordsForAccount, listConsentRecordsForOrganization, upsertConsentRecord } from '../store/consentRecordStore.js';
 import { readAuthUserIdentity, type AuthUserIdentityView } from './authSessionStore.js';
+import { maybeActivateAccount, recordLifecycleGrowthEvent } from './growthService.js';
 
 export interface AccountMembershipView {
   membership: Membership;
@@ -262,6 +263,20 @@ async function ensureAutoProvisionedWorkspace(
 
   await upsertOrganizationProfile(organization);
   await upsertMembership(membership);
+  await recordLifecycleGrowthEvent({
+    eventKey: `membership_joined:${membership.membershipId}`,
+    eventType: 'membership_joined',
+    accountId: account.accountId,
+    userId: account.primaryEmail,
+    orgId: membership.orgId,
+    occurredAtUtc: membership.joinedAt ?? membership.createdAt ?? membership.updatedAt,
+    source: 'auto_workspace_provision',
+    metadata: {
+      membershipId: membership.membershipId,
+      membershipRole: membership.role
+    }
+  });
+  await maybeActivateAccount(account.accountId);
 }
 
 async function syncDeviceCaptureConsent(input: {
@@ -301,6 +316,24 @@ async function syncDeviceCaptureConsent(input: {
   };
 
   await upsertConsentRecord(record);
+  if (record.consentState === 'accepted') {
+    await recordLifecycleGrowthEvent({
+      eventKey: `device_capture_consented:${record.consentId}:${record.consentVersion}:${record.consentedAt}`,
+      eventType: 'device_capture_consented',
+      accountId: input.accountId,
+      userId: account.primaryEmail,
+      deviceId: input.deviceId,
+      orgId: input.orgId,
+      occurredAtUtc: record.consentedAt,
+      source: 'device_capture_consent',
+      metadata: {
+        consentId: record.consentId,
+        consentVersion: record.consentVersion,
+        telemetryLevel: record.telemetryLevel ?? null
+      }
+    });
+    await maybeActivateAccount(input.accountId);
+  }
   return record;
 }
 
@@ -434,6 +467,26 @@ export async function reconcileDeviceProfileFromTelemetry(input: {
   };
 
   await upsertDeviceProfile(profile);
+  if (canLink && accountId && orgId) {
+    const account = await getAccountProfile(accountId);
+    if (account) {
+      await recordLifecycleGrowthEvent({
+        eventKey: `device_linked:${deviceId}:${accountId}:${orgId}:${timestamp}`,
+        eventType: 'device_linked',
+        accountId,
+        userId: account.primaryEmail,
+        deviceId,
+        orgId,
+        occurredAtUtc: timestamp,
+        source: 'telemetry_backfill',
+        metadata: {
+          machineName: profile.machineName,
+          platform: profile.platform
+        }
+      });
+      await maybeActivateAccount(accountId);
+    }
+  }
   return profile;
 }
 
@@ -546,6 +599,9 @@ export async function linkDeviceIdentity(request: DeviceAccountLinkRequest): Pro
   }
 
   const timestamp = nowIso();
+  const becameLinked = device.status !== 'active'
+    || device.currentAccountId !== request.accountId
+    || device.orgId !== request.orgId;
   const updated: DeviceProfile = {
     ...device,
     status: 'active',
@@ -556,6 +612,23 @@ export async function linkDeviceIdentity(request: DeviceAccountLinkRequest): Pro
   };
 
   await upsertDeviceProfile(updated);
+  if (becameLinked) {
+    await recordLifecycleGrowthEvent({
+      eventKey: `device_linked:${updated.deviceId}:${request.accountId}:${request.orgId}:${timestamp}`,
+      eventType: 'device_linked',
+      accountId: request.accountId,
+      userId: account.primaryEmail,
+      deviceId: updated.deviceId,
+      orgId: request.orgId,
+      occurredAtUtc: timestamp,
+      source: 'device_link',
+      metadata: {
+        machineName: updated.machineName,
+        platform: updated.platform
+      }
+    });
+    await maybeActivateAccount(request.accountId);
+  }
   return success(updated);
 }
 

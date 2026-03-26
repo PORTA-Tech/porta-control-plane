@@ -150,8 +150,9 @@ describe('growth service', () => {
       source: 'telemetry'
     });
 
-    expect(recorded.activeDay.activityDate).toBe('2026-03-11');
-    expect(recorded.event.eventType).toBe('account_active_day');
+    expect(recorded).not.toBeNull();
+    expect(recorded?.activeDay.activityDate).toBe('2026-03-11');
+    expect(recorded?.event.eventType).toBe('account_active_day');
 
     const activated = await maybeActivateAccount(account.accountId);
     expect(activated?.eventType).toBe('account_activated');

@@ -19,6 +19,7 @@ import {
   generateSignupCode,
   listActiveAccessCodes
 } from '../../core/authAccessCodeStore.js';
+import { maybeActivateAccount, recordLifecycleGrowthEvent } from '../../core/growthService.js';
 import { touchAccountLastLogin } from '../../store/accountStore.js';
 
 function parseBearerToken(header: string | undefined): string | null {
@@ -236,6 +237,19 @@ export function createAuthController(): Router {
         });
         return;
       }
+
+      await recordLifecycleGrowthEvent({
+        eventKey: `account_registered:${materialized.account.accountId}`,
+        eventType: 'account_registered',
+        accountId: materialized.account.accountId,
+        userId: materialized.account.primaryEmail,
+        occurredAtUtc: materialized.account.createdAt,
+        source: 'auth_register',
+        metadata: {
+          role: created.user.role
+        }
+      });
+      await maybeActivateAccount(materialized.account.accountId);
 
       res.status(201).json({
         ok: true,

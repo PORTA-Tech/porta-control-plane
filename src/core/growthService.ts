@@ -75,6 +75,15 @@ async function isGrowthEligibleAccount(accountId: string, userId: string): Promi
   return Boolean(authUser && authUser.account_id === accountId && authUser.source === 'custom' && authUser.status === 'active');
 }
 
+export async function shouldTrackGrowthAccount(accountId: string, userId?: string | null): Promise<boolean> {
+  const resolvedUserId = userId ?? (await getAccountProfile(accountId))?.primaryEmail ?? '';
+  if (!resolvedUserId) {
+    return false;
+  }
+
+  return isGrowthEligibleAccount(accountId, resolvedUserId);
+}
+
 export async function recordGrowthEvent(input: AppendGrowthEventInput): Promise<GrowthEventRecord> {
   return appendGrowthEvent({
     ...input,
@@ -82,12 +91,41 @@ export async function recordGrowthEvent(input: AppendGrowthEventInput): Promise<
   });
 }
 
+export async function recordLifecycleGrowthEvent(input: AppendGrowthEventInput & {
+  accountId: string;
+  userId?: string | null;
+}): Promise<GrowthEventRecord | null> {
+  const account = await getAccountProfile(input.accountId);
+  if (!account) {
+    return null;
+  }
+
+  const userId = input.userId ?? account.primaryEmail;
+  if (!(await shouldTrackGrowthAccount(input.accountId, userId))) {
+    return null;
+  }
+
+  return recordGrowthEvent({
+    ...input,
+    userId
+  });
+}
+
 export async function recordAccountActiveDay(
   input: RecordAccountActiveDayInput
-): Promise<{ activeDay: AccountActiveDayRecord; event: GrowthEventRecord }> {
+): Promise<{ activeDay: AccountActiveDayRecord; event: GrowthEventRecord } | null> {
   const occurredAtUtc = normalizeTimestamp(input.activityAtUtc);
   const activityDate = activityDateFromTimestamp(occurredAtUtc);
   const account = await getAccountProfile(input.accountId);
+  if (!account) {
+    return null;
+  }
+
+  const userId = input.userId ?? account.primaryEmail;
+  if (!(await shouldTrackGrowthAccount(input.accountId, userId))) {
+    return null;
+  }
+
   const activeDay = await upsertAccountActiveDay({
     accountId: input.accountId,
     activityDate,
@@ -102,7 +140,7 @@ export async function recordAccountActiveDay(
     eventKey: `account_active_day:${input.accountId}:${activityDate}`,
     eventType: 'account_active_day',
     accountId: input.accountId,
-    userId: input.userId ?? account?.primaryEmail ?? null,
+    userId,
     orgId: input.orgId ?? null,
     machineId: input.machineId ?? null,
     occurredAtUtc: activeDay.lastActivityAtUtc,

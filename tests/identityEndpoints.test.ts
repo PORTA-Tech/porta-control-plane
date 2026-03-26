@@ -4,8 +4,10 @@ import * as supertest from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
+import { clearGrowthEventStoreForTests, listGrowthEventsForAccount } from '../src/store/growthEventStore.js';
 import { loadRuntimeState, resetRuntimeStateForTests } from '../src/store/runtimeState.js';
 import { clearAccountStoreForTests, getAccountProfile } from '../src/store/accountStore.js';
+import { clearAccountActiveDayStoreForTests } from '../src/store/accountActiveDayStore.js';
 import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests, upsertDeviceProfile } from '../src/store/deviceStore.js';
@@ -28,10 +30,12 @@ async function loginAdmin(): Promise<string> {
 
 describe('identity endpoints', () => {
   beforeEach(() => {
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();
     clearAccountStoreForTests();
+    clearGrowthEventStoreForTests();
+    clearAccountActiveDayStoreForTests();
     clearOrganizationStoreForTests();
     clearMembershipStoreForTests();
     clearDeviceStoreForTests();
@@ -294,6 +298,11 @@ describe('identity endpoints', () => {
     expect(accountResponse.body.memberships[0]?.organization?.orgName).toContain('Workspace');
     expect(accountResponse.body.consents).toHaveLength(1);
     expect(accountResponse.body.consents[0]?.scope).toBe('account_legal');
+
+    const growthEvents = await listGrowthEventsForAccount(accountId);
+    expect(growthEvents.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(['account_registered', 'membership_joined'])
+    );
   });
 
   it('auto-provisions a workspace for self-registered users on /v1/me', async () => {

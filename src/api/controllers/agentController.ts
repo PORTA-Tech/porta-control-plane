@@ -4,6 +4,7 @@ import { runtimeState } from '../../store/runtimeState.js';
 import { listAgentPresence, upsertAgentPresence, upsertPresenceFromTelemetryBatch } from '../../store/agentPresenceStore.js';
 import { appendMachineActionEvent } from '../../store/machineActionStore.js';
 import { upsertMachineSummary } from '../../store/machineSummaryStore.js';
+import { maybeActivateAccount, recordAccountActiveDay } from '../../core/growthService.js';
 import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileService.js';
 
 interface AgentStatusPayload {
@@ -153,7 +154,7 @@ export function createAgentController(): Router {
         return;
       }
 
-      await reconcileDeviceProfileFromTelemetry({
+      const reconciledDevice = await reconcileDeviceProfileFromTelemetry({
         deviceId: payload.deviceId ?? null,
         machineName: payload.machineName,
         agentVersion: payload.agentVersion,
@@ -162,6 +163,27 @@ export function createAgentController(): Router {
         orgId: payload.orgId ?? null
       });
       await upsertMachineSummary(payload);
+      if (reconciledDevice
+        && reconciledDevice.status === 'active'
+        && reconciledDevice.currentAccountId
+        && (payload.activityDetected || Boolean(payload.lastActivityUtc)))
+      {
+        const activeDay = await recordAccountActiveDay({
+          accountId: reconciledDevice.currentAccountId,
+          activityAtUtc: payload.lastActivityUtc ?? payload.reportedAtUtc,
+          machineId: payload.machineId,
+          orgId: reconciledDevice.orgId ?? payload.orgId ?? null,
+          source: 'machine_summary',
+          metadata: {
+            activityDetected: payload.activityDetected,
+            trustTier: payload.trustTier,
+            continuityState: payload.continuityState
+          }
+        });
+        if (activeDay) {
+          await maybeActivateAccount(reconciledDevice.currentAccountId);
+        }
+      }
       res.status(202).json({ accepted: true, machineId: payload.machineId, reportedAtUtc: payload.reportedAtUtc });
     } catch (error) {
       next(error);

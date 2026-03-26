@@ -4,8 +4,10 @@ import * as supertest from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { resetSLOGateStateForTests } from '../src/core/sloEvaluator.js';
+import { clearGrowthEventStoreForTests, listGrowthEventsForAccount } from '../src/store/growthEventStore.js';
 import { loadRuntimeState, resetRuntimeStateForTests } from '../src/store/runtimeState.js';
 import { clearAccountStoreForTests, upsertAccountProfile } from '../src/store/accountStore.js';
+import { clearAccountActiveDayStoreForTests } from '../src/store/accountActiveDayStore.js';
 import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests } from '../src/store/deviceStore.js';
@@ -17,10 +19,12 @@ const app = createApp();
 
 describe('device identity endpoints', () => {
   beforeEach(() => {
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();
     clearAccountStoreForTests();
+    clearGrowthEventStoreForTests();
+    clearAccountActiveDayStoreForTests();
     clearOrganizationStoreForTests();
     clearMembershipStoreForTests();
     clearDeviceStoreForTests();
@@ -256,5 +260,83 @@ describe('device identity endpoints', () => {
     expect(consentRecords[0]?.consentState).toBe('revoked');
     expect(consentRecords[0]?.accountId).toBe('2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b');
     expect(consentRecords[0]?.orgId).toBe('6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1');
+  });
+
+  it('records device link and accepted capture consent as growth events', async () => {
+    const accountId = '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b';
+    const orgId = '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1';
+    const deviceId = 'd93d90c1-a120-4c72-89ee-5c7d16efea31';
+
+    await upsertAccountProfile({
+      accountId,
+      displayName: 'Alice',
+      primaryEmail: 'alice@example.com',
+      emailVerified: true,
+      avatarUrl: null,
+      status: 'active',
+      authProvider: 'local',
+      lastLoginAt: null,
+      createdAt: '2026-03-11T12:00:00.000Z',
+      updatedAt: '2026-03-11T12:00:00.000Z'
+    });
+
+    await upsertOrganizationProfile({
+      orgId,
+      orgName: 'PORTA Labs',
+      orgSlug: 'porta-labs',
+      planTier: 'pro',
+      billingAccountId: 'billing-1',
+      createdAt: '2026-03-11T12:00:00.000Z',
+      updatedAt: '2026-03-11T12:00:00.000Z'
+    });
+
+    await upsertMembership({
+      membershipId: 'f86b5272-1f29-4a52-a7af-8382d800d448',
+      accountId,
+      orgId,
+      role: 'member',
+      status: 'active',
+      invitedAt: null,
+      joinedAt: '2026-03-11T12:01:00.000Z',
+      invitedByAccountId: null,
+      createdAt: '2026-03-11T12:01:00.000Z',
+      updatedAt: '2026-03-11T12:01:00.000Z'
+    });
+
+    const registerResponse = await request(app).post('/api/device/register').send({
+      deviceId,
+      machineName: 'ALICE-BOX',
+      deviceDisplayName: 'Alice Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.0'
+    });
+    expect(registerResponse.status).toBe(200);
+
+    const linkResponse = await request(app).post('/api/device/link-account').send({
+      deviceId,
+      accountId,
+      orgId
+    });
+    expect(linkResponse.status).toBe(200);
+
+    const consentResponse = await request(app).post('/api/device/register').send({
+      deviceId,
+      machineName: 'ALICE-BOX',
+      deviceDisplayName: 'Alice Workstation',
+      platform: 'windows',
+      agentVersion: '1.0.1',
+      accountId,
+      orgId,
+      deviceCaptureConsentState: 'accepted',
+      deviceCaptureConsentVersion: '1.0.0',
+      deviceCaptureConsentedAt: '2026-03-11T12:05:00.000Z',
+      deviceCaptureTelemetryLevel: 'enhanced'
+    });
+    expect(consentResponse.status).toBe(200);
+
+    const growthEvents = await listGrowthEventsForAccount(accountId);
+    expect(growthEvents.map((event) => event.eventType)).toEqual(
+      expect.arrayContaining(['device_linked', 'device_capture_consented'])
+    );
   });
 });
