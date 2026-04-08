@@ -41,6 +41,10 @@ function isMachineSummaryReport(value: unknown): value is MachineSummaryReport {
   }
 
   const row = value as Record<string, unknown>;
+  // Compatibility validation:
+  // taskContinuitySeconds/taskContinuityScore and overloadLikelihood are legacy
+  // transport fields from the Windows client. The control plane still accepts
+  // them until the shared contract moves to focus-episode and pressure naming.
   return (
     isNonEmptyString(row.machineId) &&
     isNonEmptyString(row.machineName) &&
@@ -93,6 +97,9 @@ function isMachineActionEvent(value: unknown): value is MachineActionEvent {
   }
 
   const row = value as Record<string, unknown>;
+  // Compatibility validation:
+  // action may still be a legacy transport name such as stretch_break_suggestion
+  // or break_suggestion while product-facing naming migrates to short/long break.
   return (
     isNonEmptyString(row.machineId) &&
     isNonEmptyString(row.userName) &&

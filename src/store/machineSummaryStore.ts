@@ -4,6 +4,9 @@ import { ensureFleetPersistenceReady, getFleetPersistenceMode, getFleetPool } fr
 const machineSummaryMemoryStore = new Map<string, MachineSummaryReport>();
 
 export async function upsertMachineSummary(report: MachineSummaryReport): Promise<void> {
+  // Stored payload_json intentionally preserves the compatibility transport shape
+  // received from the Windows client until focus-episode, pressure, and break
+  // overlay fields replace the legacy continuity/overload/break names.
   if (getFleetPersistenceMode() === 'memory') {
     machineSummaryMemoryStore.set(report.machineId, report);
     return;

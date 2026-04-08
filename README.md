@@ -142,6 +142,40 @@ Artifacts are stored in `.data/`:
 - `docs/step15-observability-alerts.md`
 - `docs/step16-hardening-rollout.md`
 
+## Behavior Glossary
+
+The control plane must treat these product meanings as canonical even where the Windows client still sends older compatibility field names:
+
+- `focus episode`
+  - The durable unit of user-facing focus time.
+  - It is not the same thing as current foreground-app age.
+- `pressure`
+  - The expressive user-facing overload score.
+- `overload active`
+  - The conservative stabilized state used for interventions and system actions.
+- `short break`
+  - The lighter break intervention with shorter recovery.
+- `long break`
+  - The stronger break intervention with longer recovery.
+- `limited`
+  - Usable truth is still available, but certainty is reduced by missing channels, trust limits, or runtime constraints.
+- `updating`
+  - Last known usable value is being shown while fresh analyzed state catches up.
+
+## Legacy Migration Map
+
+The control plane currently receives and stores compatibility transport from `porta-agent-windows-x64`. These mappings must remain explicit until the shared contract is upgraded end to end:
+
+- `taskContinuitySeconds` -> focus-episode duration
+- `taskContinuityScore` -> focus-episode quality compatibility signal
+- `overloadLikelihood` -> pressure
+- `overloadActive` -> overload active
+- `stretch_break_suggestion` -> short break
+- `break_suggestion` -> long break
+- `breakPendingAction` -> break readiness / overlay routing compatibility field
+
+The control plane should preserve backward compatibility for transport and storage, but operator-facing copy and future views should use the canonical names above.
+
 ## Boundaries
 
 This repo does not own:
