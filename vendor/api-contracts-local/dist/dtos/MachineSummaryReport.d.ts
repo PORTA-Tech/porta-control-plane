@@ -33,6 +33,9 @@ export interface MachineSummaryReport {
     backendConnected: boolean;
     localApiAuthReady: boolean;
     dbMigrationFailed: boolean;
+    focusEpisodeQuality: number;
+    focusEpisodeSeconds: number;
+    focusEpisodeState: ContinuityState;
     taskContinuityScore: number;
     taskContinuitySeconds: number;
     continuityState: ContinuityState;

@@ -3,12 +3,36 @@ import { ensureFleetPersistenceReady, getFleetPersistenceMode, getFleetPool } fr
 
 const machineSummaryMemoryStore = new Map<string, MachineSummaryReport>();
 
+function withCanonicalFocusEpisode(report: MachineSummaryReport): MachineSummaryReport {
+  const focusEpisodeQuality = Number.isFinite(report.focusEpisodeQuality)
+    ? report.focusEpisodeQuality
+    : report.taskContinuityScore;
+  const focusEpisodeSeconds = Number.isFinite(report.focusEpisodeSeconds)
+    ? report.focusEpisodeSeconds
+    : report.taskContinuitySeconds;
+  const focusEpisodeState = (typeof report.focusEpisodeState === 'string' && report.focusEpisodeState.trim().length > 0)
+    ? report.focusEpisodeState
+    : report.continuityState;
+
+  return {
+    ...report,
+    focusEpisodeQuality,
+    focusEpisodeSeconds,
+    focusEpisodeState,
+    taskContinuityScore: Number.isFinite(report.taskContinuityScore) ? report.taskContinuityScore : focusEpisodeQuality,
+    taskContinuitySeconds: Number.isFinite(report.taskContinuitySeconds) ? report.taskContinuitySeconds : focusEpisodeSeconds,
+    continuityState: (typeof report.continuityState === 'string' && report.continuityState.trim().length > 0)
+      ? report.continuityState
+      : focusEpisodeState
+  };
+}
+
 export async function upsertMachineSummary(report: MachineSummaryReport): Promise<void> {
-  // Stored payload_json intentionally preserves the compatibility transport shape
-  // received from the Windows client until focus-episode, pressure, and break
-  // overlay fields replace the legacy continuity/overload/break names.
+  // Stored payload_json preserves the canonical focus-episode fields and keeps
+  // the legacy continuity aliases alongside them for migration safety.
+  const normalized = withCanonicalFocusEpisode(report);
   if (getFleetPersistenceMode() === 'memory') {
-    machineSummaryMemoryStore.set(report.machineId, report);
+    machineSummaryMemoryStore.set(normalized.machineId, normalized);
     return;
   }
 
@@ -47,15 +71,15 @@ export async function upsertMachineSummary(report: MachineSummaryReport): Promis
         updated_at_utc = NOW();
     `,
     [
-      report.machineId,
-      report.machineName,
-      report.userName,
-      report.reportedAtUtc,
-      report.trustTier,
-      report.calibrationStage,
-      report.captureContext,
-      report.lastActivityUtc ?? null,
-      JSON.stringify(report)
+      normalized.machineId,
+      normalized.machineName,
+      normalized.userName,
+      normalized.reportedAtUtc,
+      normalized.trustTier,
+      normalized.calibrationStage,
+      normalized.captureContext,
+      normalized.lastActivityUtc ?? null,
+      JSON.stringify(normalized)
     ]
   );
 }
@@ -81,7 +105,8 @@ export async function getMachineSummary(machineId: string): Promise<MachineSumma
     [machineId]
   );
 
-  return result.rows[0]?.payload_json ?? null;
+  const row = result.rows[0]?.payload_json ?? null;
+  return row ? withCanonicalFocusEpisode(row) : null;
 }
 
 export async function listMachineSummaries(): Promise<MachineSummaryReport[]> {
@@ -107,7 +132,7 @@ export async function listMachineSummaries(): Promise<MachineSummaryReport[]> {
     `
   );
 
-  return result.rows.map((row: { payload_json: MachineSummaryReport }) => row.payload_json);
+  return result.rows.map((row: { payload_json: MachineSummaryReport }) => withCanonicalFocusEpisode(row.payload_json));
 }
 
 export function clearMachineSummaryStoreForTests(): void {

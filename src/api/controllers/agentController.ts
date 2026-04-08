@@ -35,60 +35,154 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-function isMachineSummaryReport(value: unknown): value is MachineSummaryReport {
+function normalizeOptionalString(value: unknown): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeContinuityState(value: unknown): MachineSummaryReport['continuityState'] | null {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case 'keep':
+      return 'keep';
+    case 'pause':
+      return 'pause';
+    case 'decay':
+      return 'decay';
+    case 'reset':
+      return 'reset';
+    default:
+      return null;
+  }
+}
+
+function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | null {
   if (!value || typeof value !== 'object') {
-    return false;
+    return null;
   }
 
   const row = value as Record<string, unknown>;
-  // Compatibility validation:
-  // taskContinuitySeconds/taskContinuityScore and overloadLikelihood are legacy
-  // transport fields from the Windows client. The control plane still accepts
-  // them until the shared contract moves to focus-episode and pressure naming.
-  return (
-    isNonEmptyString(row.machineId) &&
-    isNonEmptyString(row.machineName) &&
-    isNonEmptyString(row.userName) &&
-    isNonEmptyString(row.agentVersion) &&
-    isNonEmptyString(row.schemaVersion) &&
-    isNonEmptyString(row.policyVersion) &&
-    isNonEmptyString(row.reportedAtUtc) &&
-    isBoolean(row.agentRunning) &&
-    isBoolean(row.userSessionConnected) &&
-    isBoolean(row.activityDetected) &&
-    isOptionalString(row.lastActivityUtc) &&
-    isOptionalString(row.userAgentHeartbeatUtc) &&
-    (row.userAgentHeartbeatAgeSeconds === null || row.userAgentHeartbeatAgeSeconds === undefined || isFiniteNumber(row.userAgentHeartbeatAgeSeconds)) &&
-    (row.lastAcceptedInputAgeSeconds === null || row.lastAcceptedInputAgeSeconds === undefined || isFiniteNumber(row.lastAcceptedInputAgeSeconds)) &&
-    isOptionalString(row.userAgentStartupSource) &&
-    isOptionalString(row.userAgentStartupState) &&
-    isOptionalString(row.userAgentLastLaunchReason) &&
-    (row.userAgentHeartbeatWriteFailureCount === null || row.userAgentHeartbeatWriteFailureCount === undefined || isFiniteNumber(row.userAgentHeartbeatWriteFailureCount)) &&
-    isNonEmptyString(row.captureContext) &&
-    isBoolean(row.keyboardSignalActive) &&
-    isBoolean(row.mouseSignalActive) &&
-    isOptionalString(row.ownershipWarning) &&
-    isOptionalString(row.captureFailureReason) &&
-    isOptionalString(row.lastError) &&
-    isBoolean(row.backendConnected) &&
-    isBoolean(row.localApiAuthReady) &&
-    isBoolean(row.dbMigrationFailed) &&
-    isFiniteNumber(row.taskContinuityScore) &&
-    isFiniteNumber(row.taskContinuitySeconds) &&
-    isNonEmptyString(row.continuityState) &&
-    isBoolean(row.deepWorkActive) &&
-    isFiniteNumber(row.overloadLikelihood) &&
-    isBoolean(row.overloadActive) &&
-    isBoolean(row.breakNeeded) &&
-    isOptionalString(row.breakPendingAction) &&
-    isOptionalString(row.breakPendingReasonCode) &&
-    isNonEmptyString(row.calibrationStage) &&
-    isNonEmptyString(row.trustTier) &&
-    isFiniteNumber(row.modelConfidence) &&
-    (row.signalQualityScore === null || row.signalQualityScore === undefined || isFiniteNumber(row.signalQualityScore)) &&
-    isBoolean(row.partialData) &&
-    isStringArray(row.missingMajorChannels)
-  );
+  const focusEpisodeQuality = isFiniteNumber(row.focusEpisodeQuality)
+    ? row.focusEpisodeQuality
+    : (isFiniteNumber(row.taskContinuityScore) ? row.taskContinuityScore : null);
+  const focusEpisodeSeconds = isFiniteNumber(row.focusEpisodeSeconds)
+    ? row.focusEpisodeSeconds
+    : (isFiniteNumber(row.taskContinuitySeconds) ? row.taskContinuitySeconds : null);
+  const focusEpisodeState = normalizeContinuityState(row.focusEpisodeState ?? row.continuityState);
+  if (
+    !(
+      isNonEmptyString(row.machineId) &&
+      isNonEmptyString(row.machineName) &&
+      isNonEmptyString(row.userName) &&
+      isNonEmptyString(row.agentVersion) &&
+      isNonEmptyString(row.schemaVersion) &&
+      isNonEmptyString(row.policyVersion) &&
+      isNonEmptyString(row.reportedAtUtc) &&
+      isBoolean(row.agentRunning) &&
+      isBoolean(row.userSessionConnected) &&
+      isBoolean(row.activityDetected) &&
+      isOptionalString(row.lastActivityUtc) &&
+      isOptionalString(row.userAgentHeartbeatUtc) &&
+      (row.userAgentHeartbeatAgeSeconds === null || row.userAgentHeartbeatAgeSeconds === undefined || isFiniteNumber(row.userAgentHeartbeatAgeSeconds)) &&
+      (row.lastAcceptedInputAgeSeconds === null || row.lastAcceptedInputAgeSeconds === undefined || isFiniteNumber(row.lastAcceptedInputAgeSeconds)) &&
+      isOptionalString(row.userAgentStartupSource) &&
+      isOptionalString(row.userAgentStartupState) &&
+      isOptionalString(row.userAgentLastLaunchReason) &&
+      (row.userAgentHeartbeatWriteFailureCount === null || row.userAgentHeartbeatWriteFailureCount === undefined || isFiniteNumber(row.userAgentHeartbeatWriteFailureCount)) &&
+      isNonEmptyString(row.captureContext) &&
+      isBoolean(row.keyboardSignalActive) &&
+      isBoolean(row.mouseSignalActive) &&
+      isOptionalString(row.ownershipWarning) &&
+      isOptionalString(row.captureFailureReason) &&
+      isOptionalString(row.lastError) &&
+      isBoolean(row.backendConnected) &&
+      isBoolean(row.localApiAuthReady) &&
+      isBoolean(row.dbMigrationFailed) &&
+      focusEpisodeQuality !== null &&
+      focusEpisodeSeconds !== null &&
+      focusEpisodeState !== null &&
+      isBoolean(row.deepWorkActive) &&
+      isFiniteNumber(row.overloadLikelihood) &&
+      isBoolean(row.overloadActive) &&
+      isBoolean(row.breakNeeded) &&
+      isOptionalString(row.breakPendingAction) &&
+      isOptionalString(row.breakPendingReasonCode) &&
+      isNonEmptyString(row.calibrationStage) &&
+      isNonEmptyString(row.trustTier) &&
+      isFiniteNumber(row.modelConfidence) &&
+      (row.signalQualityScore === null || row.signalQualityScore === undefined || isFiniteNumber(row.signalQualityScore)) &&
+      isBoolean(row.partialData) &&
+      isStringArray(row.missingMajorChannels)
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    deviceId: normalizeOptionalString(row.deviceId) ?? undefined,
+    accountId: normalizeOptionalString(row.accountId) ?? undefined,
+    orgId: normalizeOptionalString(row.orgId) ?? undefined,
+    machineId: row.machineId.trim(),
+    machineName: row.machineName.trim(),
+    userName: row.userName.trim(),
+    agentVersion: row.agentVersion.trim(),
+    schemaVersion: row.schemaVersion.trim(),
+    policyVersion: row.policyVersion.trim(),
+    reportedAtUtc: row.reportedAtUtc.trim(),
+    agentRunning: row.agentRunning,
+    userSessionConnected: row.userSessionConnected,
+    activityDetected: row.activityDetected,
+    lastActivityUtc: normalizeOptionalString(row.lastActivityUtc) ?? undefined,
+    userAgentHeartbeatUtc: normalizeOptionalString(row.userAgentHeartbeatUtc) ?? undefined,
+    userAgentHeartbeatAgeSeconds: isFiniteNumber(row.userAgentHeartbeatAgeSeconds) ? row.userAgentHeartbeatAgeSeconds : (row.userAgentHeartbeatAgeSeconds ?? undefined),
+    lastAcceptedInputAgeSeconds: isFiniteNumber(row.lastAcceptedInputAgeSeconds) ? row.lastAcceptedInputAgeSeconds : (row.lastAcceptedInputAgeSeconds ?? undefined),
+    userAgentStartupSource: normalizeOptionalString(row.userAgentStartupSource) ?? undefined,
+    userAgentStartupState: normalizeOptionalString(row.userAgentStartupState) ?? undefined,
+    userAgentLastLaunchReason: normalizeOptionalString(row.userAgentLastLaunchReason) ?? undefined,
+    userAgentHeartbeatWriteFailureCount: isFiniteNumber(row.userAgentHeartbeatWriteFailureCount) ? row.userAgentHeartbeatWriteFailureCount : (row.userAgentHeartbeatWriteFailureCount ?? undefined),
+    captureContext: row.captureContext.trim() as MachineSummaryReport['captureContext'],
+    keyboardSignalActive: row.keyboardSignalActive,
+    mouseSignalActive: row.mouseSignalActive,
+    ownershipWarning: normalizeOptionalString(row.ownershipWarning) ?? undefined,
+    captureFailureReason: normalizeOptionalString(row.captureFailureReason) ?? undefined,
+    lastError: normalizeOptionalString(row.lastError) ?? undefined,
+    backendConnected: row.backendConnected,
+    localApiAuthReady: row.localApiAuthReady,
+    dbMigrationFailed: row.dbMigrationFailed,
+    focusEpisodeQuality,
+    focusEpisodeSeconds,
+    focusEpisodeState,
+    taskContinuityScore: isFiniteNumber(row.taskContinuityScore) ? row.taskContinuityScore : focusEpisodeQuality,
+    taskContinuitySeconds: isFiniteNumber(row.taskContinuitySeconds) ? row.taskContinuitySeconds : focusEpisodeSeconds,
+    continuityState: normalizeContinuityState(row.continuityState) ?? focusEpisodeState,
+    deepWorkActive: row.deepWorkActive,
+    overloadLikelihood: row.overloadLikelihood,
+    overloadActive: row.overloadActive,
+    breakNeeded: row.breakNeeded,
+    breakPendingAction: normalizeOptionalString(row.breakPendingAction) ?? undefined,
+    breakPendingReasonCode: normalizeOptionalString(row.breakPendingReasonCode) ?? undefined,
+    calibrationStage: row.calibrationStage.trim() as MachineSummaryReport['calibrationStage'],
+    trustTier: row.trustTier.trim() as MachineSummaryReport['trustTier'],
+    modelConfidence: row.modelConfidence,
+    signalQualityScore: isFiniteNumber(row.signalQualityScore) ? row.signalQualityScore : (row.signalQualityScore ?? undefined),
+    partialData: row.partialData,
+    missingMajorChannels: [...row.missingMajorChannels]
+  } as MachineSummaryReport;
 }
 
 function isMachineActionEvent(value: unknown): value is MachineActionEvent {
@@ -155,8 +249,8 @@ export function createAgentController(): Router {
 
   router.post('/machine-summary', async (req, res, next) => {
     try {
-      const payload = req.body;
-      if (!isMachineSummaryReport(payload)) {
+      const payload = normalizeMachineSummaryReport(req.body);
+      if (!payload) {
         res.status(400).json({ error: 'invalid machine summary payload' });
         return;
       }
@@ -184,7 +278,7 @@ export function createAgentController(): Router {
           metadata: {
             activityDetected: payload.activityDetected,
             trustTier: payload.trustTier,
-            continuityState: payload.continuityState
+            focusEpisodeState: payload.focusEpisodeState
           }
         });
         if (activeDay) {

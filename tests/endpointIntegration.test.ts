@@ -106,6 +106,9 @@ describe('endpoint integration', () => {
       backendConnected: true,
       localApiAuthReady: true,
       dbMigrationFailed: false,
+      focusEpisodeQuality: 0.88,
+      focusEpisodeSeconds: 2400,
+      focusEpisodeState: 'keep',
       taskContinuityScore: 0.88,
       taskContinuitySeconds: 2400,
       continuityState: 'keep',
@@ -141,6 +144,7 @@ describe('endpoint integration', () => {
     const detailResponse = await withOperatorHeaders(request(app).get('/v1/machines/machine-a'));
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.machineName).toBe('HP-Laptop');
+    expect(detailResponse.body.focusEpisodeSeconds).toBe(2400);
     expect(detailResponse.body.breakPendingAction).toBe('stretch_break_suggestion');
     expect(detailResponse.body.displayName).toBe('Alice Porter');
     expect(detailResponse.body.deviceStatus).toBe('active');
@@ -367,6 +371,9 @@ describe('endpoint integration', () => {
       backendConnected: true,
       localApiAuthReady: true,
       dbMigrationFailed: false,
+      focusEpisodeQuality: 0.88,
+      focusEpisodeSeconds: 2400,
+      focusEpisodeState: 'keep',
       taskContinuityScore: 0.88,
       taskContinuitySeconds: 2400,
       continuityState: 'keep',

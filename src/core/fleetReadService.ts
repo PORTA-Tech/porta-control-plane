@@ -24,9 +24,9 @@ export interface JoinedDeviceFields {
 export type MachineSummaryAdminView = MachineSummaryReport & JoinedIdentityFields & JoinedDeviceFields;
 export type MachineActionAdminView = MachineActionEvent & JoinedIdentityFields & JoinedDeviceFields;
 
-// Admin views currently expose the compatibility transport fields directly.
-// Product-facing operator copy should map those to focus episode, pressure,
-// short break, and long break rather than re-exporting legacy semantics.
+// Admin views expose canonical focus-episode fields and keep legacy continuity
+// aliases only for migration safety. Product-facing operator copy should prefer
+// focus episode, pressure, short break, and long break terminology.
 
 export async function listJoinedMachineSummaries(): Promise<MachineSummaryAdminView[]> {
   const rows = await listMachineSummaries();

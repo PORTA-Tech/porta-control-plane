@@ -30,6 +30,9 @@ const summaryA: MachineSummaryReport = {
   backendConnected: true,
   localApiAuthReady: true,
   dbMigrationFailed: false,
+  focusEpisodeQuality: 0.85,
+  focusEpisodeSeconds: 1800,
+  focusEpisodeState: 'keep',
   taskContinuityScore: 0.85,
   taskContinuitySeconds: 1800,
   continuityState: 'keep',
@@ -108,6 +111,7 @@ describe('fleet stores', () => {
 
     const loaded = await getMachineSummary('machine-a');
     expect(loaded?.trustTier).toBe('high');
+    expect(loaded?.focusEpisodeSeconds).toBe(1800);
     expect(loaded?.taskContinuitySeconds).toBe(1800);
   });
 
