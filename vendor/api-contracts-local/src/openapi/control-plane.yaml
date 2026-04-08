@@ -246,79 +246,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/RolloutDryRunView'
 
-  /v1/rollout/evaluate:
-    get:
-      summary: Evaluate rollout guardrails and current promotion verdict
-      tags: [Rollout]
-      parameters:
-        - $ref: '#/components/parameters/OperatorIdHeader'
-        - $ref: '#/components/parameters/OperatorRoleHeader'
-      responses:
-        '200':
-          description: Rollout evaluation
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RolloutEvaluationView'
-
-  /v1/rollout/validation-gates:
-    get:
-      summary: Read the latest published rollout validation report
-      tags: [Rollout]
-      parameters:
-        - $ref: '#/components/parameters/OperatorIdHeader'
-        - $ref: '#/components/parameters/OperatorRoleHeader'
-      responses:
-        '200':
-          description: Current rollout validation report
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RolloutValidationReport'
-        '404':
-          description: No validation report has been published yet
-    post:
-      summary: Publish rollout validation gate results
-      tags: [Rollout]
-      parameters:
-        - $ref: '#/components/parameters/OperatorIdHeader'
-        - $ref: '#/components/parameters/OperatorRoleHeader'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RolloutValidationReportInput'
-      responses:
-        '201':
-          description: Stored rollout validation report
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RolloutValidationReport'
-
-  /v1/rollout/evidence-pack:
-    get:
-      summary: Read the rollout evidence pack
-      tags: [Rollout]
-      parameters:
-        - $ref: '#/components/parameters/OperatorIdHeader'
-        - $ref: '#/components/parameters/OperatorRoleHeader'
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 1000
-      responses:
-        '200':
-          description: Rollout evidence pack
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RolloutEvidencePackView'
-
   /v1/slo/evaluate:
     post:
       summary: Evaluate SLO gate and trigger auto action when needed
@@ -968,357 +895,6 @@ components:
           type: string
           format: date-time
 
-    RolloutGuardrailEvidenceView:
-      type: object
-      required: [correlation_ids, cohorts, trace_refs]
-      properties:
-        correlation_ids:
-          type: array
-          items:
-            type: string
-        cohorts:
-          type: array
-          items:
-            $ref: '#/components/schemas/CohortId'
-        trace_refs:
-          type: array
-          items:
-            type: string
-
-    RolloutGuardrailView:
-      type: object
-      required: [guardrail_id, status, value, value_label, threshold, threshold_label, window, evidence]
-      properties:
-        guardrail_id:
-          type: string
-        status:
-          type: string
-          enum: [PASS, FAIL, INCONCLUSIVE, NOT_APPLICABLE]
-        value:
-          type: number
-          nullable: true
-        value_label:
-          type: string
-        threshold:
-          type: number
-          nullable: true
-        threshold_label:
-          type: string
-        window:
-          type: string
-        evidence:
-          $ref: '#/components/schemas/RolloutGuardrailEvidenceView'
-        reason_code:
-          type: string
-        reason_details:
-          type: object
-          additionalProperties: true
-
-    RolloutDataQualityView:
-      type: object
-      required:
-        [
-          baseline_cohort_id,
-          target_cohort_id,
-          sample_size_by_cohort,
-          coverage_pct_by_cohort,
-          min_sample_machines,
-          min_coverage_pct,
-          freshness_seconds,
-          freshness_ok,
-          ws_stream_ok,
-          metrics_available,
-          trust_status,
-          sample_valid,
-          coverage_valid,
-          valid,
-          messages
-        ]
-      properties:
-        baseline_cohort_id:
-          $ref: '#/components/schemas/CohortId'
-        target_cohort_id:
-          $ref: '#/components/schemas/CohortId'
-        sample_size_by_cohort:
-          type: object
-          additionalProperties:
-            type: integer
-            minimum: 0
-        coverage_pct_by_cohort:
-          type: object
-          additionalProperties:
-            type: number
-            minimum: 0
-        min_sample_machines:
-          type: integer
-          minimum: 1
-        min_coverage_pct:
-          type: number
-          minimum: 0
-        freshness_seconds:
-          type: integer
-          nullable: true
-        freshness_ok:
-          type: boolean
-        ws_stream_ok:
-          type: boolean
-        metrics_available:
-          type: boolean
-        trust_status:
-          type: string
-          enum: [VALID, INVALID, UNKNOWN]
-        sample_valid:
-          type: boolean
-        coverage_valid:
-          type: boolean
-        valid:
-          type: boolean
-        messages:
-          type: array
-          items:
-            type: string
-
-    RolloutDecisionView:
-      type: object
-      required: [promotion_verdict, trigger_reason_code, trigger_reason_details, evaluated_at_utc]
-      properties:
-        promotion_verdict:
-          type: string
-          enum: [ALLOW, BLOCK, INCONCLUSIVE]
-        trigger_reason_code:
-          type: string
-        trigger_reason_details:
-          type: object
-          additionalProperties: true
-        evaluated_at_utc:
-          type: string
-          format: date-time
-
-    RolloutBlastRadiusView:
-      type: object
-      required: [node_count, impacted_cohorts, confidence, generated_at_utc]
-      properties:
-        node_count:
-          type: integer
-          nullable: true
-        impacted_cohorts:
-          type: array
-          items:
-            $ref: '#/components/schemas/CohortId'
-        confidence:
-          type: string
-          enum: [low, medium, high, unknown]
-        generated_at_utc:
-          type: string
-          format: date-time
-        availability_reason_code:
-          type: string
-
-    RolloutDryRunPredictionView:
-      type: object
-      required:
-        [error_rate_delta_pct, p99_latency_delta_ms, degradation_rate_delta_pct, generated_at_utc]
-      properties:
-        error_rate_delta_pct:
-          type: number
-          nullable: true
-        p99_latency_delta_ms:
-          type: number
-          nullable: true
-        degradation_rate_delta_pct:
-          type: number
-          nullable: true
-        generated_at_utc:
-          type: string
-          format: date-time
-        availability_reason_code:
-          type: string
-
-    RolloutEventView:
-      type: object
-      required: [event_id, type, timestamp_utc, actor, config_version, cohorts, correlation_ids, details]
-      properties:
-        event_id:
-          type: string
-        type:
-          type: string
-        timestamp_utc:
-          type: string
-          format: date-time
-        actor:
-          type: string
-        config_version:
-          type: integer
-        cohorts:
-          type: array
-          items:
-            $ref: '#/components/schemas/CohortId'
-        correlation_ids:
-          type: array
-          items:
-            type: string
-        details:
-          type: string
-
-    RolloutEvaluationView:
-      type: object
-      required:
-        [
-          rollout_state,
-          halt_status,
-          current_stage,
-          next_stage,
-          config_version,
-          cooldown_until_utc,
-          evaluated_at_utc,
-          data_quality,
-          guardrail_eval,
-          decision,
-          blast_radius,
-          dry_run_prediction,
-          rollout_stage_progression_preview,
-          events,
-          evidence
-        ]
-      properties:
-        rollout_state:
-          $ref: '#/components/schemas/RolloutState'
-        halt_status:
-          type: boolean
-        current_stage:
-          type: string
-          enum: [CANARY, LIMITED, MAJORITY, FULL]
-        next_stage:
-          type: string
-          nullable: true
-          enum: [CANARY, LIMITED, MAJORITY, FULL]
-        config_version:
-          type: integer
-          minimum: 0
-        cooldown_until_utc:
-          type: string
-          format: date-time
-          nullable: true
-        evaluated_at_utc:
-          type: string
-          format: date-time
-        data_quality:
-          $ref: '#/components/schemas/RolloutDataQualityView'
-        guardrail_eval:
-          type: array
-          items:
-            $ref: '#/components/schemas/RolloutGuardrailView'
-        decision:
-          $ref: '#/components/schemas/RolloutDecisionView'
-        blast_radius:
-          $ref: '#/components/schemas/RolloutBlastRadiusView'
-        dry_run_prediction:
-          $ref: '#/components/schemas/RolloutDryRunPredictionView'
-        rollout_stage_progression_preview:
-          type: array
-          items:
-            $ref: '#/components/schemas/RolloutState'
-        events:
-          type: array
-          items:
-            $ref: '#/components/schemas/RolloutEventView'
-        evidence:
-          type: object
-          required: [correlation_ids, available, generated_at_utc]
-          properties:
-            correlation_ids:
-              type: array
-              items:
-                type: string
-            available:
-              type: boolean
-            generated_at_utc:
-              type: string
-              format: date-time
-
-    RolloutEvidencePackView:
-      type: object
-      required: [generated_at_utc, evaluation, cohort_snapshot, event_stream, guardrail_eval, correlation_ids]
-      properties:
-        generated_at_utc:
-          type: string
-          format: date-time
-        evaluation:
-          $ref: '#/components/schemas/RolloutEvaluationView'
-        cohort_snapshot:
-          type: object
-          additionalProperties: true
-        event_stream:
-          type: array
-          items:
-            $ref: '#/components/schemas/RolloutEventView'
-        guardrail_eval:
-          type: array
-          items:
-            $ref: '#/components/schemas/RolloutGuardrailView'
-        correlation_ids:
-          type: array
-          items:
-            type: string
-
-    RolloutValidationGateReport:
-      type: object
-      required: [gateId, name, success, detail, checkedAtUtc]
-      properties:
-        gateId:
-          type: string
-        name:
-          type: string
-        success:
-          type: boolean
-        detail:
-          type: string
-        checkedAtUtc:
-          type: string
-          format: date-time
-
-    RolloutValidationReportInput:
-      type: object
-      required: [suiteName, machineId, generatedAtUtc, gates]
-      properties:
-        suiteName:
-          type: string
-        machineId:
-          type: string
-        deviceId:
-          type: string
-          nullable: true
-        accountId:
-          type: string
-          nullable: true
-        orgId:
-          type: string
-          nullable: true
-        generatedAtUtc:
-          type: string
-          format: date-time
-        expiresAtUtc:
-          type: string
-          format: date-time
-          nullable: true
-        passed:
-          type: boolean
-        gates:
-          type: array
-          minItems: 1
-          items:
-            $ref: '#/components/schemas/RolloutValidationGateReport'
-
-    RolloutValidationReport:
-      allOf:
-        - $ref: '#/components/schemas/RolloutValidationReportInput'
-        - type: object
-          required: [updatedAtUtc, passed]
-          properties:
-            updatedAtUtc:
-              type: string
-              format: date-time
-
     SLOMetrics:
       type: object
       required:
@@ -1427,7 +1003,7 @@ components:
 
     DeviceStatusValue:
       type: string
-      enum: [active, revoked, unlinked]
+      enum: [active, revoked]
 
     ConsentScopeValue:
       type: string
@@ -1681,19 +1257,6 @@ components:
           type: string
           format: uuid
           nullable: true
-        device_capture_consent_state:
-          $ref: '#/components/schemas/ConsentStateValue'
-          nullable: true
-        device_capture_consent_version:
-          type: string
-          nullable: true
-        device_capture_consented_at:
-          type: string
-          format: date-time
-          nullable: true
-        device_capture_telemetry_level:
-          $ref: '#/components/schemas/TelemetryLevelValue'
-          nullable: true
         session_token:
           type: string
           nullable: true
@@ -1780,6 +1343,10 @@ components:
           focus_episode_quality,
           focus_episode_seconds,
           focus_episode_state,
+          attention_segment_kind,
+          attention_segment_seconds,
+          distraction_episode_active,
+          distraction_episode_seconds,
           task_continuity_score,
           task_continuity_seconds,
           continuity_state,
@@ -1834,27 +1401,6 @@ components:
           type: string
           format: date-time
           nullable: true
-        user_agent_heartbeat_age_seconds:
-          type: number
-          minimum: 0
-          nullable: true
-        last_accepted_input_age_seconds:
-          type: number
-          minimum: 0
-          nullable: true
-        user_agent_startup_source:
-          type: string
-          nullable: true
-        user_agent_startup_state:
-          type: string
-          nullable: true
-        user_agent_last_launch_reason:
-          type: string
-          nullable: true
-        user_agent_heartbeat_write_failure_count:
-          type: integer
-          minimum: 0
-          nullable: true
         capture_context:
           $ref: '#/components/schemas/CaptureContextValue'
         keyboard_signal_active:
@@ -1880,18 +1426,37 @@ components:
           type: number
           minimum: 0
           maximum: 1
+          description: Canonical durable focus-episode quality field. Prefer this over task_continuity_score when presenting product truth.
         focus_episode_seconds:
           type: number
           minimum: 0
+          description: Canonical durable focus-episode duration. This is the user-facing focus timer and must not be treated as current foreground-app age.
         focus_episode_state:
           $ref: '#/components/schemas/ContinuityStateValue'
+        attention_segment_kind:
+          type: string
+          enum: [focus, context_excursion, off_task_distraction, fragmentation_distraction, away]
+          description: Canonical current attention segment. This distinguishes steady focus from short context excursions, distraction episodes, and away time.
+        attention_segment_seconds:
+          type: number
+          minimum: 0
+          description: Duration of the current attention segment in seconds.
+        distraction_episode_active:
+          type: boolean
+          description: True only when the current attention segment is a real distraction episode.
+        distraction_episode_seconds:
+          type: number
+          minimum: 0
+          description: Duration of the current distraction episode in seconds. Away time and short context excursions do not count here.
         task_continuity_score:
           type: number
           minimum: 0
           maximum: 1
+          description: Legacy compatibility field for continuity quality. Canonical product meaning is focus-episode quality.
         task_continuity_seconds:
           type: number
           minimum: 0
+          description: Legacy compatibility field for the durable focus timer. Canonical product meaning is focus-episode duration, not foreground-app age.
         continuity_state:
           $ref: '#/components/schemas/ContinuityStateValue'
         deep_work_active:
@@ -1900,13 +1465,16 @@ components:
           type: number
           minimum: 0
           maximum: 1
+          description: Legacy visible overload field. Canonical product meaning is pressure.
         overload_active:
           type: boolean
+          description: Conservative stabilized overload state used for interventions and system actions.
         break_needed:
           type: boolean
         break_pending_action:
           type: string
           nullable: true
+          description: Legacy break transport action ID. During migration it may still carry stretch_break_suggestion or break_suggestion, which map to short break and long break.
         break_pending_reason_code:
           type: string
           nullable: true
@@ -1966,6 +1534,7 @@ components:
           type: string
         action:
           type: string
+          description: Compatibility transport action ID. In particular, stretch_break_suggestion and break_suggestion are legacy action names for short break and long break.
         action_category:
           $ref: '#/components/schemas/MachineActionCategoryValue'
         decision_state:

@@ -3,7 +3,26 @@ import { ensureFleetPersistenceReady, getFleetPersistenceMode, getFleetPool } fr
 
 const machineSummaryMemoryStore = new Map<string, MachineSummaryReport>();
 
-function withCanonicalFocusEpisode(report: MachineSummaryReport): MachineSummaryReport {
+function normalizeAttentionSegmentKind(value: unknown): MachineSummaryReport['attentionSegmentKind'] {
+  if (typeof value !== 'string') {
+    return 'focus';
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case 'context_excursion':
+      return 'context_excursion';
+    case 'off_task_distraction':
+      return 'off_task_distraction';
+    case 'fragmentation_distraction':
+      return 'fragmentation_distraction';
+    case 'away':
+      return 'away';
+    default:
+      return 'focus';
+  }
+}
+
+function withCanonicalMachineSummary(report: MachineSummaryReport): MachineSummaryReport {
   const focusEpisodeQuality = Number.isFinite(report.focusEpisodeQuality)
     ? report.focusEpisodeQuality
     : report.taskContinuityScore;
@@ -13,12 +32,26 @@ function withCanonicalFocusEpisode(report: MachineSummaryReport): MachineSummary
   const focusEpisodeState = (typeof report.focusEpisodeState === 'string' && report.focusEpisodeState.trim().length > 0)
     ? report.focusEpisodeState
     : report.continuityState;
+  const attentionSegmentKind = normalizeAttentionSegmentKind(report.attentionSegmentKind);
+  const attentionSegmentSeconds = Number.isFinite(report.attentionSegmentSeconds)
+    ? report.attentionSegmentSeconds
+    : 0;
+  const distractionEpisodeActive = typeof report.distractionEpisodeActive === 'boolean'
+    ? report.distractionEpisodeActive
+    : (attentionSegmentKind === 'off_task_distraction' || attentionSegmentKind === 'fragmentation_distraction');
+  const distractionEpisodeSeconds = Number.isFinite(report.distractionEpisodeSeconds)
+    ? report.distractionEpisodeSeconds
+    : (distractionEpisodeActive ? attentionSegmentSeconds : 0);
 
   return {
     ...report,
     focusEpisodeQuality,
     focusEpisodeSeconds,
     focusEpisodeState,
+    attentionSegmentKind,
+    attentionSegmentSeconds,
+    distractionEpisodeActive,
+    distractionEpisodeSeconds,
     taskContinuityScore: Number.isFinite(report.taskContinuityScore) ? report.taskContinuityScore : focusEpisodeQuality,
     taskContinuitySeconds: Number.isFinite(report.taskContinuitySeconds) ? report.taskContinuitySeconds : focusEpisodeSeconds,
     continuityState: (typeof report.continuityState === 'string' && report.continuityState.trim().length > 0)
@@ -30,7 +63,7 @@ function withCanonicalFocusEpisode(report: MachineSummaryReport): MachineSummary
 export async function upsertMachineSummary(report: MachineSummaryReport): Promise<void> {
   // Stored payload_json preserves the canonical focus-episode fields and keeps
   // the legacy continuity aliases alongside them for migration safety.
-  const normalized = withCanonicalFocusEpisode(report);
+  const normalized = withCanonicalMachineSummary(report);
   if (getFleetPersistenceMode() === 'memory') {
     machineSummaryMemoryStore.set(normalized.machineId, normalized);
     return;
@@ -39,7 +72,7 @@ export async function upsertMachineSummary(report: MachineSummaryReport): Promis
   await ensureFleetPersistenceReady();
   const pool = getFleetPool();
   if (!pool) {
-    machineSummaryMemoryStore.set(report.machineId, report);
+    machineSummaryMemoryStore.set(normalized.machineId, normalized);
     return;
   }
 
@@ -106,12 +139,12 @@ export async function getMachineSummary(machineId: string): Promise<MachineSumma
   );
 
   const row = result.rows[0]?.payload_json ?? null;
-  return row ? withCanonicalFocusEpisode(row) : null;
+  return row ? withCanonicalMachineSummary(row) : null;
 }
 
 export async function listMachineSummaries(): Promise<MachineSummaryReport[]> {
   if (getFleetPersistenceMode() === 'memory') {
-    return Array.from(machineSummaryMemoryStore.values()).sort(
+    return Array.from(machineSummaryMemoryStore.values()).map(withCanonicalMachineSummary).sort(
       (a, b) => Date.parse(b.reportedAtUtc) - Date.parse(a.reportedAtUtc)
     );
   }
@@ -119,7 +152,7 @@ export async function listMachineSummaries(): Promise<MachineSummaryReport[]> {
   await ensureFleetPersistenceReady();
   const pool = getFleetPool();
   if (!pool) {
-    return Array.from(machineSummaryMemoryStore.values()).sort(
+    return Array.from(machineSummaryMemoryStore.values()).map(withCanonicalMachineSummary).sort(
       (a, b) => Date.parse(b.reportedAtUtc) - Date.parse(a.reportedAtUtc)
     );
   }
@@ -132,7 +165,7 @@ export async function listMachineSummaries(): Promise<MachineSummaryReport[]> {
     `
   );
 
-  return result.rows.map((row: { payload_json: MachineSummaryReport }) => withCanonicalFocusEpisode(row.payload_json));
+  return result.rows.map((row: { payload_json: MachineSummaryReport }) => withCanonicalMachineSummary(row.payload_json));
 }
 
 export function clearMachineSummaryStoreForTests(): void {

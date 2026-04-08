@@ -109,6 +109,10 @@ describe('endpoint integration', () => {
       focusEpisodeQuality: 0.88,
       focusEpisodeSeconds: 2400,
       focusEpisodeState: 'keep',
+      attentionSegmentKind: 'focus',
+      attentionSegmentSeconds: 0,
+      distractionEpisodeActive: false,
+      distractionEpisodeSeconds: 0,
       taskContinuityScore: 0.88,
       taskContinuitySeconds: 2400,
       continuityState: 'keep',
@@ -145,6 +149,7 @@ describe('endpoint integration', () => {
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.machineName).toBe('HP-Laptop');
     expect(detailResponse.body.focusEpisodeSeconds).toBe(2400);
+    expect(detailResponse.body.attentionSegmentKind).toBe('focus');
     expect(detailResponse.body.breakPendingAction).toBe('stretch_break_suggestion');
     expect(detailResponse.body.displayName).toBe('Alice Porter');
     expect(detailResponse.body.deviceStatus).toBe('active');
@@ -374,6 +379,10 @@ describe('endpoint integration', () => {
       focusEpisodeQuality: 0.88,
       focusEpisodeSeconds: 2400,
       focusEpisodeState: 'keep',
+      attentionSegmentKind: 'focus',
+      attentionSegmentSeconds: 0,
+      distractionEpisodeActive: false,
+      distractionEpisodeSeconds: 0,
       taskContinuityScore: 0.88,
       taskContinuitySeconds: 2400,
       continuityState: 'keep',
@@ -424,6 +433,13 @@ describe('endpoint integration', () => {
       backendConnected: true,
       localApiAuthReady: true,
       dbMigrationFailed: false,
+      focusEpisodeQuality: 0,
+      focusEpisodeSeconds: 0,
+      focusEpisodeState: 'reset',
+      attentionSegmentKind: 'away',
+      attentionSegmentSeconds: 0,
+      distractionEpisodeActive: false,
+      distractionEpisodeSeconds: 0,
       taskContinuityScore: 0,
       taskContinuitySeconds: 0,
       continuityState: 'reset',
@@ -483,6 +499,13 @@ describe('endpoint integration', () => {
       backendConnected: true,
       localApiAuthReady: true,
       dbMigrationFailed: false,
+      focusEpisodeQuality: 0,
+      focusEpisodeSeconds: 0,
+      focusEpisodeState: 'reset',
+      attentionSegmentKind: 'away',
+      attentionSegmentSeconds: 0,
+      distractionEpisodeActive: false,
+      distractionEpisodeSeconds: 0,
       taskContinuityScore: 0,
       taskContinuitySeconds: 0,
       continuityState: 'reset',

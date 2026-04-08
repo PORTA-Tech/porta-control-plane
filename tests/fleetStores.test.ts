@@ -33,6 +33,10 @@ const summaryA: MachineSummaryReport = {
   focusEpisodeQuality: 0.85,
   focusEpisodeSeconds: 1800,
   focusEpisodeState: 'keep',
+  attentionSegmentKind: 'focus',
+  attentionSegmentSeconds: 0,
+  distractionEpisodeActive: false,
+  distractionEpisodeSeconds: 0,
   taskContinuityScore: 0.85,
   taskContinuitySeconds: 1800,
   continuityState: 'keep',
@@ -113,6 +117,8 @@ describe('fleet stores', () => {
     expect(loaded?.trustTier).toBe('high');
     expect(loaded?.focusEpisodeSeconds).toBe(1800);
     expect(loaded?.taskContinuitySeconds).toBe(1800);
+    expect(loaded?.attentionSegmentKind).toBe('focus');
+    expect(loaded?.distractionEpisodeActive).toBe(false);
   });
 
   it('appends and filters machine action events in reverse time order', async () => {

@@ -71,6 +71,27 @@ function normalizeContinuityState(value: unknown): MachineSummaryReport['continu
   }
 }
 
+function normalizeAttentionSegmentKind(value: unknown): MachineSummaryReport['attentionSegmentKind'] | null {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case 'focus':
+      return 'focus';
+    case 'context_excursion':
+      return 'context_excursion';
+    case 'off_task_distraction':
+      return 'off_task_distraction';
+    case 'fragmentation_distraction':
+      return 'fragmentation_distraction';
+    case 'away':
+      return 'away';
+    default:
+      return null;
+  }
+}
+
 function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -84,6 +105,14 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
     ? row.focusEpisodeSeconds
     : (isFiniteNumber(row.taskContinuitySeconds) ? row.taskContinuitySeconds : null);
   const focusEpisodeState = normalizeContinuityState(row.focusEpisodeState ?? row.continuityState);
+  const attentionSegmentKind = normalizeAttentionSegmentKind(row.attentionSegmentKind) ?? 'focus';
+  const attentionSegmentSeconds = isFiniteNumber(row.attentionSegmentSeconds) ? row.attentionSegmentSeconds : 0;
+  const distractionEpisodeActive = isBoolean(row.distractionEpisodeActive)
+    ? row.distractionEpisodeActive
+    : (attentionSegmentKind === 'off_task_distraction' || attentionSegmentKind === 'fragmentation_distraction');
+  const distractionEpisodeSeconds = isFiniteNumber(row.distractionEpisodeSeconds)
+    ? row.distractionEpisodeSeconds
+    : (distractionEpisodeActive ? attentionSegmentSeconds : 0);
   if (
     !(
       isNonEmptyString(row.machineId) &&
@@ -167,6 +196,10 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
     focusEpisodeQuality,
     focusEpisodeSeconds,
     focusEpisodeState,
+    attentionSegmentKind,
+    attentionSegmentSeconds,
+    distractionEpisodeActive,
+    distractionEpisodeSeconds,
     taskContinuityScore: isFiniteNumber(row.taskContinuityScore) ? row.taskContinuityScore : focusEpisodeQuality,
     taskContinuitySeconds: isFiniteNumber(row.taskContinuitySeconds) ? row.taskContinuitySeconds : focusEpisodeSeconds,
     continuityState: normalizeContinuityState(row.continuityState) ?? focusEpisodeState,
