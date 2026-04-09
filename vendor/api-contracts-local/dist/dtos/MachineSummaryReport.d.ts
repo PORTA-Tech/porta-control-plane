@@ -37,8 +37,12 @@ export interface MachineSummaryReport {
     focusEpisodeQuality: number;
     focusEpisodeSeconds: number;
     focusEpisodeState: ContinuityState;
+    focusEpisodeReasonCode?: string | null;
+    focusEpisodeReasonText?: string | null;
     attentionSegmentKind: AttentionSegmentKind;
     attentionSegmentSeconds: number;
+    attentionSegmentReasonCode?: string | null;
+    attentionSegmentReasonText?: string | null;
     distractionEpisodeActive: boolean;
     distractionEpisodeSeconds: number;
     taskContinuityScore: number;

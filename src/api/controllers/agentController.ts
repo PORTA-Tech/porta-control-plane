@@ -3,7 +3,7 @@ import type { MachineActionEvent, MachineSummaryReport } from '@porta/api-contra
 import { runtimeState } from '../../store/runtimeState.js';
 import { listAgentPresence, upsertAgentPresence, upsertPresenceFromTelemetryBatch } from '../../store/agentPresenceStore.js';
 import { appendMachineActionEvent } from '../../store/machineActionStore.js';
-import { upsertMachineSummary } from '../../store/machineSummaryStore.js';
+import { upsertMachineSummary, withCanonicalMachineSummary } from '../../store/machineSummaryStore.js';
 import { maybeActivateAccount, recordAccountActiveDay } from '../../core/growthService.js';
 import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileService.js';
 
@@ -145,6 +145,10 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
       focusEpisodeQuality !== null &&
       focusEpisodeSeconds !== null &&
       focusEpisodeState !== null &&
+      isOptionalString(row.focusEpisodeReasonCode) &&
+      isOptionalString(row.focusEpisodeReasonText) &&
+      isOptionalString(row.attentionSegmentReasonCode) &&
+      isOptionalString(row.attentionSegmentReasonText) &&
       isBoolean(row.deepWorkActive) &&
       isFiniteNumber(row.overloadLikelihood) &&
       isBoolean(row.overloadActive) &&
@@ -162,7 +166,7 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
     return null;
   }
 
-  return {
+  return withCanonicalMachineSummary({
     deviceId: normalizeOptionalString(row.deviceId) ?? undefined,
     accountId: normalizeOptionalString(row.accountId) ?? undefined,
     orgId: normalizeOptionalString(row.orgId) ?? undefined,
@@ -196,8 +200,12 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
     focusEpisodeQuality,
     focusEpisodeSeconds,
     focusEpisodeState,
+    focusEpisodeReasonCode: normalizeOptionalString(row.focusEpisodeReasonCode) ?? undefined,
+    focusEpisodeReasonText: normalizeOptionalString(row.focusEpisodeReasonText) ?? undefined,
     attentionSegmentKind,
     attentionSegmentSeconds,
+    attentionSegmentReasonCode: normalizeOptionalString(row.attentionSegmentReasonCode) ?? undefined,
+    attentionSegmentReasonText: normalizeOptionalString(row.attentionSegmentReasonText) ?? undefined,
     distractionEpisodeActive,
     distractionEpisodeSeconds,
     taskContinuityScore: isFiniteNumber(row.taskContinuityScore) ? row.taskContinuityScore : focusEpisodeQuality,
@@ -215,7 +223,7 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
     signalQualityScore: isFiniteNumber(row.signalQualityScore) ? row.signalQualityScore : (row.signalQualityScore ?? undefined),
     partialData: row.partialData,
     missingMajorChannels: [...row.missingMajorChannels]
-  } as MachineSummaryReport;
+  } as MachineSummaryReport);
 }
 
 function isMachineActionEvent(value: unknown): value is MachineActionEvent {

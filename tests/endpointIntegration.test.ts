@@ -109,8 +109,12 @@ describe('endpoint integration', () => {
       focusEpisodeQuality: 0.88,
       focusEpisodeSeconds: 2400,
       focusEpisodeState: 'keep',
+      focusEpisodeReasonCode: 'focus_episode_active',
+      focusEpisodeReasonText: 'Focus episode active.',
       attentionSegmentKind: 'focus',
       attentionSegmentSeconds: 0,
+      attentionSegmentReasonCode: 'steady_focus',
+      attentionSegmentReasonText: 'Steady focus episode.',
       distractionEpisodeActive: false,
       distractionEpisodeSeconds: 0,
       taskContinuityScore: 0.88,
@@ -150,6 +154,8 @@ describe('endpoint integration', () => {
     expect(detailResponse.body.machineName).toBe('HP-Laptop');
     expect(detailResponse.body.focusEpisodeSeconds).toBe(2400);
     expect(detailResponse.body.attentionSegmentKind).toBe('focus');
+    expect(detailResponse.body.focusEpisodeReasonText).toBe('Focus episode active.');
+    expect(detailResponse.body.attentionSegmentReasonText).toBe('Steady focus episode.');
     expect(detailResponse.body.breakPendingAction).toBe('stretch_break_suggestion');
     expect(detailResponse.body.displayName).toBe('Alice Porter');
     expect(detailResponse.body.deviceStatus).toBe('active');
@@ -534,6 +540,8 @@ describe('endpoint integration', () => {
     expect(response.body.role).toBeNull();
     expect(response.body.deviceStatus).toBeNull();
     expect(response.body.deviceRevokedAt).toBeNull();
+    expect(response.body.focusEpisodeReasonText).toBe('Long break ended the focus episode after 0s away.');
+    expect(response.body.attentionSegmentReasonText).toBe('Away for 0s.');
   });
 
   it('GET /v1/system/health exposes fleet persistence mode for validation gates', async () => {

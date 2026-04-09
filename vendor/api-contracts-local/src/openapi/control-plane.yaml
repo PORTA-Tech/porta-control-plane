@@ -1433,6 +1433,14 @@ components:
           description: Canonical durable focus-episode duration. This is the user-facing focus timer and must not be treated as current foreground-app age.
         focus_episode_state:
           $ref: '#/components/schemas/ContinuityStateValue'
+        focus_episode_reason_code:
+          type: string
+          nullable: true
+          description: Canonical focus-episode reason code. This explains why the current focus episode is active, paused, fading, or reset.
+        focus_episode_reason_text:
+          type: string
+          nullable: true
+          description: Human-readable explanation for the current focus-episode state or ending reason.
         attention_segment_kind:
           type: string
           enum: [focus, context_excursion, off_task_distraction, fragmentation_distraction, away]
@@ -1441,6 +1449,14 @@ components:
           type: number
           minimum: 0
           description: Duration of the current attention segment in seconds.
+        attention_segment_reason_code:
+          type: string
+          nullable: true
+          description: Canonical attention-segment reason code. This explains why the machine is currently classified as focus, excursion, distraction, or away.
+        attention_segment_reason_text:
+          type: string
+          nullable: true
+          description: Human-readable explanation for the current attention-segment classification.
         distraction_episode_active:
           type: boolean
           description: True only when the current attention segment is a real distraction episode.

@@ -22,7 +22,159 @@ function normalizeAttentionSegmentKind(value: unknown): MachineSummaryReport['at
   }
 }
 
-function withCanonicalMachineSummary(report: MachineSummaryReport): MachineSummaryReport {
+function normalizeOptionalReasonCode(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed.replace(/-/g, '_').toLowerCase() : null;
+}
+
+function normalizeOptionalReasonText(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function formatEpisodeDuration(seconds: number): string {
+  const totalSeconds = Math.max(0, Math.round(seconds));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  return secs > 0 && minutes < 3 ? `${minutes}m ${secs}s` : `${minutes}m`;
+}
+
+function deriveAttentionSegmentReasonCode(
+  report: MachineSummaryReport,
+  attentionSegmentKind: MachineSummaryReport['attentionSegmentKind']
+): string {
+  const explicit = normalizeOptionalReasonCode(report.attentionSegmentReasonCode);
+  if (explicit) {
+    return explicit;
+  }
+
+  switch (attentionSegmentKind) {
+    case 'away':
+      return 'away';
+    case 'context_excursion':
+      return 'context_excursion';
+    case 'off_task_distraction':
+      return 'outside_focus_context';
+    case 'fragmentation_distraction':
+      return 'fragmentation_distraction';
+    default:
+      return 'steady_focus';
+  }
+}
+
+function deriveAttentionSegmentReasonText(
+  report: MachineSummaryReport,
+  attentionSegmentKind: MachineSummaryReport['attentionSegmentKind'],
+  attentionSegmentSeconds: number
+): string {
+  const explicit = normalizeOptionalReasonText(report.attentionSegmentReasonText);
+  if (explicit) {
+    return explicit;
+  }
+
+  switch (attentionSegmentKind) {
+    case 'away':
+      return `Away for ${formatEpisodeDuration(attentionSegmentSeconds)}.`;
+    case 'context_excursion':
+      return `Outside focus context for ${formatEpisodeDuration(attentionSegmentSeconds)}.`;
+    case 'off_task_distraction':
+      return `Stayed outside focus context for ${formatEpisodeDuration(report.distractionEpisodeSeconds ?? attentionSegmentSeconds)}.`;
+    case 'fragmentation_distraction':
+      return `Rapid switching / fragmentation for ${formatEpisodeDuration(report.distractionEpisodeSeconds ?? attentionSegmentSeconds)}.`;
+    default:
+      return 'Steady focus episode.';
+  }
+}
+
+function deriveFocusEpisodeReasonCode(
+  report: MachineSummaryReport,
+  focusEpisodeState: MachineSummaryReport['focusEpisodeState'],
+  attentionSegmentKind: MachineSummaryReport['attentionSegmentKind']
+): string {
+  const explicit = normalizeOptionalReasonCode(report.focusEpisodeReasonCode);
+  if (explicit) {
+    return explicit;
+  }
+
+  if (focusEpisodeState === 'reset') {
+    switch (attentionSegmentKind) {
+      case 'away':
+        return 'long_break';
+      case 'off_task_distraction':
+      case 'context_excursion':
+        return 'major_context_shift';
+      case 'fragmentation_distraction':
+        return 'instability_reset';
+      default:
+        return 'focus_episode_reset';
+    }
+  }
+
+  if (focusEpisodeState === 'pause') {
+    return 'focus_episode_paused';
+  }
+
+  if (focusEpisodeState === 'decay') {
+    return 'focus_episode_decay';
+  }
+
+  return 'focus_episode_active';
+}
+
+function deriveFocusEpisodeReasonText(
+  report: MachineSummaryReport,
+  focusEpisodeState: MachineSummaryReport['focusEpisodeState'],
+  attentionSegmentKind: MachineSummaryReport['attentionSegmentKind'],
+  attentionSegmentSeconds: number
+): string {
+  const explicit = normalizeOptionalReasonText(report.focusEpisodeReasonText);
+  if (explicit) {
+    return explicit;
+  }
+
+  if (focusEpisodeState === 'reset') {
+    switch (attentionSegmentKind) {
+      case 'away':
+        return `Long break ended the focus episode after ${formatEpisodeDuration(attentionSegmentSeconds)} away.`;
+      case 'off_task_distraction':
+      case 'context_excursion':
+        return 'Major context shift ended the focus episode.';
+      case 'fragmentation_distraction':
+        return 'Sustained instability ended the focus episode.';
+      default:
+        return 'Focus episode ended.';
+    }
+  }
+
+  if (focusEpisodeState === 'pause') {
+    return 'Focus episode is paused.';
+  }
+
+  if (focusEpisodeState === 'decay') {
+    return 'Focus episode is fading.';
+  }
+
+  return 'Focus episode active.';
+}
+
+export function withCanonicalMachineSummary(report: MachineSummaryReport): MachineSummaryReport {
   const focusEpisodeQuality = Number.isFinite(report.focusEpisodeQuality)
     ? report.focusEpisodeQuality
     : report.taskContinuityScore;
@@ -42,14 +194,22 @@ function withCanonicalMachineSummary(report: MachineSummaryReport): MachineSumma
   const distractionEpisodeSeconds = Number.isFinite(report.distractionEpisodeSeconds)
     ? report.distractionEpisodeSeconds
     : (distractionEpisodeActive ? attentionSegmentSeconds : 0);
+  const attentionSegmentReasonCode = deriveAttentionSegmentReasonCode(report, attentionSegmentKind);
+  const attentionSegmentReasonText = deriveAttentionSegmentReasonText(report, attentionSegmentKind, attentionSegmentSeconds);
+  const focusEpisodeReasonCode = deriveFocusEpisodeReasonCode(report, focusEpisodeState, attentionSegmentKind);
+  const focusEpisodeReasonText = deriveFocusEpisodeReasonText(report, focusEpisodeState, attentionSegmentKind, attentionSegmentSeconds);
 
   return {
     ...report,
     focusEpisodeQuality,
     focusEpisodeSeconds,
     focusEpisodeState,
+    focusEpisodeReasonCode,
+    focusEpisodeReasonText,
     attentionSegmentKind,
     attentionSegmentSeconds,
+    attentionSegmentReasonCode,
+    attentionSegmentReasonText,
     distractionEpisodeActive,
     distractionEpisodeSeconds,
     taskContinuityScore: Number.isFinite(report.taskContinuityScore) ? report.taskContinuityScore : focusEpisodeQuality,
