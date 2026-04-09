@@ -173,6 +173,7 @@ The control plane currently receives and stores compatibility transport from `po
 - `stretch_break_suggestion` -> short break
 - `break_suggestion` -> long break
 - `breakPendingAction` -> break readiness / overlay routing compatibility field
+- `breakPendingKind` -> canonical short-break / long-break readiness field
 
 The control plane should preserve backward compatibility for transport and storage, but operator-facing copy and future views should use the canonical names above.
 

@@ -22,6 +22,23 @@ function normalizeAttentionSegmentKind(value: unknown): MachineSummaryReport['at
   }
 }
 
+function normalizeBreakKind(value: unknown): MachineSummaryReport['breakPendingKind'] {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case 'short_break':
+    case 'stretch_break_suggestion':
+      return 'short_break';
+    case 'long_break':
+    case 'break_suggestion':
+      return 'long_break';
+    default:
+      return null;
+  }
+}
+
 function normalizeOptionalReasonCode(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -200,6 +217,7 @@ export function withCanonicalMachineSummary(report: MachineSummaryReport): Machi
   const pressureConfidence = Number.isFinite(report.pressureConfidence)
     ? report.pressureConfidence
     : report.modelConfidence;
+  const breakPendingKind = normalizeBreakKind(report.breakPendingKind ?? report.breakPendingAction);
   const attentionSegmentReasonCode = deriveAttentionSegmentReasonCode(report, attentionSegmentKind);
   const attentionSegmentReasonText = deriveAttentionSegmentReasonText(report, attentionSegmentKind, attentionSegmentSeconds);
   const focusEpisodeReasonCode = deriveFocusEpisodeReasonCode(report, focusEpisodeState, attentionSegmentKind);
@@ -220,6 +238,7 @@ export function withCanonicalMachineSummary(report: MachineSummaryReport): Machi
     distractionEpisodeSeconds,
     pressureLevel,
     pressureConfidence,
+    breakPendingKind: breakPendingKind ?? null,
     taskContinuityScore: Number.isFinite(report.taskContinuityScore) ? report.taskContinuityScore : focusEpisodeQuality,
     taskContinuitySeconds: Number.isFinite(report.taskContinuitySeconds) ? report.taskContinuitySeconds : focusEpisodeSeconds,
     continuityState: (typeof report.continuityState === 'string' && report.continuityState.trim().length > 0)

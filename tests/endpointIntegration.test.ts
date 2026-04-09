@@ -126,6 +126,7 @@ describe('endpoint integration', () => {
       overloadLikelihood: 0.34,
       overloadActive: false,
       breakNeeded: true,
+      breakPendingKind: 'short_break',
       breakPendingAction: 'stretch_break_suggestion',
       breakPendingReasonCode: 'delivery_boundary_wait',
       calibrationStage: 'calibrated',
@@ -158,6 +159,7 @@ describe('endpoint integration', () => {
     expect(detailResponse.body.attentionSegmentKind).toBe('focus');
     expect(detailResponse.body.focusEpisodeReasonText).toBe('Focus episode active.');
     expect(detailResponse.body.attentionSegmentReasonText).toBe('Steady focus episode.');
+    expect(detailResponse.body.breakPendingKind).toBe('short_break');
     expect(detailResponse.body.breakPendingAction).toBe('stretch_break_suggestion');
     expect(detailResponse.body.displayName).toBe('Alice Porter');
     expect(detailResponse.body.deviceStatus).toBe('active');

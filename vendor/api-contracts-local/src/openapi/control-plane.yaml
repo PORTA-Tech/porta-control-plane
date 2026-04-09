@@ -1508,6 +1508,11 @@ components:
           description: Conservative stabilized overload state used for interventions and system actions.
         break_needed:
           type: boolean
+        break_pending_kind:
+          type: string
+          nullable: true
+          enum: [short_break, long_break]
+          description: Canonical pending-break kind. Product-facing surfaces should prefer this over parsing the legacy break transport action ID.
         break_pending_action:
           type: string
           nullable: true

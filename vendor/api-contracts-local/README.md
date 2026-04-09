@@ -122,6 +122,9 @@ These compatibility mappings must stay explicit until downstream repos finish th
 - `breakPendingAction`
   - Legacy compatibility field that still carries action IDs such as `stretch_break_suggestion` and `break_suggestion`.
   - Canonical target: short-break or long-break readiness / overlay routing.
+- `breakPendingKind`
+  - Canonical pending-break kind.
+  - Product-facing surfaces should prefer this instead of parsing `breakPendingAction`.
 - `stretch_break_suggestion`
   - Legacy action ID for the product-facing `short break`.
 - `break_suggestion`

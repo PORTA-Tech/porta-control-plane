@@ -92,6 +92,23 @@ function normalizeAttentionSegmentKind(value: unknown): MachineSummaryReport['at
   }
 }
 
+function normalizeBreakKind(value: unknown): MachineSummaryReport['breakPendingKind'] | null {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case 'short_break':
+    case 'stretch_break_suggestion':
+      return 'short_break';
+    case 'long_break':
+    case 'break_suggestion':
+      return 'long_break';
+    default:
+      return null;
+  }
+}
+
 function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -110,6 +127,7 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
   const pressureConfidence = isFiniteNumber(row.pressureConfidence)
     ? row.pressureConfidence
     : (isFiniteNumber(row.modelConfidence) ? row.modelConfidence : null);
+  const breakPendingKind = normalizeBreakKind(row.breakPendingKind ?? row.breakPendingAction);
   const focusEpisodeState = normalizeContinuityState(row.focusEpisodeState ?? row.continuityState);
   const attentionSegmentKind = normalizeAttentionSegmentKind(row.attentionSegmentKind) ?? 'focus';
   const attentionSegmentSeconds = isFiniteNumber(row.attentionSegmentSeconds) ? row.attentionSegmentSeconds : 0;
@@ -161,6 +179,7 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
       (row.overloadLikelihood === null || row.overloadLikelihood === undefined || isFiniteNumber(row.overloadLikelihood)) &&
       isBoolean(row.overloadActive) &&
       isBoolean(row.breakNeeded) &&
+      isOptionalString(row.breakPendingKind) &&
       isOptionalString(row.breakPendingAction) &&
       isOptionalString(row.breakPendingReasonCode) &&
       isNonEmptyString(row.calibrationStage) &&
@@ -225,6 +244,7 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
     overloadLikelihood: isFiniteNumber(row.overloadLikelihood) ? row.overloadLikelihood : pressureLevel,
     overloadActive: row.overloadActive,
     breakNeeded: row.breakNeeded,
+    breakPendingKind: breakPendingKind ?? undefined,
     breakPendingAction: normalizeOptionalString(row.breakPendingAction) ?? undefined,
     breakPendingReasonCode: normalizeOptionalString(row.breakPendingReasonCode) ?? undefined,
     calibrationStage: row.calibrationStage.trim() as MachineSummaryReport['calibrationStage'],

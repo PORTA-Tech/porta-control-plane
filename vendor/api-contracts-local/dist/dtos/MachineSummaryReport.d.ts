@@ -3,6 +3,7 @@ export type ContinuityState = 'keep' | 'pause' | 'decay' | 'reset';
 export type CalibrationStage = 'cold' | 'provisional' | 'calibrated';
 export type TrustTier = 'low' | 'medium' | 'high';
 export type AttentionSegmentKind = 'focus' | 'context_excursion' | 'off_task_distraction' | 'fragmentation_distraction' | 'away';
+export type BreakKind = 'short_break' | 'long_break';
 export interface MachineSummaryReport {
     deviceId: string;
     machineId: string;
@@ -54,6 +55,7 @@ export interface MachineSummaryReport {
     overloadLikelihood: number;
     overloadActive: boolean;
     breakNeeded: boolean;
+    breakPendingKind?: BreakKind | null;
     breakPendingAction?: string | null;
     breakPendingReasonCode?: string | null;
     calibrationStage: CalibrationStage;
