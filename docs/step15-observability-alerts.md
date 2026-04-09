@@ -15,8 +15,8 @@
     - `GET /v1/audit/alerts?include_history=true`
     - `POST /v1/audit/alerts/:alertId/resolve`
 - Deterministic alert rules over recent decision traces:
-  - stress likelihood > 0.90 sustained > 30s
-  - overload likelihood > 0.85 sustained > 60s
+  - pressure level > 0.90 sustained > 30s
+  - pressure level > 0.85 sustained > 60s
   - intervention failures > 3 in 5m
   - policy version mismatch
   - signature verification failure

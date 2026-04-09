@@ -246,7 +246,7 @@ describe('endpoint integration', () => {
         promptOutcome: 'accepted',
         overlayState: 'countdown_active',
         policyId: 'break-policy',
-        whatChanged: 'Break suggestion displayed to user.',
+        whatChanged: 'Long break suggestion displayed to user.',
         howToUndo: 'Dismiss the suggestion overlay.'
       },
       {

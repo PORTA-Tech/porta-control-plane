@@ -87,7 +87,7 @@ const actionA: MachineActionEvent = {
   promptOutcome: 'accepted',
   overlayState: 'countdown_active',
   policyId: 'break-policy-v2',
-  whatChanged: 'Displayed a break suggestion to the user.',
+  whatChanged: 'Long break suggestion displayed to user.',
   howToUndo: null
 };
 
