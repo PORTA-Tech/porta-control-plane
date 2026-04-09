@@ -246,6 +246,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/RolloutDryRunView'
 
+  /v1/rollout/evaluate:
+    $ref: './rollout.yaml#/paths/~1v1~1rollout~1evaluate'
+
+  /v1/rollout/validation-gates:
+    $ref: './rollout.yaml#/paths/~1v1~1rollout~1validation-gates'
+
+  /v1/rollout/evidence-pack:
+    $ref: './rollout.yaml#/paths/~1v1~1rollout~1evidence-pack'
+
   /v1/slo/evaluate:
     post:
       summary: Evaluate SLO gate and trigger auto action when needed

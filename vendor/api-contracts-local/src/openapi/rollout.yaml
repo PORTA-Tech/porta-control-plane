@@ -8,6 +8,9 @@ paths:
   /v1/rollout/state:
     get:
       summary: Get rollout state
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
       responses:
         '200':
           description: Current rollout state
@@ -19,6 +22,9 @@ paths:
   /v1/rollout/promote:
     post:
       summary: Transition rollout to PROMOTING
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
       responses:
         '200':
           description: Idempotent result
@@ -30,6 +36,9 @@ paths:
   /v1/rollout/halt:
     post:
       summary: Transition rollout to HALTED
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
       responses:
         '200':
           description: Idempotent result
@@ -41,6 +50,9 @@ paths:
   /v1/rollout/rollback:
     post:
       summary: Execute rollback and enter cooldown
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
       responses:
         '200':
           description: No-op
@@ -51,9 +63,105 @@ paths:
               schema:
                 $ref: '#/components/schemas/RollbackActionResult'
 
+  /v1/rollout/dry-run:
+    get:
+      summary: Dry-run rollout simulation preview
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Dry-run simulation output
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutDryRunView'
+
+  /v1/rollout/evaluate:
+    get:
+      summary: Evaluate rollout guardrails and promotion readiness
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Rollout evaluation view
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutEvaluationView'
+
+  /v1/rollout/validation-gates:
+    get:
+      summary: Read the latest rollout validation report
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      responses:
+        '200':
+          description: Latest rollout validation report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutValidationReport'
+        '404':
+          description: No rollout validation report has been published yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutValidationErrorResponse'
+    post:
+      summary: Publish or replace the rollout validation report
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolloutValidationReportUpsertRequest'
+      responses:
+        '201':
+          description: Validation report stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutValidationReport'
+        '400':
+          description: Validation report payload failed validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutValidationErrorResponse'
+
+  /v1/rollout/evidence-pack:
+    get:
+      summary: Read the rollout evidence pack
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: Rollout evidence pack
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutEvidencePackView'
+
   /v1/slo/evaluate:
     post:
       summary: Evaluate SLOs and auto-trigger halt/rollback
+      parameters:
+        - $ref: '#/components/parameters/OperatorIdHeader'
+        - $ref: '#/components/parameters/OperatorRoleHeader'
       requestBody:
         required: true
         content:
@@ -69,10 +177,101 @@ paths:
                 $ref: '#/components/schemas/SLOGateDecisionView'
 
 components:
+  parameters:
+    OperatorIdHeader:
+      name: x-operator-id
+      in: header
+      required: true
+      schema:
+        type: string
+    OperatorRoleHeader:
+      name: x-operator-role
+      in: header
+      required: true
+      schema:
+        type: string
+        enum: [viewer, operator, admin]
+
   schemas:
+    CohortId:
+      type: string
+      enum: [stable, canary-1, canary-5, internal, experimental]
+
+    CohortWindow:
+      type: string
+      enum: [15m, 1h, 6h, 24h]
+
+    CohortConfidence:
+      type: string
+      enum: [low, medium, high]
+
+    CohortRegressionMetric:
+      type: string
+      enum: [error_rate, p99_latency, degradation_rate]
+
+    CohortRegressionSeverity:
+      type: string
+      enum: [warning, critical]
+
     RolloutState:
       type: string
       enum: [IDLE, PROMOTING, MONITORING, HALTED, ROLLED_BACK, COOLDOWN]
+
+    AdapterPromotionStage:
+      type: string
+      enum: [CANARY, LIMITED, MAJORITY, FULL]
+
+    GuardrailStatus:
+      type: string
+      enum: [PASS, FAIL, INCONCLUSIVE, NOT_APPLICABLE]
+
+    PromotionVerdict:
+      type: string
+      enum: [ALLOW, BLOCK, INCONCLUSIVE]
+
+    TrustStatus:
+      type: string
+      enum: [VALID, INVALID, UNKNOWN]
+
+    RolloutGuardrailId:
+      type: string
+      enum: [ERROR_RATE, P99, DEGRADATION, SIGNATURE_TRUST, CIRCUIT_BREAKER, FSM, COOLDOWN, FEATURE_GATE, VALIDATION_GATES]
+
+    RolloutDecisionReasonCode:
+      type: string
+      enum:
+        [
+          ALL_GUARDRAILS_PASS,
+          INSUFFICIENT_SAMPLE,
+          INSUFFICIENT_COVERAGE,
+          STREAM_STALE,
+          TRUST_UNKNOWN,
+          COOLDOWN_ACTIVE,
+          FSM_BLOCKED,
+          FEATURE_GATE_DISABLED,
+          CIRCUIT_OPEN,
+          SIGNATURE_INVALID,
+          SLO_RISK_TOO_HIGH,
+          VALIDATION_GATES_FAILED,
+          GUARDRAIL_INCONCLUSIVE
+        ]
+
+    RolloutEventType:
+      type: string
+      enum:
+        [
+          RolloutPlanGenerated,
+          PromotionRequested,
+          PromotionBlocked,
+          PromotionExecuted,
+          MonitoringStarted,
+          GuardrailFailed,
+          CooldownActivated,
+          HaltRaised,
+          RollbackStarted,
+          RollbackCompleted,
+          RolloutEvent
+        ]
 
     RolloutStatusView:
       type: object
@@ -108,6 +307,45 @@ components:
         toState:
           $ref: '#/components/schemas/RolloutState'
         cooldownUntilUtc:
+          type: string
+          format: date-time
+
+    RolloutDryRunPredictionImpact:
+      type: object
+      required: [error_rate_delta_pct, p99_latency_delta_ms, degradation_rate_delta_pct]
+      properties:
+        error_rate_delta_pct:
+          type: number
+        p99_latency_delta_ms:
+          type: number
+        degradation_rate_delta_pct:
+          type: number
+
+    RolloutDryRunView:
+      type: object
+      required:
+        [
+          blast_radius_node_count,
+          cohorts_impacted,
+          predicted_slo_impact,
+          rollout_stage_progression_preview,
+          generated_at_utc
+        ]
+      properties:
+        blast_radius_node_count:
+          type: integer
+          minimum: 0
+        cohorts_impacted:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortId'
+        predicted_slo_impact:
+          $ref: '#/components/schemas/RolloutDryRunPredictionImpact'
+        rollout_stage_progression_preview:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutState'
+        generated_at_utc:
           type: string
           format: date-time
 
@@ -179,3 +417,557 @@ components:
           $ref: '#/components/schemas/RolloutState'
         autoAction:
           $ref: '#/components/schemas/RollbackActionResult'
+
+    RolloutValidationGateReport:
+      type: object
+      required: [gateId, name, success, detail, checkedAtUtc]
+      properties:
+        gateId:
+          type: string
+        name:
+          type: string
+        success:
+          type: boolean
+        detail:
+          type: string
+        checkedAtUtc:
+          type: string
+          format: date-time
+
+    RolloutValidationReport:
+      type: object
+      required: [suiteName, machineId, generatedAtUtc, updatedAtUtc, passed, gates]
+      properties:
+        suiteName:
+          type: string
+        machineId:
+          type: string
+        deviceId:
+          type: string
+          nullable: true
+        accountId:
+          type: string
+          nullable: true
+        orgId:
+          type: string
+          nullable: true
+        generatedAtUtc:
+          type: string
+          format: date-time
+        expiresAtUtc:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAtUtc:
+          type: string
+          format: date-time
+        passed:
+          type: boolean
+        gates:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutValidationGateReport'
+
+    RolloutValidationReportUpsertRequest:
+      type: object
+      required: [suiteName, machineId, generatedAtUtc, passed, gates]
+      properties:
+        suiteName:
+          type: string
+        machineId:
+          type: string
+        deviceId:
+          type: string
+          nullable: true
+        accountId:
+          type: string
+          nullable: true
+        orgId:
+          type: string
+          nullable: true
+        generatedAtUtc:
+          type: string
+          format: date-time
+        expiresAtUtc:
+          type: string
+          format: date-time
+          nullable: true
+        passed:
+          type: boolean
+        gates:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/RolloutValidationGateReport'
+
+    RolloutValidationErrorResponse:
+      type: object
+      required: [error_code, message]
+      properties:
+        error_code:
+          type: string
+        message:
+          type: string
+
+    RolloutGuardrailEvidenceView:
+      type: object
+      required: [correlation_ids, cohorts, trace_refs]
+      properties:
+        correlation_ids:
+          type: array
+          items:
+            type: string
+        cohorts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortId'
+        trace_refs:
+          type: array
+          items:
+            type: string
+
+    RolloutGuardrailView:
+      type: object
+      required:
+        [
+          guardrail_id,
+          status,
+          value,
+          value_label,
+          threshold,
+          threshold_label,
+          window,
+          evidence
+        ]
+      properties:
+        guardrail_id:
+          $ref: '#/components/schemas/RolloutGuardrailId'
+        status:
+          $ref: '#/components/schemas/GuardrailStatus'
+        value:
+          type: number
+          nullable: true
+        value_label:
+          type: string
+        threshold:
+          type: number
+          nullable: true
+        threshold_label:
+          type: string
+        window:
+          type: string
+        evidence:
+          $ref: '#/components/schemas/RolloutGuardrailEvidenceView'
+        reason_code:
+          type: string
+        reason_details:
+          type: object
+          additionalProperties: true
+
+    RolloutDataQualityView:
+      type: object
+      required:
+        [
+          baseline_cohort_id,
+          target_cohort_id,
+          sample_size_by_cohort,
+          coverage_pct_by_cohort,
+          min_sample_machines,
+          min_coverage_pct,
+          freshness_seconds,
+          freshness_ok,
+          ws_stream_ok,
+          metrics_available,
+          trust_status,
+          sample_valid,
+          coverage_valid,
+          valid,
+          messages
+        ]
+      properties:
+        baseline_cohort_id:
+          $ref: '#/components/schemas/CohortId'
+        target_cohort_id:
+          $ref: '#/components/schemas/CohortId'
+        sample_size_by_cohort:
+          type: object
+          additionalProperties:
+            type: integer
+        coverage_pct_by_cohort:
+          type: object
+          additionalProperties:
+            type: number
+        min_sample_machines:
+          type: integer
+        min_coverage_pct:
+          type: number
+        freshness_seconds:
+          type: integer
+          nullable: true
+        freshness_ok:
+          type: boolean
+        ws_stream_ok:
+          type: boolean
+        metrics_available:
+          type: boolean
+        trust_status:
+          $ref: '#/components/schemas/TrustStatus'
+        sample_valid:
+          type: boolean
+        coverage_valid:
+          type: boolean
+        valid:
+          type: boolean
+        messages:
+          type: array
+          items:
+            type: string
+
+    RolloutDecisionView:
+      type: object
+      required: [promotion_verdict, trigger_reason_code, trigger_reason_details, evaluated_at_utc]
+      properties:
+        promotion_verdict:
+          $ref: '#/components/schemas/PromotionVerdict'
+        trigger_reason_code:
+          $ref: '#/components/schemas/RolloutDecisionReasonCode'
+        trigger_reason_details:
+          type: object
+          additionalProperties: true
+        evaluated_at_utc:
+          type: string
+          format: date-time
+
+    RolloutBlastRadiusView:
+      type: object
+      required: [node_count, impacted_cohorts, confidence, generated_at_utc]
+      properties:
+        node_count:
+          type: integer
+          nullable: true
+        impacted_cohorts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortId'
+        confidence:
+          type: string
+          enum: [low, medium, high, unknown]
+        generated_at_utc:
+          type: string
+          format: date-time
+        availability_reason_code:
+          type: string
+
+    RolloutDryRunPredictionView:
+      type: object
+      required:
+        [error_rate_delta_pct, p99_latency_delta_ms, degradation_rate_delta_pct, generated_at_utc]
+      properties:
+        error_rate_delta_pct:
+          type: number
+          nullable: true
+        p99_latency_delta_ms:
+          type: number
+          nullable: true
+        degradation_rate_delta_pct:
+          type: number
+          nullable: true
+        generated_at_utc:
+          type: string
+          format: date-time
+        availability_reason_code:
+          type: string
+
+    RolloutEventView:
+      type: object
+      required: [event_id, type, timestamp_utc, actor, config_version, cohorts, correlation_ids, details]
+      properties:
+        event_id:
+          type: string
+        type:
+          $ref: '#/components/schemas/RolloutEventType'
+        timestamp_utc:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        config_version:
+          type: integer
+        cohorts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortId'
+        correlation_ids:
+          type: array
+          items:
+            type: string
+        details:
+          type: string
+
+    RolloutEvidenceSummaryView:
+      type: object
+      required: [correlation_ids, available, generated_at_utc]
+      properties:
+        correlation_ids:
+          type: array
+          items:
+            type: string
+        available:
+          type: boolean
+        generated_at_utc:
+          type: string
+          format: date-time
+
+    CohortTrendPointView:
+      type: object
+      required: [timestamp_utc, error_rate_pct, p99_latency_ms, degradation_rate_pct]
+      properties:
+        timestamp_utc:
+          type: string
+          format: date-time
+        error_rate_pct:
+          type: number
+        p99_latency_ms:
+          type: number
+        degradation_rate_pct:
+          type: number
+
+    CohortEvaluationRowView:
+      type: object
+      required:
+        [
+          cohort_id,
+          machine_count,
+          error_rate_pct,
+          p50_latency_ms,
+          p95_latency_ms,
+          p99_latency_ms,
+          degradation_rate_pct,
+          config_distribution,
+          delta_error_rate_pct,
+          delta_p99_latency_ms,
+          delta_degradation_rate_pct,
+          confidence,
+          trend,
+          active_event_count
+        ]
+      properties:
+        cohort_id:
+          $ref: '#/components/schemas/CohortId'
+        machine_count:
+          type: integer
+        error_rate_pct:
+          type: number
+        p50_latency_ms:
+          type: number
+        p95_latency_ms:
+          type: number
+        p99_latency_ms:
+          type: number
+        degradation_rate_pct:
+          type: number
+        config_distribution:
+          type: object
+          additionalProperties:
+            type: integer
+        delta_error_rate_pct:
+          type: number
+        delta_p99_latency_ms:
+          type: number
+        delta_degradation_rate_pct:
+          type: number
+        confidence:
+          $ref: '#/components/schemas/CohortConfidence'
+        trend:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortTrendPointView'
+        active_event_count:
+          type: integer
+
+    CohortRegressionEventView:
+      type: object
+      required:
+        [
+          event_id,
+          correlation_id,
+          type,
+          cohort_id,
+          baseline_cohort_id,
+          metric,
+          delta,
+          threshold,
+          severity,
+          confidence,
+          machine_count,
+          window,
+          triggered_at,
+          last_seen_at,
+          state,
+          reason
+        ]
+      properties:
+        event_id:
+          type: string
+        correlation_id:
+          type: string
+        type:
+          type: string
+          enum: [COHORT_REGRESSION]
+        cohort_id:
+          $ref: '#/components/schemas/CohortId'
+        baseline_cohort_id:
+          $ref: '#/components/schemas/CohortId'
+        metric:
+          $ref: '#/components/schemas/CohortRegressionMetric'
+        delta:
+          type: number
+        threshold:
+          type: number
+        severity:
+          $ref: '#/components/schemas/CohortRegressionSeverity'
+        confidence:
+          $ref: '#/components/schemas/CohortConfidence'
+        machine_count:
+          type: integer
+        window:
+          $ref: '#/components/schemas/CohortWindow'
+        triggered_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [active, resolved]
+        reason:
+          type: string
+        resolved_at:
+          type: string
+          format: date-time
+
+    CohortThresholdsView:
+      type: object
+      required: [p99_latency_delta_ms, error_rate_delta_pct, degradation_rate_delta_pct]
+      properties:
+        p99_latency_delta_ms:
+          type: number
+        error_rate_delta_pct:
+          type: number
+        degradation_rate_delta_pct:
+          type: number
+
+    CohortEvaluationView:
+      type: object
+      required: [generated_at, source, baseline_cohort_id, window, thresholds, rows, active_events, recent_events]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+          enum: [cohort_evaluation_engine]
+        baseline_cohort_id:
+          $ref: '#/components/schemas/CohortId'
+        window:
+          $ref: '#/components/schemas/CohortWindow'
+        thresholds:
+          $ref: '#/components/schemas/CohortThresholdsView'
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortEvaluationRowView'
+        active_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortRegressionEventView'
+        recent_events:
+          type: array
+          items:
+            $ref: '#/components/schemas/CohortRegressionEventView'
+
+    RolloutEvaluationView:
+      type: object
+      required:
+        [
+          rollout_state,
+          halt_status,
+          current_stage,
+          config_version,
+          evaluated_at_utc,
+          data_quality,
+          guardrail_eval,
+          decision,
+          blast_radius,
+          dry_run_prediction,
+          rollout_stage_progression_preview,
+          events,
+          evidence
+        ]
+      properties:
+        rollout_state:
+          $ref: '#/components/schemas/RolloutState'
+        halt_status:
+          type: boolean
+        current_stage:
+          $ref: '#/components/schemas/AdapterPromotionStage'
+        next_stage:
+          oneOf:
+            - $ref: '#/components/schemas/AdapterPromotionStage'
+            - type: 'null'
+        config_version:
+          type: integer
+        cooldown_until_utc:
+          type: string
+          format: date-time
+          nullable: true
+        evaluated_at_utc:
+          type: string
+          format: date-time
+        data_quality:
+          $ref: '#/components/schemas/RolloutDataQualityView'
+        guardrail_eval:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutGuardrailView'
+        decision:
+          $ref: '#/components/schemas/RolloutDecisionView'
+        blast_radius:
+          $ref: '#/components/schemas/RolloutBlastRadiusView'
+        dry_run_prediction:
+          $ref: '#/components/schemas/RolloutDryRunPredictionView'
+        rollout_stage_progression_preview:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutState'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutEventView'
+        evidence:
+          $ref: '#/components/schemas/RolloutEvidenceSummaryView'
+
+    RolloutEvidencePackView:
+      type: object
+      required: [generated_at_utc, evaluation, cohort_snapshot, event_stream, guardrail_eval, correlation_ids]
+      properties:
+        generated_at_utc:
+          type: string
+          format: date-time
+        evaluation:
+          $ref: '#/components/schemas/RolloutEvaluationView'
+        cohort_snapshot:
+          $ref: '#/components/schemas/CohortEvaluationView'
+        event_stream:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutEventView'
+        guardrail_eval:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutGuardrailView'
+        correlation_ids:
+          type: array
+          items:
+            type: string
