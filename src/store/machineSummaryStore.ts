@@ -39,6 +39,17 @@ function normalizeBreakKind(value: unknown): MachineSummaryReport['breakPendingK
   }
 }
 
+function resolveLegacyBreakPendingAction(value: unknown): string | null {
+  switch (normalizeBreakKind(value)) {
+    case 'short_break':
+      return 'stretch_break_suggestion';
+    case 'long_break':
+      return 'break_suggestion';
+    default:
+      return null;
+  }
+}
+
 function normalizeOptionalReasonCode(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -218,6 +229,7 @@ export function withCanonicalMachineSummary(report: MachineSummaryReport): Machi
     ? report.pressureConfidence
     : report.modelConfidence;
   const breakPendingKind = normalizeBreakKind(report.breakPendingKind ?? report.breakPendingAction);
+  const breakPendingAction = resolveLegacyBreakPendingAction(report.breakPendingKind ?? breakPendingKind ?? report.breakPendingAction);
   const attentionSegmentReasonCode = deriveAttentionSegmentReasonCode(report, attentionSegmentKind);
   const attentionSegmentReasonText = deriveAttentionSegmentReasonText(report, attentionSegmentKind, attentionSegmentSeconds);
   const focusEpisodeReasonCode = deriveFocusEpisodeReasonCode(report, focusEpisodeState, attentionSegmentKind);
@@ -238,12 +250,13 @@ export function withCanonicalMachineSummary(report: MachineSummaryReport): Machi
     distractionEpisodeSeconds,
     pressureLevel,
     pressureConfidence,
+    breakNeeded: report.breakNeeded || breakPendingKind !== null,
     breakPendingKind: breakPendingKind ?? null,
-    taskContinuityScore: Number.isFinite(report.taskContinuityScore) ? report.taskContinuityScore : focusEpisodeQuality,
-    taskContinuitySeconds: Number.isFinite(report.taskContinuitySeconds) ? report.taskContinuitySeconds : focusEpisodeSeconds,
-    continuityState: (typeof report.continuityState === 'string' && report.continuityState.trim().length > 0)
-      ? report.continuityState
-      : focusEpisodeState
+    breakPendingAction,
+    taskContinuityScore: focusEpisodeQuality,
+    taskContinuitySeconds: focusEpisodeSeconds,
+    continuityState: focusEpisodeState,
+    overloadLikelihood: pressureLevel
   };
 }
 

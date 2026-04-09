@@ -1479,11 +1479,11 @@ components:
           type: number
           minimum: 0
           maximum: 1
-          description: Legacy compatibility field for continuity quality. Canonical product meaning is focus-episode quality.
+          description: Legacy compatibility mirror of focus_episode_quality in fleet and admin summaries. Canonical product meaning is focus-episode quality.
         task_continuity_seconds:
           type: number
           minimum: 0
-          description: Legacy compatibility field for the durable focus timer. Canonical product meaning is focus-episode duration, not foreground-app age.
+          description: Legacy compatibility mirror of focus_episode_seconds in fleet and admin summaries. Canonical product meaning is focus-episode duration, not foreground-app age.
         continuity_state:
           $ref: '#/components/schemas/ContinuityStateValue'
         deep_work_active:
@@ -1502,7 +1502,7 @@ components:
           type: number
           minimum: 0
           maximum: 1
-          description: Legacy visible overload field. Canonical product meaning is pressure.
+          description: Legacy compatibility mirror of pressure_level in fleet and admin summaries. Product-facing surfaces should not render it as a separate metric.
         overload_active:
           type: boolean
           description: Conservative stabilized overload state used for interventions and system actions.
@@ -1516,7 +1516,7 @@ components:
         break_pending_action:
           type: string
           nullable: true
-          description: Legacy break transport action ID. During migration it may still carry stretch_break_suggestion or break_suggestion, which map to short break and long break.
+          description: Legacy compatibility mirror of break_pending_kind in fleet and admin summaries. During migration it may still carry stretch_break_suggestion or break_suggestion, which map to short break and long break.
         break_pending_reason_code:
           type: string
           nullable: true

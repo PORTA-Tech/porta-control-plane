@@ -156,9 +156,12 @@ describe('endpoint integration', () => {
     expect(detailResponse.status).toBe(200);
     expect(detailResponse.body.machineName).toBe('HP-Laptop');
     expect(detailResponse.body.focusEpisodeSeconds).toBe(2400);
+    expect(detailResponse.body.taskContinuitySeconds).toBe(2400);
     expect(detailResponse.body.attentionSegmentKind).toBe('focus');
     expect(detailResponse.body.focusEpisodeReasonText).toBe('Focus episode active.');
     expect(detailResponse.body.attentionSegmentReasonText).toBe('Steady focus episode.');
+    expect(detailResponse.body.pressureLevel).toBe(0.52);
+    expect(detailResponse.body.overloadLikelihood).toBe(0.52);
     expect(detailResponse.body.breakPendingKind).toBe('short_break');
     expect(detailResponse.body.breakPendingAction).toBe('stretch_break_suggestion');
     expect(detailResponse.body.displayName).toBe('Alice Porter');

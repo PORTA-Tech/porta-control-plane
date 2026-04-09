@@ -128,10 +128,42 @@ describe('fleet stores', () => {
     expect(loaded?.trustTier).toBe('high');
     expect(loaded?.focusEpisodeSeconds).toBe(1800);
     expect(loaded?.taskContinuitySeconds).toBe(1800);
+    expect(loaded?.pressureLevel).toBe(0.47);
+    expect(loaded?.overloadLikelihood).toBe(0.47);
     expect(loaded?.attentionSegmentKind).toBe('focus');
     expect(loaded?.distractionEpisodeActive).toBe(false);
     expect(loaded?.focusEpisodeReasonText).toBe('Focus episode active.');
     expect(loaded?.attentionSegmentReasonText).toBe('Steady focus episode.');
+  });
+
+  it('treats canonical summary fields as admin truth and mirrors legacy aliases from them', async () => {
+    await upsertMachineSummary({
+      ...summaryA,
+      focusEpisodeQuality: 0.91,
+      focusEpisodeSeconds: 2700,
+      focusEpisodeState: 'pause',
+      taskContinuityScore: 0.12,
+      taskContinuitySeconds: 45,
+      continuityState: 'reset',
+      pressureLevel: 0.73,
+      overloadLikelihood: 0.19,
+      breakNeeded: false,
+      breakPendingKind: 'long_break',
+      breakPendingAction: 'stretch_break_suggestion'
+    });
+
+    const loaded = await getMachineSummary('machine-a');
+    expect(loaded?.focusEpisodeQuality).toBe(0.91);
+    expect(loaded?.focusEpisodeSeconds).toBe(2700);
+    expect(loaded?.focusEpisodeState).toBe('pause');
+    expect(loaded?.taskContinuityScore).toBe(0.91);
+    expect(loaded?.taskContinuitySeconds).toBe(2700);
+    expect(loaded?.continuityState).toBe('pause');
+    expect(loaded?.pressureLevel).toBe(0.73);
+    expect(loaded?.overloadLikelihood).toBe(0.73);
+    expect(loaded?.breakNeeded).toBe(true);
+    expect(loaded?.breakPendingKind).toBe('long_break');
+    expect(loaded?.breakPendingAction).toBe('break_suggestion');
   });
 
   it('appends and filters machine action events in reverse time order', async () => {
