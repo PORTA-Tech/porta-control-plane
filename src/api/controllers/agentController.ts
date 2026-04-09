@@ -277,6 +277,11 @@ function isMachineActionEvent(value: unknown): value is MachineActionEvent {
     isNonEmptyString(row.timestampUtc) &&
     isOptionalString(row.appliedAtUtc) &&
     isOptionalString(row.errorCode) &&
+    isOptionalString(row.deliverySurface) &&
+    isOptionalString(row.interactionKind) &&
+    isOptionalString(row.breakKind) &&
+    isOptionalString(row.promptOutcome) &&
+    isOptionalString(row.overlayState) &&
     isNonEmptyString(row.policyId) &&
     isOptionalString(row.whatChanged) &&
     isOptionalString(row.howToUndo)

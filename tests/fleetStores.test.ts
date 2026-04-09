@@ -81,6 +81,11 @@ const actionA: MachineActionEvent = {
   timestampUtc: '2026-03-10T10:01:00.000Z',
   appliedAtUtc: '2026-03-10T10:01:02.000Z',
   errorCode: null,
+  deliverySurface: 'break_overlay',
+  interactionKind: 'choice_prompt',
+  breakKind: 'long_break',
+  promptOutcome: 'accepted',
+  overlayState: 'countdown_active',
   policyId: 'break-policy-v2',
   whatChanged: 'Displayed a break suggestion to the user.',
   howToUndo: null

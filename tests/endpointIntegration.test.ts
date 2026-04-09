@@ -237,6 +237,11 @@ describe('endpoint integration', () => {
         timestampUtc: '2026-03-11T12:00:00.000Z',
         appliedAtUtc: '2026-03-11T12:00:01.000Z',
         errorCode: null,
+        deliverySurface: 'break_overlay',
+        interactionKind: 'choice_prompt',
+        breakKind: 'long_break',
+        promptOutcome: 'accepted',
+        overlayState: 'countdown_active',
         policyId: 'break-policy',
         whatChanged: 'Break suggestion displayed to user.',
         howToUndo: 'Dismiss the suggestion overlay.'

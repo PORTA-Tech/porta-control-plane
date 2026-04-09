@@ -1040,7 +1040,7 @@ components:
 
     MachineActionExecutionStateValue:
       type: string
-      enum: [decision_only, decided, applied, verified, failed]
+      enum: [decision_only, decided, applied, verified, overlay_started, accepted, dismissed, skipped, snoozed, suppressed_by_preference, overlay_recovered, overlay_completed, overlay_aborted, failed]
 
     MachineActionVerifiedStateValue:
       type: string
@@ -1593,6 +1593,21 @@ components:
           format: date-time
           nullable: true
         error_code:
+          type: string
+          nullable: true
+        delivery_surface:
+          type: string
+          nullable: true
+        interaction_kind:
+          type: string
+          nullable: true
+        break_kind:
+          type: string
+          nullable: true
+        prompt_outcome:
+          type: string
+          nullable: true
+        overlay_state:
           type: string
           nullable: true
         policy_id:
