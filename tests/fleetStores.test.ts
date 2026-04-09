@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { MachineActionEvent, MachineSummaryReport } from '@porta/api-contracts';
 import { clearMachineActionStoreForTests, appendMachineActionEvent, listMachineActionEventsForMachine, listRecentMachineActionEvents } from '../src/store/machineActionStore.js';
-import { clearMachineSummaryStoreForTests, getMachineSummary, listMachineSummaries, upsertMachineSummary } from '../src/store/machineSummaryStore.js';
+import { clearMachineSummaryStoreForTests, getMachineSummary, listMachineSummaries, upsertMachineSummary, withCanonicalMachineSummary } from '../src/store/machineSummaryStore.js';
 import {
   assertFleetPersistenceConfigured,
   getFleetPersistenceMode,
@@ -134,6 +134,31 @@ describe('fleet stores', () => {
     expect(loaded?.distractionEpisodeActive).toBe(false);
     expect(loaded?.focusEpisodeReasonText).toBe('Focus episode active.');
     expect(loaded?.attentionSegmentReasonText).toBe('Steady focus episode.');
+  });
+
+  it('normalizes canonical focus, pressure, and break fields from compatibility values', () => {
+    const report: MachineSummaryReport = {
+      ...summaryA,
+      focusEpisodeQuality: Number.NaN,
+      focusEpisodeSeconds: Number.NaN,
+      focusEpisodeState: '',
+      pressureLevel: Number.NaN,
+      pressureConfidence: Number.NaN,
+      breakPendingKind: null,
+      breakPendingAction: 'break_suggestion',
+      taskContinuityScore: 0.66,
+      taskContinuitySeconds: 1800,
+      continuityState: 'keep',
+      overloadLikelihood: 0.77
+    };
+
+    const normalized = withCanonicalMachineSummary(report);
+
+    expect(normalized.focusEpisodeSeconds).toBe(1800);
+    expect(normalized.focusEpisodeQuality).toBe(0.66);
+    expect(normalized.pressureLevel).toBe(0.77);
+    expect(normalized.breakPendingKind).toBe('long_break');
+    expect(normalized.breakPendingAction).toBe('break_suggestion');
   });
 
   it('treats canonical summary fields as admin truth and mirrors legacy aliases from them', async () => {
