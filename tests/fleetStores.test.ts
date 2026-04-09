@@ -45,6 +45,8 @@ const summaryA: MachineSummaryReport = {
   taskContinuitySeconds: 1800,
   continuityState: 'keep',
   deepWorkActive: true,
+  pressureLevel: 0.47,
+  pressureConfidence: 0.86,
   overloadLikelihood: 0.33,
   overloadActive: false,
   breakNeeded: false,

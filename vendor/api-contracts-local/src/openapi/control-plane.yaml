@@ -1351,6 +1351,8 @@ components:
           task_continuity_seconds,
           continuity_state,
           deep_work_active,
+          pressure_level,
+          pressure_confidence,
           overload_likelihood,
           overload_active,
           break_needed,
@@ -1477,6 +1479,16 @@ components:
           $ref: '#/components/schemas/ContinuityStateValue'
         deep_work_active:
           type: boolean
+        pressure_level:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Canonical user-facing pressure signal. Prefer this over overload_likelihood when presenting product truth to humans.
+        pressure_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Canonical confidence for the displayed pressure signal. Show this separately from pressure instead of hiding pressure when confidence is limited.
         overload_likelihood:
           type: number
           minimum: 0

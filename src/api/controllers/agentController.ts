@@ -104,6 +104,12 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
   const focusEpisodeSeconds = isFiniteNumber(row.focusEpisodeSeconds)
     ? row.focusEpisodeSeconds
     : (isFiniteNumber(row.taskContinuitySeconds) ? row.taskContinuitySeconds : null);
+  const pressureLevel = isFiniteNumber(row.pressureLevel)
+    ? row.pressureLevel
+    : (isFiniteNumber(row.overloadLikelihood) ? row.overloadLikelihood : null);
+  const pressureConfidence = isFiniteNumber(row.pressureConfidence)
+    ? row.pressureConfidence
+    : (isFiniteNumber(row.modelConfidence) ? row.modelConfidence : null);
   const focusEpisodeState = normalizeContinuityState(row.focusEpisodeState ?? row.continuityState);
   const attentionSegmentKind = normalizeAttentionSegmentKind(row.attentionSegmentKind) ?? 'focus';
   const attentionSegmentSeconds = isFiniteNumber(row.attentionSegmentSeconds) ? row.attentionSegmentSeconds : 0;
@@ -150,7 +156,9 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
       isOptionalString(row.attentionSegmentReasonCode) &&
       isOptionalString(row.attentionSegmentReasonText) &&
       isBoolean(row.deepWorkActive) &&
-      isFiniteNumber(row.overloadLikelihood) &&
+      pressureLevel !== null &&
+      pressureConfidence !== null &&
+      (row.overloadLikelihood === null || row.overloadLikelihood === undefined || isFiniteNumber(row.overloadLikelihood)) &&
       isBoolean(row.overloadActive) &&
       isBoolean(row.breakNeeded) &&
       isOptionalString(row.breakPendingAction) &&
@@ -208,11 +216,13 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
     attentionSegmentReasonText: normalizeOptionalString(row.attentionSegmentReasonText) ?? undefined,
     distractionEpisodeActive,
     distractionEpisodeSeconds,
+    pressureLevel,
+    pressureConfidence,
     taskContinuityScore: isFiniteNumber(row.taskContinuityScore) ? row.taskContinuityScore : focusEpisodeQuality,
     taskContinuitySeconds: isFiniteNumber(row.taskContinuitySeconds) ? row.taskContinuitySeconds : focusEpisodeSeconds,
     continuityState: normalizeContinuityState(row.continuityState) ?? focusEpisodeState,
     deepWorkActive: row.deepWorkActive,
-    overloadLikelihood: row.overloadLikelihood,
+    overloadLikelihood: isFiniteNumber(row.overloadLikelihood) ? row.overloadLikelihood : pressureLevel,
     overloadActive: row.overloadActive,
     breakNeeded: row.breakNeeded,
     breakPendingAction: normalizeOptionalString(row.breakPendingAction) ?? undefined,

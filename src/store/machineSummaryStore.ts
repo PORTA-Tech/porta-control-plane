@@ -194,6 +194,12 @@ export function withCanonicalMachineSummary(report: MachineSummaryReport): Machi
   const distractionEpisodeSeconds = Number.isFinite(report.distractionEpisodeSeconds)
     ? report.distractionEpisodeSeconds
     : (distractionEpisodeActive ? attentionSegmentSeconds : 0);
+  const pressureLevel = Number.isFinite(report.pressureLevel)
+    ? report.pressureLevel
+    : report.overloadLikelihood;
+  const pressureConfidence = Number.isFinite(report.pressureConfidence)
+    ? report.pressureConfidence
+    : report.modelConfidence;
   const attentionSegmentReasonCode = deriveAttentionSegmentReasonCode(report, attentionSegmentKind);
   const attentionSegmentReasonText = deriveAttentionSegmentReasonText(report, attentionSegmentKind, attentionSegmentSeconds);
   const focusEpisodeReasonCode = deriveFocusEpisodeReasonCode(report, focusEpisodeState, attentionSegmentKind);
@@ -212,6 +218,8 @@ export function withCanonicalMachineSummary(report: MachineSummaryReport): Machi
     attentionSegmentReasonText,
     distractionEpisodeActive,
     distractionEpisodeSeconds,
+    pressureLevel,
+    pressureConfidence,
     taskContinuityScore: Number.isFinite(report.taskContinuityScore) ? report.taskContinuityScore : focusEpisodeQuality,
     taskContinuitySeconds: Number.isFinite(report.taskContinuitySeconds) ? report.taskContinuitySeconds : focusEpisodeSeconds,
     continuityState: (typeof report.continuityState === 'string' && report.continuityState.trim().length > 0)

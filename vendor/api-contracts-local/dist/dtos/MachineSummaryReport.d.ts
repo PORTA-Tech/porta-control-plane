@@ -49,6 +49,8 @@ export interface MachineSummaryReport {
     taskContinuitySeconds: number;
     continuityState: ContinuityState;
     deepWorkActive: boolean;
+    pressureLevel: number;
+    pressureConfidence: number;
     overloadLikelihood: number;
     overloadActive: boolean;
     breakNeeded: boolean;
