@@ -191,6 +191,22 @@ describe('fleet stores', () => {
     expect(loaded?.breakPendingAction).toBe('break_suggestion');
   });
 
+  it('keeps high pressure separate from overload activation in admin truth', async () => {
+    await upsertMachineSummary({
+      ...summaryA,
+      pressureLevel: 0.82,
+      pressureConfidence: 0.43,
+      overloadLikelihood: 0.26,
+      overloadActive: false
+    });
+
+    const loaded = await getMachineSummary('machine-a');
+    expect(loaded?.pressureLevel).toBe(0.82);
+    expect(loaded?.pressureConfidence).toBe(0.43);
+    expect(loaded?.overloadActive).toBe(false);
+    expect(loaded?.overloadLikelihood).toBe(0.82);
+  });
+
   it('derives duration-rich reset reasons from canonical episode fields when explicit text is missing', () => {
     const normalized = withCanonicalMachineSummary({
       ...summaryA,

@@ -625,6 +625,70 @@ describe('endpoint integration', () => {
     expect(response.body.attentionSegmentReasonText).toBe('Stayed outside focus context for 1m 35s.');
   });
 
+  it('preserves high pressure while overload remains inactive in machine detail views', async () => {
+    const summary = {
+      machineId: 'machine-pressure-split',
+      machineName: 'Pressure-Split-Laptop',
+      userName: 'unknown',
+      agentVersion: '1.0.0',
+      schemaVersion: '1.0.0',
+      policyVersion: 'policy-v2',
+      reportedAtUtc: new Date().toISOString(),
+      agentRunning: true,
+      userSessionConnected: true,
+      activityDetected: true,
+      lastActivityUtc: new Date(Date.now() - 2_000).toISOString(),
+      userAgentHeartbeatUtc: new Date(Date.now() - 1_000).toISOString(),
+      captureContext: 'UserSession',
+      keyboardSignalActive: true,
+      mouseSignalActive: true,
+      ownershipWarning: null,
+      captureFailureReason: null,
+      lastError: null,
+      backendConnected: true,
+      localApiAuthReady: true,
+      dbMigrationFailed: false,
+      focusEpisodeQuality: 0.71,
+      focusEpisodeSeconds: 1800,
+      focusEpisodeState: 'keep',
+      focusEpisodeReasonCode: 'focus_episode_active',
+      focusEpisodeReasonText: 'Focus episode active.',
+      attentionSegmentKind: 'focus',
+      attentionSegmentSeconds: 0,
+      attentionSegmentReasonCode: 'steady_focus',
+      attentionSegmentReasonText: 'Steady focus episode.',
+      distractionEpisodeActive: false,
+      distractionEpisodeSeconds: 0,
+      taskContinuityScore: 0.71,
+      taskContinuitySeconds: 1800,
+      continuityState: 'keep',
+      deepWorkActive: false,
+      pressureLevel: 0.82,
+      pressureConfidence: 0.43,
+      overloadLikelihood: 0.26,
+      overloadActive: false,
+      breakNeeded: false,
+      breakPendingAction: null,
+      breakPendingReasonCode: null,
+      calibrationStage: 'calibrated',
+      trustTier: 'medium',
+      modelConfidence: 0.43,
+      signalQualityScore: 0.83,
+      partialData: false,
+      missingMajorChannels: []
+    };
+
+    const ingest = await request(app).post('/api/agent/machine-summary').send(summary);
+    expect(ingest.status).toBe(202);
+
+    const response = await withOperatorHeaders(request(app).get('/v1/machines/machine-pressure-split'));
+    expect(response.status).toBe(200);
+    expect(response.body.pressureLevel).toBe(0.82);
+    expect(response.body.pressureConfidence).toBe(0.43);
+    expect(response.body.overloadActive).toBe(false);
+    expect(response.body.overloadLikelihood).toBe(0.82);
+  });
+
   it('GET /v1/system/health exposes fleet persistence mode for validation gates', async () => {
     const response = await withOperatorHeaders(request(app).get('/v1/system/health'));
 
