@@ -191,6 +191,25 @@ describe('fleet stores', () => {
     expect(loaded?.breakPendingAction).toBe('break_suggestion');
   });
 
+  it('derives duration-rich reset reasons from canonical episode fields when explicit text is missing', () => {
+    const normalized = withCanonicalMachineSummary({
+      ...summaryA,
+      focusEpisodeState: 'reset',
+      focusEpisodeReasonCode: null,
+      focusEpisodeReasonText: null,
+      attentionSegmentKind: 'fragmentation_distraction',
+      attentionSegmentSeconds: 90,
+      attentionSegmentReasonCode: null,
+      attentionSegmentReasonText: null,
+      distractionEpisodeActive: true,
+      distractionEpisodeSeconds: 125
+    });
+
+    expect(normalized.attentionSegmentReasonText).toBe('Rapid switching / fragmentation for 2m 5s.');
+    expect(normalized.focusEpisodeReasonCode).toBe('instability_reset');
+    expect(normalized.focusEpisodeReasonText).toBe('Sustained instability ended the focus episode after 2m 5s.');
+  });
+
   it('appends and filters machine action events in reverse time order', async () => {
     await appendMachineActionEvent(actionA);
     await appendMachineActionEvent(actionB);

@@ -182,10 +182,11 @@ function deriveFocusEpisodeReasonText(
       case 'away':
         return `Long break ended the focus episode after ${formatEpisodeDuration(attentionSegmentSeconds)} away.`;
       case 'off_task_distraction':
+        return `Major context shift ended the focus episode after ${formatEpisodeDuration(report.distractionEpisodeSeconds ?? attentionSegmentSeconds)} outside the focus context.`;
       case 'context_excursion':
-        return 'Major context shift ended the focus episode.';
+        return `Major context shift ended the focus episode after ${formatEpisodeDuration(attentionSegmentSeconds)} outside the focus context.`;
       case 'fragmentation_distraction':
-        return 'Sustained instability ended the focus episode.';
+        return `Sustained instability ended the focus episode after ${formatEpisodeDuration(report.distractionEpisodeSeconds ?? attentionSegmentSeconds)}.`;
       default:
         return 'Focus episode ended.';
     }

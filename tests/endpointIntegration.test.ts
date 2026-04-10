@@ -562,6 +562,69 @@ describe('endpoint integration', () => {
     expect(response.body.attentionSegmentReasonText).toBe('Away for 0s.');
   });
 
+  it('keeps duration-rich reset reasons when canonical reason text is absent', async () => {
+    const summary = {
+      machineId: 'machine-duration-fallback',
+      machineName: 'Fallback-Laptop',
+      userName: 'unknown',
+      agentVersion: '1.0.0',
+      schemaVersion: '1.0.0',
+      policyVersion: 'policy-v2',
+      reportedAtUtc: new Date().toISOString(),
+      agentRunning: true,
+      userSessionConnected: true,
+      activityDetected: true,
+      lastActivityUtc: new Date(Date.now() - 2_000).toISOString(),
+      userAgentHeartbeatUtc: new Date(Date.now() - 1_000).toISOString(),
+      captureContext: 'UserSession',
+      keyboardSignalActive: true,
+      mouseSignalActive: true,
+      ownershipWarning: null,
+      captureFailureReason: null,
+      lastError: null,
+      backendConnected: true,
+      localApiAuthReady: true,
+      dbMigrationFailed: false,
+      focusEpisodeQuality: 0.42,
+      focusEpisodeSeconds: 0,
+      focusEpisodeState: 'reset',
+      focusEpisodeReasonCode: null,
+      focusEpisodeReasonText: null,
+      attentionSegmentKind: 'off_task_distraction',
+      attentionSegmentSeconds: 95,
+      attentionSegmentReasonCode: null,
+      attentionSegmentReasonText: null,
+      distractionEpisodeActive: true,
+      distractionEpisodeSeconds: 95,
+      taskContinuityScore: 0.42,
+      taskContinuitySeconds: 0,
+      continuityState: 'reset',
+      deepWorkActive: false,
+      pressureLevel: 0.41,
+      pressureConfidence: 0.76,
+      overloadLikelihood: 0.41,
+      overloadActive: false,
+      breakNeeded: false,
+      breakPendingAction: null,
+      breakPendingReasonCode: null,
+      calibrationStage: 'calibrated',
+      trustTier: 'medium',
+      modelConfidence: 0.76,
+      signalQualityScore: 0.8,
+      partialData: false,
+      missingMajorChannels: []
+    };
+
+    const ingest = await request(app).post('/api/agent/machine-summary').send(summary);
+    expect(ingest.status).toBe(202);
+
+    const response = await withOperatorHeaders(request(app).get('/v1/machines/machine-duration-fallback'));
+    expect(response.status).toBe(200);
+    expect(response.body.focusEpisodeReasonCode).toBe('major_context_shift');
+    expect(response.body.focusEpisodeReasonText).toBe('Major context shift ended the focus episode after 1m 35s outside the focus context.');
+    expect(response.body.attentionSegmentReasonText).toBe('Stayed outside focus context for 1m 35s.');
+  });
+
   it('GET /v1/system/health exposes fleet persistence mode for validation gates', async () => {
     const response = await withOperatorHeaders(request(app).get('/v1/system/health'));
 
