@@ -254,6 +254,8 @@ export function withCanonicalMachineSummary(report: MachineSummaryReport): Machi
     breakNeeded: report.breakNeeded || breakPendingKind !== null,
     breakPendingKind: breakPendingKind ?? null,
     breakPendingAction,
+    // Always mirror canonical fields into legacy aliases so downstream consumers
+    // never read a stale live-timer value from the raw transport field.
     taskContinuityScore: focusEpisodeQuality,
     taskContinuitySeconds: focusEpisodeSeconds,
     continuityState: focusEpisodeState,
