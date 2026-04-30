@@ -156,11 +156,23 @@ function deriveFocusEpisodeReasonCode(
   }
 
   if (focusEpisodeState === 'pause') {
-    return 'focus_episode_paused';
+    switch (attentionSegmentKind) {
+      case 'away': return 'break_pause';
+      case 'context_excursion': return 'context_excursion';
+      case 'off_task_distraction': return 'outside_focus_context';
+      case 'fragmentation_distraction': return 'focus_unstable';
+      default: return 'focus_episode_paused';
+    }
   }
 
   if (focusEpisodeState === 'decay') {
-    return 'focus_episode_decay';
+    switch (attentionSegmentKind) {
+      case 'away': return 'extended_break_decay';
+      case 'context_excursion': return 'context_excursion_decay';
+      case 'off_task_distraction': return 'outside_focus_context_decay';
+      case 'fragmentation_distraction': return 'focus_instability';
+      default: return 'focus_episode_decay';
+    }
   }
 
   return 'focus_episode_active';
@@ -193,11 +205,23 @@ function deriveFocusEpisodeReasonText(
   }
 
   if (focusEpisodeState === 'pause') {
-    return 'Focus episode is paused.';
+    switch (attentionSegmentKind) {
+      case 'away': return 'Focus episode is on hold during a break.';
+      case 'context_excursion': return 'Focus episode is preserved during a context excursion.';
+      case 'off_task_distraction': return 'Focus episode is on hold while away from the focus context.';
+      case 'fragmentation_distraction': return 'Focus episode is paused due to switching instability.';
+      default: return 'Focus episode is paused.';
+    }
   }
 
   if (focusEpisodeState === 'decay') {
-    return 'Focus episode is fading.';
+    switch (attentionSegmentKind) {
+      case 'away': return 'Focus episode is fading during an extended break.';
+      case 'context_excursion': return 'Focus episode is decaying during an extended context excursion.';
+      case 'off_task_distraction': return 'Focus episode is decaying after extended absence from the focus context.';
+      case 'fragmentation_distraction': return 'Focus episode is decaying due to sustained switching instability.';
+      default: return 'Focus episode is fading.';
+    }
   }
 
   return 'Focus episode active.';
