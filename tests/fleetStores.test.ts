@@ -226,6 +226,49 @@ describe('fleet stores', () => {
     expect(normalized.focusEpisodeReasonText).toBe('Sustained instability ended the focus episode after 2m 5s.');
   });
 
+  it('accepts canonical-only payload without legacy fields and uplifts correctly', async () => {
+    const canonicalOnly: MachineSummaryReport = {
+      ...summaryA,
+      focusEpisodeQuality: 0.78,
+      focusEpisodeSeconds: 2400,
+      focusEpisodeState: 'keep',
+      pressureLevel: 0.44,
+      pressureConfidence: 0.81,
+      // Legacy fields intentionally absent — canonical ingestion must work without them
+      taskContinuityScore: 0.78,
+      taskContinuitySeconds: 2400,
+      continuityState: 'keep',
+      overloadLikelihood: 0.44,
+      breakPendingKind: 'short_break',
+      breakPendingAction: null
+    };
+
+    await upsertMachineSummary(canonicalOnly);
+    const loaded = await getMachineSummary('machine-a');
+
+    expect(loaded?.focusEpisodeSeconds).toBe(2400);
+    expect(loaded?.taskContinuitySeconds).toBe(2400);   // alias mirrors canonical
+    expect(loaded?.pressureLevel).toBe(0.44);
+    expect(loaded?.overloadLikelihood).toBe(0.44);      // alias mirrors canonical
+    expect(loaded?.breakPendingKind).toBe('short_break');
+    expect(loaded?.breakNeeded).toBe(true);
+  });
+
+  it('uplifts legacy-only break transport to canonical break kind', () => {
+    // Old agents still send breakPendingAction with legacy names.
+    const legacyBreak = withCanonicalMachineSummary({
+      ...summaryA,
+      breakPendingKind: null,
+      breakPendingAction: 'stretch_break_suggestion',
+      breakNeeded: false
+    });
+
+    expect(legacyBreak.breakPendingKind).toBe('short_break');
+    expect(legacyBreak.breakNeeded).toBe(true);
+    // Legacy transport field preserved for backward-compat readers
+    expect(legacyBreak.breakPendingAction).toBe('stretch_break_suggestion');
+  });
+
   it('appends and filters machine action events in reverse time order', async () => {
     await appendMachineActionEvent(actionA);
     await appendMachineActionEvent(actionB);
