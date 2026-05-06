@@ -1,6 +1,21 @@
 ﻿# PORTA Control Plane
 
-Central governance and decision service for PORTA.
+Central governance and decision service for PORTA / **Ari**.
+
+## What Ari Is
+
+**Ari** is a Windows productivity-tracking agent (`porta-agent-windows-x64`). It runs as a Windows service (`ari.exe`) plus a user-session app (`Porta.UserAgent.exe`) and a WPF dashboard (`Porta.ControlCenter.exe`). It captures keyboard/mouse metadata (never raw content), classifies focus/pressure/overload state in real time, and surfaces it through a floating widget and Control Center.
+
+The **control plane** (this repo) handles fleet management, policy governance, and signed intervention commands for the Windows agent. The Windows agent runs fully offline-first and connects here only for policy sync and telemetry.
+
+**Key concept mapping** (agent transport → product meaning):
+- `taskContinuitySeconds` → focus episode duration
+- `overloadLikelihood` / `pressure_level` → user-facing pressure (0–1)
+- `short_break` / `stretch_break_suggestion` → short break suggestion
+- `long_break` / `break_suggestion` → long break suggestion
+- `freshness_state = "fresh"` → state is up-to-date; `"stale"` → state refresh pending
+
+---
 
 This service ingests typed data, evaluates deterministic policies, emits signed intervention commands, keeps append-only audit traces, and exposes operator APIs for rollout/governance.
 
