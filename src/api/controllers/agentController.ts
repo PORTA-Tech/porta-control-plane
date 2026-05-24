@@ -6,6 +6,9 @@ import { appendMachineActionEvent } from '../../store/machineActionStore.js';
 import { upsertMachineSummary, withCanonicalMachineSummary } from '../../store/machineSummaryStore.js';
 import { maybeActivateAccount, recordAccountActiveDay } from '../../core/growthService.js';
 import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileService.js';
+import { getAccountProfile } from '../../store/accountStore.js';
+import { buildDigestEmail, type DailyDigestPayload } from '../../core/digestEmailBuilder.js';
+import { sendEmail } from '../../core/emailService.js';
 
 interface AgentStatusPayload {
   agentId?: string;
@@ -393,6 +396,76 @@ export function createAgentController(): Router {
       }
 
       res.status(202).json({ accepted: true, count: payload.length });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Daily digest — sent by the agent at 23:30 Dubai time (19:30 UTC) when
+  // the user has been active for at least 1 hour.
+  router.post('/daily-digest', async (req, res, next) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const accountId = typeof body.accountId === 'string' && body.accountId.trim().length > 0
+        ? body.accountId.trim()
+        : null;
+
+      if (!accountId) {
+        res.status(400).json({ error: 'accountId is required' });
+        return;
+      }
+
+      // Resolve the account's primary email
+      const profile = await getAccountProfile(accountId);
+      if (!profile || !profile.primaryEmail) {
+        // Accept the payload silently — no email to send to yet
+        res.status(202).json({ accepted: true, sent: false, reason: 'no_email' });
+        return;
+      }
+
+      const payload: DailyDigestPayload = {
+        accountId,
+        deviceId: typeof body.deviceId === 'string' ? body.deviceId : '',
+        machineId: typeof body.machineId === 'string' ? body.machineId : '',
+        dateLocal: typeof body.dateLocal === 'string' ? body.dateLocal : '',
+        timezoneOffsetMinutes: typeof body.timezoneOffsetMinutes === 'number' ? body.timezoneOffsetMinutes : 0,
+        reportedAtUtc: typeof body.reportedAtUtc === 'string' ? body.reportedAtUtc : '',
+        trackedSeconds: typeof body.trackedSeconds === 'number' ? body.trackedSeconds : 0,
+        focusSeconds: typeof body.focusSeconds === 'number' ? body.focusSeconds : 0,
+        focusQualityScore: typeof body.focusQualityScore === 'number' ? body.focusQualityScore : 0,
+        distractionSeconds: typeof body.distractionSeconds === 'number' ? body.distractionSeconds : 0,
+        awaySeconds: typeof body.awaySeconds === 'number' ? body.awaySeconds : 0,
+        contextExcursionSeconds: typeof body.contextExcursionSeconds === 'number' ? body.contextExcursionSeconds : 0,
+        longestFocusStreakSeconds: typeof body.longestFocusStreakSeconds === 'number' ? body.longestFocusStreakSeconds : 0,
+        fragmentationEpisodeCount: typeof body.fragmentationEpisodeCount === 'number' ? body.fragmentationEpisodeCount : 0,
+        socialMediaLoopCount: typeof body.socialMediaLoopCount === 'number' ? body.socialMediaLoopCount : 0,
+        gamingEpisodeCount: typeof body.gamingEpisodeCount === 'number' ? body.gamingEpisodeCount : 0,
+        socialMediaSeconds: typeof body.socialMediaSeconds === 'number' ? body.socialMediaSeconds : 0,
+        gamingLauncherSeconds: typeof body.gamingLauncherSeconds === 'number' ? body.gamingLauncherSeconds : 0,
+        gamingActiveSeconds: typeof body.gamingActiveSeconds === 'number' ? body.gamingActiveSeconds : 0,
+        passiveConsumptionSeconds: typeof body.passiveConsumptionSeconds === 'number' ? body.passiveConsumptionSeconds : 0,
+        commMonitoringReturnCount: typeof body.commMonitoringReturnCount === 'number' ? body.commMonitoringReturnCount : 0,
+        socialMediaReturnCount: typeof body.socialMediaReturnCount === 'number' ? body.socialMediaReturnCount : 0,
+        overloadEpisodeCount: typeof body.overloadEpisodeCount === 'number' ? body.overloadEpisodeCount : 0,
+        breaksTakenCount: typeof body.breaksTakenCount === 'number' ? body.breaksTakenCount : 0,
+        breaksSuggestedCount: typeof body.breaksSuggestedCount === 'number' ? body.breaksSuggestedCount : 0,
+        mostDistractedHourLabel: typeof body.mostDistractedHourLabel === 'string' ? body.mostDistractedHourLabel : 'n/a',
+        developmentSeconds: typeof body.developmentSeconds === 'number' ? body.developmentSeconds : 0,
+        productivitySeconds: typeof body.productivitySeconds === 'number' ? body.productivitySeconds : 0,
+        communicationSeconds: typeof body.communicationSeconds === 'number' ? body.communicationSeconds : 0,
+        entertainmentSeconds: typeof body.entertainmentSeconds === 'number' ? body.entertainmentSeconds : 0
+      };
+
+      const { subject, html } = buildDigestEmail(payload);
+      const sent = await sendEmail({ to: profile.primaryEmail, subject, html });
+
+      if (sent) {
+        console.log(`[daily-digest] Sent digest for account ${accountId} to ${profile.primaryEmail} (date: ${payload.dateLocal})`);
+      } else {
+        console.warn(`[daily-digest] Failed to send digest for account ${accountId} (date: ${payload.dateLocal})`);
+      }
+
+      res.status(202).json({ accepted: true, sent });
     } catch (error) {
       next(error);
     }

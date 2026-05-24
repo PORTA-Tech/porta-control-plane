@@ -16,7 +16,8 @@
   "dependencies": {
     "@porta/api-contracts": "file:vendor/api-contracts-local",
     "express": "^4.21.1",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "resend": "^4.0.0"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^12.1.0",
