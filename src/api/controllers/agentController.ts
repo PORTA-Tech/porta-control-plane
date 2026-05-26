@@ -456,7 +456,8 @@ export function createAgentController(): Router {
         entertainmentSeconds: typeof body.entertainmentSeconds === 'number' ? body.entertainmentSeconds : 0
       };
 
-      const { subject, html } = buildDigestEmail(payload);
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const { subject, html } = buildDigestEmail(payload, `${baseUrl}/launch`);
       const sent = await sendEmail({ to: profile.primaryEmail, subject, html });
 
       if (sent) {
