@@ -11,7 +11,7 @@ import {
   revokeDeviceForAccount,
   unlinkDeviceForAccount
 } from '../../core/identityProfileService.js';
-import { upsertAccountProfile } from '../../store/accountStore.js';
+import { getAccountProfileByPrimaryEmail, upsertAccountProfile } from '../../store/accountStore.js';
 import type { OperatorRequest } from '../middleware/auth.js';
 
 function requireSessionUser(req: OperatorRequest, res: Response): string | null {
@@ -248,9 +248,9 @@ export function createIdentityController(): Router {
       return;
     }
 
-    const profile = await ensureAccountProfileForAuthUser(userId);
+    const profile = await getAccountProfileByPrimaryEmail(userId);
     if (!profile) {
-      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: `No account found for user_id: ${userId}` });
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: `No account found with primary_email: ${userId}` });
       return;
     }
 
