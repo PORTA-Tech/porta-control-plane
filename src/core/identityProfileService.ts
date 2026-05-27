@@ -351,7 +351,7 @@ export async function ensureAccountProfileForAuthUser(userId: string): Promise<A
   const profile: AccountProfile = {
     accountId: existing?.accountId ?? authUser.account_id,
     displayName: authUser.display_name,
-    primaryEmail: authUser.user_id,
+    primaryEmail: existing?.primaryEmail ?? authUser.user_id,
     emailVerified: existing?.emailVerified ?? false,
     avatarUrl: authUser.avatar_url ?? existing?.avatarUrl ?? null,
     status: existing?.status ?? 'active',

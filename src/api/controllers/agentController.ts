@@ -415,9 +415,8 @@ export function createAgentController(): Router {
         return;
       }
 
-      // Resolve the account's primary email
       const profile = await getAccountProfile(accountId);
-      if (!profile || !profile.primaryEmail) {
+      if (!profile?.primaryEmail) {
         // Accept the payload silently — no email to send to yet
         res.status(202).json({ accepted: true, sent: false, reason: 'no_email' });
         return;
@@ -463,7 +462,7 @@ export function createAgentController(): Router {
       if (sent) {
         console.log(`[daily-digest] Sent digest for account ${accountId} to ${profile.primaryEmail} (date: ${payload.dateLocal})`);
       } else {
-        console.warn(`[daily-digest] Failed to send digest for account ${accountId} (date: ${payload.dateLocal})`);
+        console.warn(`[daily-digest] Failed to send digest for account ${accountId} to ${profile.primaryEmail} (date: ${payload.dateLocal})`);
       }
 
       res.status(202).json({ accepted: true, sent });

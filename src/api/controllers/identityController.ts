@@ -11,6 +11,7 @@ import {
   revokeDeviceForAccount,
   unlinkDeviceForAccount
 } from '../../core/identityProfileService.js';
+import { upsertAccountProfile } from '../../store/accountStore.js';
 import type { OperatorRequest } from '../middleware/auth.js';
 
 function requireSessionUser(req: OperatorRequest, res: Response): string | null {
@@ -49,6 +50,8 @@ export function createIdentityController(): Router {
       : typeof body.avatar_url === 'string'
         ? body.avatar_url
         : undefined;
+    const primaryEmailRaw = typeof body.primary_email === 'string' ? body.primary_email.trim().toLowerCase() : undefined;
+    const primaryEmail = primaryEmailRaw && primaryEmailRaw.includes('@') ? primaryEmailRaw : undefined;
 
     const updated = await updateAuthUserProfile({
       user_id: userId,
@@ -61,10 +64,16 @@ export function createIdentityController(): Router {
       return;
     }
 
-    const profile = await ensureAccountProfileForAuthUser(userId);
+    let profile = await ensureAccountProfileForAuthUser(userId);
     if (!profile) {
       res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
       return;
+    }
+
+    if (primaryEmail && primaryEmail !== profile.primaryEmail) {
+      const now = new Date().toISOString();
+      profile = { ...profile, primaryEmail, updatedAt: now };
+      await upsertAccountProfile(profile);
     }
 
     res.json({
@@ -225,6 +234,30 @@ export function createIdentityController(): Router {
       ok: true,
       device: updated
     });
+  });
+
+  // Admin endpoint: update a user's primaryEmail by their user_id (login credential).
+  // Usage: PATCH /v1/identity/admin/accounts/primary-email
+  // Body: { "user_id": "old@email.com", "primary_email": "new@email.com" }
+  router.patch('/admin/accounts/primary-email', async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const userId = typeof body.user_id === 'string' ? body.user_id.trim() : '';
+    const newEmail = typeof body.primary_email === 'string' ? body.primary_email.trim().toLowerCase() : '';
+    if (!userId || !newEmail || !newEmail.includes('@')) {
+      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'user_id and a valid primary_email are required.' });
+      return;
+    }
+
+    const profile = await ensureAccountProfileForAuthUser(userId);
+    if (!profile) {
+      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: `No account found for user_id: ${userId}` });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const updated = { ...profile, primaryEmail: newEmail, updatedAt: now };
+    await upsertAccountProfile(updated);
+    res.json({ ok: true, account: updated });
   });
 
   router.get('/admin/organizations/:orgId', async (req: Request, res: Response) => {
