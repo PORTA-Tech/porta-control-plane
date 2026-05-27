@@ -255,6 +255,14 @@ export function createIdentityController(): Router {
         return;
       }
 
+      // If the new email is already claimed by a different account, displace it first
+      const conflict = await getAccountProfileByPrimaryEmail(newEmail);
+      if (conflict && conflict.accountId !== profile.accountId) {
+        const nowConflict = new Date().toISOString();
+        const displaced = { ...conflict, primaryEmail: `displaced-${conflict.accountId}@porta.internal`, updatedAt: nowConflict };
+        await upsertAccountProfile(displaced);
+      }
+
       const now = new Date().toISOString();
       const updated = { ...profile, primaryEmail: newEmail, updatedAt: now };
       await upsertAccountProfile(updated);
