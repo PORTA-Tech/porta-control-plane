@@ -240,24 +240,29 @@ export function createIdentityController(): Router {
   // Usage: PATCH /v1/identity/admin/accounts/primary-email
   // Body: { "user_id": "old@email.com", "primary_email": "new@email.com" }
   router.patch('/admin/accounts/primary-email', async (req: Request, res: Response) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const userId = typeof body.user_id === 'string' ? body.user_id.trim() : '';
-    const newEmail = typeof body.primary_email === 'string' ? body.primary_email.trim().toLowerCase() : '';
-    if (!userId || !newEmail || !newEmail.includes('@')) {
-      res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'user_id and a valid primary_email are required.' });
-      return;
-    }
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const userId = typeof body.user_id === 'string' ? body.user_id.trim() : '';
+      const newEmail = typeof body.primary_email === 'string' ? body.primary_email.trim().toLowerCase() : '';
+      if (!userId || !newEmail || !newEmail.includes('@')) {
+        res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'user_id and a valid primary_email are required.' });
+        return;
+      }
 
-    const profile = await getAccountProfileByPrimaryEmail(userId);
-    if (!profile) {
-      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: `No account found with primary_email: ${userId}` });
-      return;
-    }
+      const profile = await getAccountProfileByPrimaryEmail(userId);
+      if (!profile) {
+        res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: `No account found with primary_email: ${userId}` });
+        return;
+      }
 
-    const now = new Date().toISOString();
-    const updated = { ...profile, primaryEmail: newEmail, updatedAt: now };
-    await upsertAccountProfile(updated);
-    res.json({ ok: true, account: updated });
+      const now = new Date().toISOString();
+      const updated = { ...profile, primaryEmail: newEmail, updatedAt: now };
+      await upsertAccountProfile(updated);
+      res.json({ ok: true, account: updated });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error_code: 'INTERNAL_ERROR', message });
+    }
   });
 
   router.get('/admin/organizations/:orgId', async (req: Request, res: Response) => {
