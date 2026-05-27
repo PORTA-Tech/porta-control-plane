@@ -49,6 +49,7 @@ const routePolicies: RoutePolicy[] = [
   { method: 'POST', path: /^\/v1\/admin\/accounts\/[^/]+\/devices\/[^/]+\/revoke$/, roles: roleSet('admin') },
   { method: 'POST', path: /^\/v1\/admin\/accounts\/[^/]+\/devices\/[^/]+\/unlink$/, roles: roleSet('admin') },
   { method: 'GET', path: /^\/v1\/admin\/organizations\/[^/]+$/, roles: roleSet('admin') },
+  { method: 'PATCH', path: /^\/v1\/admin\/accounts\/primary-email$/, roles: roleSet('admin') },
   { method: 'GET', path: /^\/v1\/machines\/summary$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/machines\/[^/]+$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/machines\/[^/]+\/actions$/, roles: roleSet('viewer', 'operator', 'admin') },
