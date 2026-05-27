@@ -40,46 +40,57 @@ export function createIdentityController(): Router {
   });
 
   router.patch('/me/profile', async (req: Request, res: Response) => {
-    const userId = requireSessionUser(req as OperatorRequest, res);
-    if (!userId) return;
+    try {
+      const userId = requireSessionUser(req as OperatorRequest, res);
+      if (!userId) return;
 
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const displayName = typeof body.display_name === 'string' ? body.display_name : undefined;
-    const avatarUrl = body.avatar_url === null
-      ? null
-      : typeof body.avatar_url === 'string'
-        ? body.avatar_url
-        : undefined;
-    const primaryEmailRaw = typeof body.primary_email === 'string' ? body.primary_email.trim().toLowerCase() : undefined;
-    const primaryEmail = primaryEmailRaw && primaryEmailRaw.includes('@') ? primaryEmailRaw : undefined;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const displayName = typeof body.display_name === 'string' ? body.display_name : undefined;
+      const avatarUrl = body.avatar_url === null
+        ? null
+        : typeof body.avatar_url === 'string'
+          ? body.avatar_url
+          : undefined;
+      const primaryEmailRaw = typeof body.primary_email === 'string' ? body.primary_email.trim().toLowerCase() : undefined;
+      const primaryEmail = primaryEmailRaw && primaryEmailRaw.includes('@') ? primaryEmailRaw : undefined;
 
-    const updated = await updateAuthUserProfile({
-      user_id: userId,
-      ...(displayName !== undefined ? { display_name: displayName } : {}),
-      ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {})
-    });
+      const updated = await updateAuthUserProfile({
+        user_id: userId,
+        ...(displayName !== undefined ? { display_name: displayName } : {}),
+        ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {})
+      });
 
-    if (!updated.ok) {
-      res.status(400).json({ error_code: updated.error_code, message: updated.message });
-      return;
+      if (!updated.ok) {
+        res.status(400).json({ error_code: updated.error_code, message: updated.message });
+        return;
+      }
+
+      let profile = await ensureAccountProfileForAuthUser(userId);
+      if (!profile) {
+        res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
+        return;
+      }
+
+      if (primaryEmail && primaryEmail !== profile.primaryEmail) {
+        // If the new email is already claimed by a different account, displace it first
+        const conflict = await getAccountProfileByPrimaryEmail(primaryEmail);
+        if (conflict && conflict.accountId !== profile.accountId) {
+          const nowConflict = new Date().toISOString();
+          await upsertAccountProfile({ ...conflict, primaryEmail: `displaced-${conflict.accountId}@porta.internal`, updatedAt: nowConflict });
+        }
+        const now = new Date().toISOString();
+        profile = { ...profile, primaryEmail, updatedAt: now };
+        await upsertAccountProfile(profile);
+      }
+
+      res.json({
+        ok: true,
+        account: profile
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error_code: 'INTERNAL_ERROR', message });
     }
-
-    let profile = await ensureAccountProfileForAuthUser(userId);
-    if (!profile) {
-      res.status(404).json({ error_code: 'ACCOUNT_NOT_FOUND', message: 'Account profile was not found.' });
-      return;
-    }
-
-    if (primaryEmail && primaryEmail !== profile.primaryEmail) {
-      const now = new Date().toISOString();
-      profile = { ...profile, primaryEmail, updatedAt: now };
-      await upsertAccountProfile(profile);
-    }
-
-    res.json({
-      ok: true,
-      account: profile
-    });
   });
 
   router.get('/me/organizations', async (req: Request, res: Response) => {
