@@ -31,7 +31,7 @@ export interface DailyDigestPayload {
   entertainmentSeconds: number;
 }
 
-// ── Formatting helpers ──────────────────────────────────────────────────────
+// ── Formatting helpers ──────────────────────────────────────────────
 
 function fmtMinutes(seconds: number): string {
   const m = Math.round(seconds / 60);
@@ -98,23 +98,23 @@ function buildAriObservation(p: DailyDigestPayload): string {
   return `You tracked ${fmtMinutes(p.trackedSeconds)} of activity today. Ari will build a clearer picture of your patterns as more days accumulate.`;
 }
 
-// ── Category bar helper ─────────────────────────────────────────────────────
+// ── Category bar helper ─────────────────────────────────────────────────────────
 
 function categoryBar(label: string, seconds: number, totalSeconds: number, color: string): string {
   const p = totalSeconds > 0 ? Math.round((seconds / totalSeconds) * 100) : 0;
   return `
     <tr>
-      <td style="padding:5px 0;font-size:12px;color:#4a4a6a;width:120px;">${label}</td>
+      <td style="padding:5px 0;font-size:12px;color:#505070;width:120px;">${label}</td>
       <td style="padding:5px 8px;">
-        <div style="background:#1a1a28;border-radius:4px;height:7px;width:100%;">
+        <div style="background:#e0e0ef;border-radius:4px;height:7px;width:100%;">
           <div style="background:${color};border-radius:4px;height:7px;width:${p}%;"></div>
         </div>
       </td>
-      <td style="padding:5px 0;font-size:12px;color:#9090a8;text-align:right;white-space:nowrap;width:64px;">${fmtMinutes(seconds)} <span style="color:#3e3e5e;">${p}%</span></td>
+      <td style="padding:5px 0;font-size:12px;color:#505070;text-align:right;white-space:nowrap;width:64px;">${fmtMinutes(seconds)} <span style="color:#8080a0;">${p}%</span></td>
     </tr>`;
 }
 
-// ── Main builder ────────────────────────────────────────────────────────────
+// ── Main builder ──────────────────────────────────────────────────────────────────────
 
 export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://open'): { subject: string; html: string } {
   const trackedLabel = fmtMinutes(p.trackedSeconds);
@@ -148,51 +148,53 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
 <title>Ari Daily Digest</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable', 'Segoe UI', Helvetica, Arial, sans-serif; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable', 'Segoe UI', Helvetica, Arial, sans-serif; background-color: #f4f4f8; }
 </style>
 </head>
-<body style="margin:0;padding:0;background:#0a0a10;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI Variable','Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0a0a10;min-height:100vh;">
-<tr><td align="center" style="padding:32px 16px;">
+<body style="margin:0;padding:0;background:#f4f4f8;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI Variable','Segoe UI',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f4f8" style="background:#f4f4f8;min-height:100vh;">
+<tr><td align="center" style="padding:32px 16px;background:#f4f4f8;">
 
   <!-- Card -->
-  <table width="600" cellpadding="0" cellspacing="0" border="0" style="background:#111118;border-radius:16px;overflow:hidden;max-width:600px;width:100%;border:1px solid #1e1e2e;">
+  <table width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background:#ffffff;border-radius:16px;overflow:hidden;max-width:600px;width:100%;border:1px solid #e0e0ef;">
 
     <!-- Header accent line -->
-    <tr><td style="background:#3d3d7a;height:3px;font-size:0;line-height:0;">&nbsp;</td></tr>
+    <tr><td bgcolor="#5252b0" style="background:#5252b0;height:3px;font-size:0;line-height:0;">&nbsp;</td></tr>
 
     <!-- Header -->
     <tr>
-      <td style="background:#111118;padding:28px 36px 24px;">
-        <p style="margin:0 0 6px;font-size:11px;color:#5a5a8a;letter-spacing:0.1em;text-transform:uppercase;font-weight:500;">Ari by Porta</p>
-        <h1 style="margin:0 0 5px;font-size:22px;font-weight:700;color:#dde1ef;">Your day at a glance</h1>
-        <p style="margin:0;font-size:13px;color:#4a4a6a;">${dateDisplay}</p>
+      <td bgcolor="#ffffff" style="background:#ffffff;padding:28px 36px 24px;">
+        <p style="margin:0 0 6px;font-size:11px;color:#8080b0;letter-spacing:0.1em;text-transform:uppercase;font-weight:500;">Ari by Porta</p>
+        <h1 style="margin:0 0 5px;font-size:22px;font-weight:700;color:#111118;">Your day at a glance</h1>
+        <p style="margin:0;font-size:13px;color:#505070;">${dateDisplay}</p>
       </td>
     </tr>
 
     <!-- Section 1: Day at a glance -->
     <tr>
       <td style="padding:0 36px 0;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0e0e16;border-radius:10px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f7f7fc" style="background:#f7f7fc;border-radius:10px;">
           <tr>
             <td style="text-align:center;padding:20px 8px 20px 0;">
-              <p style="margin:0 0 4px;font-size:11px;color:#3e3e5e;text-transform:uppercase;letter-spacing:0.06em;">Tracked</p>
-              <p style="margin:0;font-size:26px;font-weight:700;color:#c8cde0;">${trackedLabel}</p>
+              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Tracked</p>
+              <p style="margin:0;font-size:26px;font-weight:700;color:#111118;">${trackedLabel}</p>
             </td>
-            <td style="text-align:center;padding:20px 8px;border-left:1px solid #1a1a28;border-right:1px solid #1a1a28;">
-              <p style="margin:0 0 4px;font-size:11px;color:#3e3e5e;text-transform:uppercase;letter-spacing:0.06em;">Focus</p>
-              <p style="margin:0;font-size:26px;font-weight:700;color:#7878c0;">${focusLabel}</p>
-              <p style="margin:0;font-size:12px;color:#3e3e5e;">${focusPctLabel} of day</p>
+            <td style="text-align:center;padding:20px 8px;border-left:1px solid #e0e0ef;border-right:1px solid #e0e0ef;">
+              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Focus</p>
+              <p style="margin:0;font-size:26px;font-weight:700;color:#5252a0;">${focusLabel}</p>
+              <p style="margin:0;font-size:12px;color:#8080a0;">${focusPctLabel} of day</p>
             </td>
             <td style="text-align:center;padding:20px 0 20px 8px;">
-              <p style="margin:0 0 4px;font-size:11px;color:#3e3e5e;text-transform:uppercase;letter-spacing:0.06em;">Quality</p>
+              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Quality</p>
               <p style="margin:0;font-size:26px;font-weight:700;color:${grade.color};">${grade.label}</p>
-              <p style="margin:0;font-size:12px;color:#3e3e5e;">${Math.round(p.focusQualityScore * 100)}/100</p>
+              <p style="margin:0;font-size:12px;color:#8080a0;">${Math.round(p.focusQualityScore * 100)}/100</p>
             </td>
           </tr>
         </table>
@@ -200,25 +202,25 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
     </tr>
 
     <!-- Divider -->
-    <tr><td style="padding:22px 36px 0;"><div style="height:1px;background:#1a1a28;"></div></td></tr>
+    <tr><td style="padding:22px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
 
     <!-- Section 2: Focus quality -->
     <tr>
       <td style="padding:20px 36px 0;">
-        <p style="margin:0 0 14px;font-size:11px;font-weight:600;color:#6060a8;text-transform:uppercase;letter-spacing:0.1em;">Focus Quality</p>
+        <p style="margin:0 0 14px;font-size:11px;font-weight:600;color:#5050a0;text-transform:uppercase;letter-spacing:0.1em;">Focus Quality</p>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="padding:0 16px 0 0;">
-              <p style="margin:0 0 2px;font-size:12px;color:#3e3e5e;">Longest streak</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#c8cde0;">${streakLabel}</p>
+              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Longest streak</p>
+              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${streakLabel}</p>
             </td>
-            <td style="padding:0 16px;border-left:1px solid #1a1a28;">
-              <p style="margin:0 0 2px;font-size:12px;color:#3e3e5e;">Fragmentation</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#c8cde0;">${p.fragmentationEpisodeCount} <span style="font-size:12px;color:#3e3e5e;">episodes</span></p>
+            <td style="padding:0 16px;border-left:1px solid #e0e0ef;">
+              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Fragmentation</p>
+              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${p.fragmentationEpisodeCount} <span style="font-size:12px;color:#8080a0;">episodes</span></p>
             </td>
-            <td style="padding:0 0 0 16px;border-left:1px solid #1a1a28;">
-              <p style="margin:0 0 2px;font-size:12px;color:#3e3e5e;">Context switches</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#c8cde0;">${fmtMinutes(p.contextExcursionSeconds)}</p>
+            <td style="padding:0 0 0 16px;border-left:1px solid #e0e0ef;">
+              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Context switches</p>
+              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${fmtMinutes(p.contextExcursionSeconds)}</p>
             </td>
           </tr>
         </table>
@@ -226,7 +228,7 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
     </tr>
 
     <!-- Divider -->
-    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#1a1a28;"></div></td></tr>
+    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
 
     <!-- Section 3: Distraction patterns -->
     <tr>
@@ -235,29 +237,29 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="padding:0 12px 0 0;vertical-align:top;">
-              <p style="margin:0 0 2px;font-size:12px;color:#3e3e5e;">Total distraction</p>
-              <p style="margin:0;font-size:18px;font-weight:600;color:#c07040;">${fmtMinutes(p.distractionSeconds)}</p>
+              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Total distraction</p>
+              <p style="margin:0;font-size:18px;font-weight:600;color:#b05020;">${fmtMinutes(p.distractionSeconds)}</p>
             </td>
-            <td style="padding:0 12px;border-left:1px solid #1a1a28;vertical-align:top;">
-              <p style="margin:0 0 2px;font-size:12px;color:#3e3e5e;">Social media loops</p>
-              <p style="margin:0;font-size:18px;font-weight:600;color:#c8cde0;">${p.socialMediaLoopCount}×</p>
-              <p style="margin:0;font-size:11px;color:#3e3e5e;">${fmtMinutes(p.socialMediaSeconds)}</p>
+            <td style="padding:0 12px;border-left:1px solid #e0e0ef;vertical-align:top;">
+              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Social media loops</p>
+              <p style="margin:0;font-size:18px;font-weight:600;color:#111118;">${p.socialMediaLoopCount}×</p>
+              <p style="margin:0;font-size:11px;color:#8080a0;">${fmtMinutes(p.socialMediaSeconds)}</p>
             </td>
-            <td style="padding:0 0 0 12px;border-left:1px solid #1a1a28;vertical-align:top;">
-              <p style="margin:0 0 2px;font-size:12px;color:#3e3e5e;">Gaming</p>
-              <p style="margin:0;font-size:18px;font-weight:600;color:#c8cde0;">${fmtMinutes(p.gamingLauncherSeconds + p.gamingActiveSeconds)}</p>
-              <p style="margin:0;font-size:11px;color:#3e3e5e;">${p.gamingEpisodeCount} episodes</p>
+            <td style="padding:0 0 0 12px;border-left:1px solid #e0e0ef;vertical-align:top;">
+              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Gaming</p>
+              <p style="margin:0;font-size:18px;font-weight:600;color:#111118;">${fmtMinutes(p.gamingLauncherSeconds + p.gamingActiveSeconds)}</p>
+              <p style="margin:0;font-size:11px;color:#8080a0;">${p.gamingEpisodeCount} episodes</p>
             </td>
           </tr>
         </table>
         ${p.mostDistractedHourLabel && p.mostDistractedHourLabel !== 'n/a'
-          ? `<p style="margin:12px 0 0;font-size:13px;color:#5a5a7a;">Most distracted hour: <span style="color:#c07040;font-weight:600;">${p.mostDistractedHourLabel}</span></p>`
+          ? `<p style="margin:12px 0 0;font-size:13px;color:#606080;">Most distracted hour: <span style="color:#b05020;font-weight:600;">${p.mostDistractedHourLabel}</span></p>`
           : ''}
       </td>
     </tr>
 
     <!-- Divider -->
-    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#1a1a28;"></div></td></tr>
+    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
 
     <!-- Section 4: Pressure & Breaks -->
     <tr>
@@ -266,12 +268,12 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="padding:0 16px 0 0;">
-              <p style="margin:0 0 2px;font-size:12px;color:#3e3e5e;">Overload episodes</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:${p.overloadEpisodeCount >= 3 ? '#c04055' : '#c8cde0'};">${p.overloadEpisodeCount}</p>
+              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Overload episodes</p>
+              <p style="margin:0;font-size:19px;font-weight:600;color:${p.overloadEpisodeCount >= 3 ? '#c04055' : '#111118'};">${p.overloadEpisodeCount}</p>
             </td>
-            <td style="padding:0 0 0 16px;border-left:1px solid #1a1a28;">
-              <p style="margin:0 0 2px;font-size:12px;color:#3e3e5e;">Break compliance</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#c8cde0;">${breakComplianceLabel}</p>
+            <td style="padding:0 0 0 16px;border-left:1px solid #e0e0ef;">
+              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Break compliance</p>
+              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${breakComplianceLabel}</p>
             </td>
           </tr>
         </table>
@@ -279,7 +281,7 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
     </tr>
 
     <!-- Divider -->
-    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#1a1a28;"></div></td></tr>
+    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
 
     <!-- Section 5: App category breakdown -->
     <tr>
@@ -295,16 +297,16 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
     </tr>
 
     <!-- Divider -->
-    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#1a1a28;"></div></td></tr>
+    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
 
     <!-- Section 6: Ari observation -->
     <tr>
       <td style="padding:20px 36px 0;">
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
-            <td style="background:#0e0e16;border-left:3px solid #3d3d7a;border-radius:0 8px 8px 0;padding:14px 16px;">
-              <p style="margin:0 0 6px;font-size:11px;font-weight:600;color:#5a5a8a;text-transform:uppercase;letter-spacing:0.1em;">Ari's observation</p>
-              <p style="margin:0;font-size:14px;color:#9a9aae;line-height:1.6;">${ariObs}</p>
+            <td bgcolor="#f7f7fc" style="background:#f7f7fc;border-left:3px solid #5252b0;border-radius:0 8px 8px 0;padding:14px 16px;">
+              <p style="margin:0 0 6px;font-size:11px;font-weight:600;color:#8080b0;text-transform:uppercase;letter-spacing:0.1em;">Ari's observation</p>
+              <p style="margin:0;font-size:14px;color:#505070;line-height:1.6;">${ariObs}</p>
             </td>
           </tr>
         </table>
@@ -314,14 +316,14 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
     <!-- CTA -->
     <tr>
       <td style="padding:28px 36px 32px;text-align:center;">
-        <a href="${launchUrl}" style="display:inline-block;background:#2a2a5a;color:#a0a0d0;text-decoration:none;font-size:14px;font-weight:600;padding:12px 36px;border-radius:8px;letter-spacing:0.04em;border:1px solid #3d3d7a;">Open Ari</a>
+        <a href="${launchUrl}" style="display:inline-block;background:#3d3d9a;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 36px;border-radius:8px;letter-spacing:0.04em;border:1px solid #3030a0;">Open Ari</a>
       </td>
     </tr>
 
     <!-- Footer -->
     <tr>
-      <td style="background:#0a0a10;padding:16px 36px;text-align:center;border-radius:0 0 16px 16px;border-top:1px solid #1a1a28;">
-        <p style="margin:0;font-size:11px;color:#2a2a3e;">Sent by Ari · <a href="https://useporta.com" style="color:#3a3a5a;text-decoration:none;">useporta.com</a></p>
+      <td bgcolor="#f4f4f8" style="background:#f4f4f8;padding:16px 36px;text-align:center;border-radius:0 0 16px 16px;border-top:1px solid #e0e0ef;">
+        <p style="margin:0;font-size:11px;color:#8080a0;">Sent by Ari · <a href="https://useporta.com" style="color:#5050a0;text-decoration:none;">useporta.com</a></p>
       </td>
     </tr>
 
