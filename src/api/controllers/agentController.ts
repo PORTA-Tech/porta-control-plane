@@ -9,6 +9,11 @@ import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileS
 import { getAccountProfile } from '../../store/accountStore.js';
 import { buildDigestEmail, type DailyDigestPayload } from '../../core/digestEmailBuilder.js';
 import { sendEmail } from '../../core/emailService.js';
+import { appendDigestLogEntry } from '../../store/digestLogStore.js';
+import { appendUptimeSample } from '../../store/machineUptimeStore.js';
+
+const lastUptimeSampleMs = new Map<string, number>();
+const UPTIME_SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
 
 interface AgentStatusPayload {
   agentId?: string;
@@ -343,6 +348,19 @@ export function createAgentController(): Router {
         orgId: payload.orgId ?? null
       });
       await upsertMachineSummary(payload);
+
+      const lastMs = lastUptimeSampleMs.get(payload.machineId) ?? 0;
+      if (Date.now() - lastMs >= UPTIME_SAMPLE_INTERVAL_MS) {
+        lastUptimeSampleMs.set(payload.machineId, Date.now());
+        void appendUptimeSample({
+          machineId: payload.machineId,
+          sampledAtUtc: payload.reportedAtUtc,
+          agentRunning: payload.agentRunning,
+          userSessionConnected: payload.userSessionConnected,
+          activityDetected: payload.activityDetected,
+        });
+      }
+
       if (reconciledDevice
         && reconciledDevice.status === 'active'
         && reconciledDevice.currentAccountId
@@ -415,21 +433,61 @@ export function createAgentController(): Router {
         return;
       }
 
+      const machineId = typeof body.machineId === 'string' ? body.machineId.trim() : '';
+      const dateLocal = typeof body.dateLocal === 'string' ? body.dateLocal.trim() : '';
+      const trackedSeconds = typeof body.trackedSeconds === 'number' ? body.trackedSeconds : 0;
+
       const profile = await getAccountProfile(accountId);
-      if (!profile?.primaryEmail) {
-        // Accept the payload silently — no email to send to yet
+      if (!profile) {
+        await appendDigestLogEntry({
+          machineId,
+          accountId,
+          dateLocal,
+          trackedSeconds,
+          fired: false,
+          failureReason: 'account_not_found',
+          sentAtUtc: new Date().toISOString(),
+        });
+        res.status(202).json({ accepted: true, sent: false, reason: 'account_not_found' });
+        return;
+      }
+
+      if (!profile.primaryEmail) {
+        await appendDigestLogEntry({
+          machineId,
+          accountId,
+          dateLocal,
+          trackedSeconds,
+          fired: false,
+          failureReason: 'email_not_set',
+          sentAtUtc: new Date().toISOString(),
+        });
         res.status(202).json({ accepted: true, sent: false, reason: 'no_email' });
+        return;
+      }
+
+      if (trackedSeconds < 3600) {
+        await appendDigestLogEntry({
+          machineId,
+          accountId,
+          dateLocal,
+          trackedSeconds,
+          fired: false,
+          failureReason: 'under_1h',
+          sentAtUtc: new Date().toISOString(),
+        });
+        res.status(200).json({ skipped: true, reason: 'under_1h' });
         return;
       }
 
       const payload: DailyDigestPayload = {
         accountId,
         deviceId: typeof body.deviceId === 'string' ? body.deviceId : '',
-        machineId: typeof body.machineId === 'string' ? body.machineId : '',
-        dateLocal: typeof body.dateLocal === 'string' ? body.dateLocal : '',
+        machineId,
+        dateLocal,
         timezoneOffsetMinutes: typeof body.timezoneOffsetMinutes === 'number' ? body.timezoneOffsetMinutes : 0,
         reportedAtUtc: typeof body.reportedAtUtc === 'string' ? body.reportedAtUtc : '',
-        trackedSeconds: typeof body.trackedSeconds === 'number' ? body.trackedSeconds : 0,
+        trackedSeconds,
         focusSeconds: typeof body.focusSeconds === 'number' ? body.focusSeconds : 0,
         focusQualityScore: typeof body.focusQualityScore === 'number' ? body.focusQualityScore : 0,
         distractionSeconds: typeof body.distractionSeconds === 'number' ? body.distractionSeconds : 0,
@@ -458,6 +516,16 @@ export function createAgentController(): Router {
       const baseUrl = `${req.protocol}://${req.get('host')}`;
       const { subject, html } = buildDigestEmail(payload, `${baseUrl}/launch`);
       const sent = await sendEmail({ to: profile.primaryEmail, subject, html });
+
+      await appendDigestLogEntry({
+        machineId: payload.machineId,
+        accountId,
+        dateLocal: payload.dateLocal,
+        trackedSeconds: payload.trackedSeconds,
+        fired: sent,
+        failureReason: sent ? null : 'send_failed',
+        sentAtUtc: new Date().toISOString(),
+      });
 
       if (sent) {
         console.log(`[daily-digest] Sent digest for account ${accountId} to ${profile.primaryEmail} (date: ${payload.dateLocal})`);

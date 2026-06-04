@@ -436,6 +436,35 @@ async function initializeFleetSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_account_active_day_last_activity
       ON account_active_day (last_activity_at_utc DESC);
   `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS digest_log (
+      machine_id      TEXT        NOT NULL,
+      account_id      TEXT,
+      date_local      TEXT        NOT NULL,
+      tracked_seconds INTEGER     NOT NULL DEFAULT 0,
+      fired           BOOLEAN     NOT NULL DEFAULT FALSE,
+      failure_reason  TEXT,
+      sent_at_utc     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (machine_id, date_local)
+    );
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS machine_uptime_samples (
+      machine_id             TEXT        NOT NULL,
+      sampled_at_utc         TIMESTAMPTZ NOT NULL,
+      agent_running          BOOLEAN     NOT NULL DEFAULT FALSE,
+      user_session_connected BOOLEAN     NOT NULL DEFAULT FALSE,
+      activity_detected      BOOLEAN     NOT NULL DEFAULT FALSE,
+      PRIMARY KEY (machine_id, sampled_at_utc)
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_uptime_machine_time
+      ON machine_uptime_samples (machine_id, sampled_at_utc DESC);
+  `);
 }
 
 export async function resetFleetPersistenceForTests(): Promise<void> {

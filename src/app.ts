@@ -19,6 +19,7 @@ import { createIdentityController } from './api/controllers/identityController.j
 import { createDeviceIdentityController } from './api/controllers/deviceIdentityController.js';
 import { createClientReleaseController } from './api/controllers/clientReleaseController.js';
 import { createGrowthController } from './api/controllers/growthController.js';
+import { createDigestController } from './api/controllers/digestController.js';
 import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middleware/auth.js';
 import { loadOrCreateNodeIdentity, refreshInstanceId } from './core/nodeIdentity.js';
 import { verifyLedgerIntegrity } from './core/auditLedger.js';
@@ -189,6 +190,7 @@ export function createApp(): Express {
   app.use('/v1/machines', createMachineController());
   app.use('/v1/actions', createActionController());
   app.use('/v1/growth', createGrowthController());
+  app.use('/v1/digest', createDigestController());
   app.use('/v1/cohorts', createCohortController());
   app.use('/v1/experiments', createExperimentController());
   app.use('/v1/adapter', createAdapterController());
