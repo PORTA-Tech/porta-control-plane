@@ -260,7 +260,19 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
     modelConfidence: row.modelConfidence,
     signalQualityScore: isFiniteNumber(row.signalQualityScore) ? row.signalQualityScore : (row.signalQualityScore ?? undefined),
     partialData: row.partialData,
-    missingMajorChannels: [...row.missingMajorChannels]
+    missingMajorChannels: [...row.missingMajorChannels],
+    userAgentCaptureFailureCode: isOptionalString(row.userAgentCaptureFailureCode)
+      ? (row.userAgentCaptureFailureCode?.trim() || null)
+      : null,
+    watchdogLaunchFailureCode: isOptionalString(row.watchdogLaunchFailureCode)
+      ? (row.watchdogLaunchFailureCode?.trim() || null)
+      : null,
+    userAgentSelfTestState: isOptionalString(row.userAgentSelfTestState)
+      ? (row.userAgentSelfTestState?.trim() || null)
+      : null,
+    userAgentSelfTestErrorCode: isOptionalString(row.userAgentSelfTestErrorCode)
+      ? (row.userAgentSelfTestErrorCode?.trim() || null)
+      : null
   } as MachineSummaryReport);
 }
 
