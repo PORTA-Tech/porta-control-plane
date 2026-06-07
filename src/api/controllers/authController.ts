@@ -20,7 +20,7 @@ import {
   listActiveAccessCodes
 } from '../../core/authAccessCodeStore.js';
 import { maybeActivateAccount, recordLifecycleGrowthEvent } from '../../core/growthService.js';
-import { touchAccountLastLogin } from '../../store/accountStore.js';
+import { touchAccountLastLogin, upsertAccountProfile } from '../../store/accountStore.js';
 
 function parseBearerToken(header: string | undefined): string | null {
   if (!header) return null;
@@ -196,6 +196,7 @@ export function createAuthController(): Router {
       const userId = typeof body.user_id === 'string' ? body.user_id : '';
       const password = typeof body.password === 'string' ? body.password : '';
       const displayName = typeof body.display_name === 'string' ? body.display_name : userId;
+      const firstName = typeof body.first_name === 'string' && body.first_name.trim() ? body.first_name.trim() : null;
       const role = typeof body.role === 'string' ? body.role : 'developer';
       const signupCode = typeof body.signup_code === 'string' ? body.signup_code : '';
       if (!userId.trim() || !password || !displayName.trim()) {
@@ -250,6 +251,11 @@ export function createAuthController(): Router {
         }
       });
       await maybeActivateAccount(materialized.account.accountId);
+
+      // Store firstName if provided during registration
+      if (firstName !== null) {
+        await upsertAccountProfile({ ...materialized.account, firstName });
+      }
 
       res.status(201).json({
         ok: true,
