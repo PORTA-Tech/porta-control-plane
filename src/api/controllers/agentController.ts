@@ -648,6 +648,7 @@ export function createAgentController(): Router {
         avgStreakMin: history && history.avgStreakMin > 0 ? Math.round(history.avgStreakMin) : null,
         strongWindowStart: history?.strongWindowStart ?? null,
         strongWindowEnd: history?.strongWindowEnd ?? null,
+        daysOfData: history?.daysOfData ?? 0,
       });
     } catch (error) {
       next(error);
