@@ -120,21 +120,25 @@ async function conditionA(
   const hasTrend = h.focusTrend === 'improving';
   if (!hasStreak && !hasTrend) return null;
 
+  const threshold = Math.round(h.avgFocusPct);
   const templates: string[] = [];
 
-  if (hasStreak && hasTrend) {
-    templates.push(
-      `${h.consecutiveStreak} days tracked in a row.\nYour focus average this week is ${todayFocusPct}% — your best stretch this month.`
-    );
-  }
   if (hasStreak) {
     templates.push(
-      `${name ? name + ', ' : ''}${h.consecutiveStreak} days in a row with focus above your average.\nSomething is working — keep the chain intact.`
+      `${name ? name + ', ' : ''}${h.consecutiveStreak} days in a row with focus above ${threshold}%.\nSomething is working — don't break the chain.`
+    );
+    templates.push(
+      `${h.consecutiveStreak} consecutive days above your average.\nYour best streak this month is ${h.consecutiveStreak} days. Keep going.`
     );
   }
   if (hasTrend) {
     templates.push(
-      `Focus has been climbing over the past several days.\nYour recent average is ${todayFocusPct}% — above where you were last week.`
+      `Focus has been climbing for ${Math.min(h.daysOfData, 7)} days straight.\nAri doesn't say this often: you're in a rhythm.`
+    );
+  }
+  if (hasStreak && hasTrend) {
+    templates.push(
+      `${h.consecutiveStreak} days tracked in a row.\nYour focus average this week is ${todayFocusPct}% — your best stretch this month.`
     );
   }
 
@@ -163,14 +167,14 @@ async function conditionB(
 
   const templates: string[] = [];
 
-  if (isBestScore) {
-    templates.push(
-      `${name ? name + ', focus' : 'Focus'} score of ${todayFocusScore} today — your best recorded.\nPrevious best was ${Math.round(h.bestFocusScore)} on ${formatPastDate(h.bestFocusScoreDate)}.`
-    );
-  }
   if (isBestStreak) {
     templates.push(
-      `${Math.round(todayStreakMin)}min uninterrupted focus — your longest recorded.\nAri has been watching for ${h.daysOfData} days. This is the best run yet.`
+      `${name ? name + ', your' : 'Your'} ${Math.round(todayStreakMin)}min focus run today is your longest ever recorded.\nAri noticed.`
+    );
+  }
+  if (isBestScore) {
+    templates.push(
+      `Best focus score of the month — ${todayFocusScore}.\nYour previous best was ${Math.round(h.bestFocusScore)} on ${formatPastDate(h.bestFocusScoreDate)}.`
     );
   }
   if (isBestFocusPct) {
@@ -178,6 +182,18 @@ async function conditionB(
       `${todayFocusPct}% focus rate today — personal record.\nYour previous best was ${Math.round(h.bestFocusPct)}%.`
     );
   }
+  // Early start variant — if first focus was early (before 9am local)
+  if (p.firstFocusBlockUtc) {
+    const firstHour = new Date(p.firstFocusBlockUtc).getUTCHours();
+    if (firstHour < 9) {
+      const timeLabel = fmt12h(firstHour);
+      templates.push(
+        `You hit deep work at ${timeLabel}.\nEarliest start Ari has seen from you.`
+      );
+    }
+  }
+
+  if (templates.length === 0) return null;
 
   const { text } = await selectTemplate('B', templates, accountId);
   return { score: 85, message: text };
@@ -251,19 +267,23 @@ async function conditionD(
 
   const templates: string[] = [];
 
+  const dateObj = new Date(p.dateLocal + 'T00:00:00');
+  const dayName = DAY_NAMES[dateObj.getDay()] ?? 'today';
+
   if (matchesWeakHour && h.weakHour != null) {
+    const peakLabel = fmt12h(peakHour!);
     templates.push(
-      `Pressure peaked at ${h.weakHour}:00 — your historically difficult window.\nThat pattern has shown up before.`
+      `Pressure peaked at ${peakLabel} — same window as your most difficult ${dayName}s.\nThat's a pattern worth knowing.`
     );
   }
   if (isHighPressure && contextSwitchCount > 0) {
     templates.push(
-      `${overloadEpisodes} overload events today — above your normal.\n${contextSwitchCount} context switches contributed. Wind down properly tonight.`
+      `High pressure ${dayName}: ${overloadEpisodes} overload events versus your normal.\n${contextSwitchCount} context switches contributed. Wind down properly tonight.`
     );
   }
   if (isHighPressure) {
     templates.push(
-      `${name ? name + ', high' : 'High'} pressure day. ${overloadEpisodes} overload episodes above your baseline.\nYour recovery quality tonight will shape tomorrow's start.`
+      `${name ? name + ', pressure' : 'Pressure'} ran above your normal today — ${overloadEpisodes} overload events.\nThat usually predicts a harder next morning. Wind down properly tonight.`
     );
   }
 
@@ -333,9 +353,15 @@ async function conditionF(
 
   const templates: string[] = [];
 
+  // Fast recovery variant leads — most positive framing
+  if (aboveCount && belowDur) {
+    templates.push(
+      `${distractionCount} distraction episodes today.\nYou recovered from each in under ${avgDistrMin}min — faster than your average of ${Math.round(h.avgDistractionDurMin)}min.`
+    );
+  }
   if (aboveCount && !belowDur) {
     templates.push(
-      `${distractionCount} distraction episodes today — above your usual ${Math.round(h.avgDistractionCount)}.\nAverage drift was ${avgDistrMin}min. Total focus lost: ${totalLostMin}min.`
+      `You drifted ${distractionCount} times. Average drift was ${avgDistrMin}min.\nTotal focus lost: ${totalLostMin}min.`
     );
   }
   if (socialLoops) {
@@ -343,10 +369,9 @@ async function conditionF(
       `You returned to social media ${p.socialMediaLoopCount} times today.\nYour typical is lower. That's a pattern worth watching.`
     );
   }
-  // Fast recovery variant: count high but duration below average
-  if (aboveCount && belowDur) {
+  if (h.weakHour != null && aboveCount) {
     templates.push(
-      `${distractionCount} distraction episodes today, but you recovered from each in under ${avgDistrMin}min — faster than your average of ${Math.round(h.avgDistractionDurMin)}min.`
+      `Drift episodes spiked around ${fmt12h(h.weakHour)}.\nThat's been your weak window. Worth protecting.`
     );
   }
 
@@ -376,17 +401,17 @@ async function conditionG(
 
   if (noBreaksTaken) {
     templates.push(
-      `No breaks across ${todayTrackedH}h of work.\nAri suggested ${p.breaksSuggestedCount}. Skipping recovery raises your overload risk over time.`
+      `No breaks across ${todayTrackedH}h of work.\nAri suggested ${p.breaksSuggestedCount}. Your call — but the last hour showed it.`
     );
   }
   if (allBreaksTaken) {
     templates.push(
-      `You took every break Ari suggested today — ${p.breaksTakenCount} of ${p.breaksSuggestedCount}.\nThat kind of compliance is rare. Your afternoon focus reflected it.`
+      `You took every break Ari suggested today — ${p.breaksTakenCount} of ${p.breaksSuggestedCount}.\nRecovery compliance like that is rare. Your afternoon focus reflected it.`
     );
   }
   if (!allBreaksTaken && p.breaksTakenCount > 0 && missed > 0 && peakHour !== null) {
     templates.push(
-      `${p.breaksTakenCount} of ${p.breaksSuggestedCount} breaks taken.\nThe ${missed} you skipped coincided with your pressure peak at ${peakHour}:00.`
+      `${p.breaksTakenCount} of ${p.breaksSuggestedCount} breaks taken.\nThe ${missed} you skipped coincided with your pressure spike at ${fmt12h(peakHour)}.`
     );
   }
 
@@ -415,9 +440,13 @@ async function conditionH(
   if (yesterdayRow.dateLocal >= p.dateLocal) return null; // safety check
   if (yesterdayRow.focusScore >= h.avgFocusScore) return null;
 
+  const dateObj = new Date(p.dateLocal + 'T00:00:00');
+  const prevDow = new Date(dateObj.getTime() - 86400000).getDay();
+  const prevDayName = DAY_NAMES[prevDow] ?? 'yesterday';
+
   const templates: string[] = [
-    `Back above your average after yesterday.\n${todayFocusScore} today — your mean is ${Math.round(h.avgFocusScore)}. Good recovery.`,
-    `${todayFocusPct}% focus today, up from yesterday.\nAbove your average for the first time this week.`
+    `Back above your average after a rough ${prevDayName}.\n${todayFocusScore} today — your mean is ${Math.round(h.avgFocusScore)}. Good recovery.`,
+    `${todayFocusPct}% focus today, up from yesterday.\nAbove your average of ${Math.round(h.avgFocusPct)}% for the first time this week.`
   ];
 
   const { text } = await selectTemplate('H', templates, accountId);
@@ -444,8 +473,8 @@ async function conditionI(
   const windowFocusMin = Math.round(p.longestFocusStreakSeconds / 60);
 
   const templates: string[] = [
-    `You used your strongest window — ${strongWindowLabel}.\nThat block produced ${windowFocusMin}min of your best focus today.`,
-    `Your ${strongWindowLabel} window is consistently your sharpest.\nToday it delivered — ${windowFocusMin}min of deep work in that block.`
+    `You used your strongest window — ${strongWindowLabel}.\nThat block alone produced ${windowFocusMin}min of deep work.`,
+    `Your ${strongWindowLabel} window is consistently your best.\nToday it produced ${windowFocusMin}min of focus. Protect it tomorrow.`
   ];
 
   const { text } = await selectTemplate('I', templates, accountId);
@@ -467,6 +496,8 @@ async function conditionJ(
 
   const templates: string[] = [];
 
+  const todayFocusMin = Math.round(p.focusSeconds / 60);
+
   if (daysOfData >= 3 && avgTrackedMin > 0) {
     templates.push(
       `Quiet day — ${todayTrackedMin}min tracked. Your usual is ${avgTrackedMin}min.\nAri is watching. Come back tomorrow.`
@@ -474,7 +505,12 @@ async function conditionJ(
   }
   if (streak >= 2) {
     templates.push(
-      `${name ? name + ', ' : ''}${todayTrackedMin}min today. ${streak} days tracked in a row —\nthat consistency matters more than any single session.`
+      `${name ? name + ', ' : ''}${todayTrackedMin}min today. Not your best, not your worst.\n${streak} days tracked in a row. That matters more than any single day.`
+    );
+  }
+  if (todayFocusMin > 0 && daysOfData >= 1) {
+    templates.push(
+      `Light day. ${todayFocusMin}min of focus from ${todayTrackedMin}min tracked.\nAri has ${daysOfData} day${daysOfData === 1 ? '' : 's'} of your data now — the picture is sharpening.`
     );
   }
   if (daysOfData > 0 && daysOfData < 3) {
