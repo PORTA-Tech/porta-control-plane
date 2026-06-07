@@ -1,3 +1,7 @@
+import type { UserHistory } from '../store/userHistoryStore.js';
+import { wasMessageShownRecently, recordMessageShown } from '../store/messageRotationStore.js';
+import { getDailyStatsForAccount } from '../store/dailyStatsStore.js';
+
 export interface DailyDigestPayload {
   accountId?: string | null;
   deviceId: string;
@@ -59,49 +63,488 @@ function focusGrade(score: number): { label: string; color: string } {
   return { label: 'Low', color: '#ef4444' };
 }
 
-// ── Rule-based Ari observation ──────────────────────────────────────────────
+function fmt12h(hour: number): string {
+  const suffix = hour >= 12 ? 'pm' : 'am';
+  const h12 = hour % 12 || 12;
+  return `${h12}${suffix}`;
+}
 
-function buildAriObservation(p: DailyDigestPayload): string {
-  const focusPct = p.trackedSeconds > 0 ? p.focusSeconds / p.trackedSeconds : 0;
+function formatPastDate(d: string | null | undefined): string {
+  if (!d) return 'a previous session';
+  try {
+    const dt = new Date(d + 'T00:00:00');
+    return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  } catch {
+    return d;
+  }
+}
 
-  // Priority 1: overload
-  if (p.overloadEpisodeCount >= 3) {
-    return `You hit overload ${p.overloadEpisodeCount} times today — that's your brain telling you it needed more recovery time. Tomorrow, try building a short buffer between dense tasks.`;
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+
+// ── Template rotation helper ──────────────────────────────────────────────────
+
+async function selectTemplate(
+  condition: string,
+  templates: string[],
+  accountId: string
+): Promise<{ text: string; key: string }> {
+  for (let i = 0; i < templates.length; i++) {
+    const key = `digest:${condition}:t${i}`;
+    const used = await wasMessageShownRecently(accountId, key);
+    if (!used) {
+      await recordMessageShown(accountId, key);
+      return { text: templates[i]!, key };
+    }
+  }
+  // All templates used recently — cycle back to first
+  const key = `digest:${condition}:t0`;
+  await recordMessageShown(accountId, key);
+  return { text: templates[0]!, key };
+}
+
+// ── Condition evaluation ──────────────────────────────────────────────────────
+
+type ConditionResult = { score: number; message: string } | null;
+
+// Condition A — Streak / Trend (score: 90)
+// Minimum 3 days. Fires when streak >= 3 OR focusTrend === 'improving'.
+async function conditionA(
+  p: DailyDigestPayload,
+  h: UserHistory,
+  accountId: string,
+  name: string,
+  todayFocusPct: number
+): Promise<ConditionResult> {
+  if (h.daysOfData < 3) return null;
+  const hasStreak = h.consecutiveStreak >= 3;
+  const hasTrend = h.focusTrend === 'improving';
+  if (!hasStreak && !hasTrend) return null;
+
+  const templates: string[] = [];
+
+  if (hasStreak && hasTrend) {
+    templates.push(
+      `${h.consecutiveStreak} days tracked in a row.\nYour focus average this week is ${todayFocusPct}% — your best stretch this month.`
+    );
+  }
+  if (hasStreak) {
+    templates.push(
+      `${name ? name + ', ' : ''}${h.consecutiveStreak} days in a row with focus above your average.\nSomething is working — keep the chain intact.`
+    );
+  }
+  if (hasTrend) {
+    templates.push(
+      `Focus has been climbing over the past several days.\nYour recent average is ${todayFocusPct}% — above where you were last week.`
+    );
   }
 
-  // Priority 2: missed breaks when suggested
-  if (p.breaksSuggestedCount >= 2 && p.breaksTakenCount === 0) {
-    return `Ari suggested ${p.breaksSuggestedCount} break${p.breaksSuggestedCount > 1 ? 's' : ''} today — none were taken. Skipping recovery consistently raises your overload risk. Even a 3-minute pause resets your focus clock.`;
+  const { text } = await selectTemplate('A', templates, accountId);
+  return { score: 90, message: text };
+}
+
+// Condition B — Personal Record (score: 85)
+// Minimum 5 days. Fires when today beats best focus score, streak, or focus pct.
+async function conditionB(
+  p: DailyDigestPayload,
+  h: UserHistory,
+  accountId: string,
+  name: string,
+  todayFocusPct: number,
+  todayFocusScore: number
+): Promise<ConditionResult> {
+  if (h.daysOfData < 5) return null;
+
+  const isBestScore = todayFocusScore > h.bestFocusScore;
+  const todayStreakMin = p.longestFocusStreakSeconds / 60;
+  const isBestStreak = todayStreakMin > h.bestStreakMin;
+  const isBestFocusPct = todayFocusPct > h.bestFocusPct;
+
+  if (!isBestScore && !isBestStreak && !isBestFocusPct) return null;
+
+  const templates: string[] = [];
+
+  if (isBestScore) {
+    templates.push(
+      `${name ? name + ', focus' : 'Focus'} score of ${todayFocusScore} today — your best recorded.\nPrevious best was ${Math.round(h.bestFocusScore)} on ${formatPastDate(h.bestFocusScoreDate)}.`
+    );
+  }
+  if (isBestStreak) {
+    templates.push(
+      `${Math.round(todayStreakMin)}min uninterrupted focus — your longest recorded.\nAri has been watching for ${h.daysOfData} days. This is the best run yet.`
+    );
+  }
+  if (isBestFocusPct) {
+    templates.push(
+      `${todayFocusPct}% focus rate today — personal record.\nYour previous best was ${Math.round(h.bestFocusPct)}%.`
+    );
   }
 
-  // Priority 3: social media loops
-  if (p.socialMediaLoopCount >= 5) {
-    return `You returned to social media ${p.socialMediaLoopCount} times today. That kind of loop usually signals low-urgency avoidance. Consider blocking it during your peak focus window tomorrow.`;
+  const { text } = await selectTemplate('B', templates, accountId);
+  return { score: 85, message: text };
+}
+
+// Condition C — Day-of-Week Comparison (score: 80)
+// Minimum 14 days (proxy for 2+ occurrences of same weekday in dowAvg map).
+// Fires when |todayFocusPct - dowAvg| >= 15.
+async function conditionC(
+  p: DailyDigestPayload,
+  h: UserHistory,
+  accountId: string,
+  name: string,
+  todayFocusPct: number
+): Promise<ConditionResult> {
+  if (h.daysOfData < 14) return null;
+
+  const dateObj = new Date(p.dateLocal + 'T00:00:00');
+  const dow = dateObj.getDay();
+  const dowKey = String(dow);
+  const dowAvg = h.dowAvgFocusPct[dowKey];
+  const dowAvgTracked = h.dowAvgTrackedMin[dowKey];
+
+  if (dowAvg == null) return null;
+
+  const diff = todayFocusPct - dowAvg;
+  if (Math.abs(diff) < 15) return null;
+
+  const dayName = DAY_NAMES[dow] ?? 'today';
+  const todayTrackedMin = Math.round(p.trackedSeconds / 60);
+
+  const templates: string[] = [];
+
+  if (diff >= 15) {
+    templates.push(
+      `${name ? name + ', your' : 'Your'} ${todayFocusPct}% focus rate today is your best ${dayName} this month.\n${dayName}s average ${Math.round(dowAvg)}% for you.`
+    );
+  } else {
+    templates.push(
+      `Below your ${dayName} average by ${Math.abs(Math.round(diff))}%.\nYou usually hit ${Math.round(dowAvg)}% on ${dayName}s — today was ${todayFocusPct}%.`
+    );
+    if (dowAvgTracked != null) {
+      templates.push(
+        `Quiet ${dayName}. ${todayTrackedMin}min tracked versus your usual ${Math.round(dowAvgTracked)}min.\nNot every ${dayName} needs to be a push.`
+      );
+    }
   }
 
-  // Priority 4: heavy fragmentation
-  if (p.fragmentationEpisodeCount >= 6) {
-    return `${p.fragmentationEpisodeCount} fragmentation episodes today means your attention kept splintering between tasks. Batching context-switches into deliberate windows can cut this in half.`;
+  const { text } = await selectTemplate('C', templates, accountId);
+  return { score: 80, message: text };
+}
+
+// Condition D — Pressure Pattern (score: 75)
+// Minimum 7 days. Fires when overload episodes are elevated OR peak pressure matched weak hour.
+async function conditionD(
+  p: DailyDigestPayload,
+  h: UserHistory,
+  accountId: string,
+  name: string
+): Promise<ConditionResult> {
+  if (h.daysOfData < 7) return null;
+
+  const contextSwitchCount = p.contextSwitchCount ?? 0;
+  const overloadEpisodes = p.overloadEpisodeCount;
+  const isHighPressure = overloadEpisodes >= 2;
+
+  const peakHour = p.peakPressureUtc ? new Date(p.peakPressureUtc).getUTCHours() : null;
+  const matchesWeakHour = h.weakHour != null && peakHour !== null && peakHour === h.weakHour;
+
+  if (!isHighPressure && !matchesWeakHour) return null;
+
+  const templates: string[] = [];
+
+  if (matchesWeakHour && h.weakHour != null) {
+    templates.push(
+      `Pressure peaked at ${h.weakHour}:00 — your historically difficult window.\nThat pattern has shown up before.`
+    );
+  }
+  if (isHighPressure && contextSwitchCount > 0) {
+    templates.push(
+      `${overloadEpisodes} overload events today — above your normal.\n${contextSwitchCount} context switches contributed. Wind down properly tonight.`
+    );
+  }
+  if (isHighPressure) {
+    templates.push(
+      `${name ? name + ', high' : 'High'} pressure day. ${overloadEpisodes} overload episodes above your baseline.\nYour recovery quality tonight will shape tomorrow's start.`
+    );
   }
 
-  // Priority 5: great focus streak
-  if (p.longestFocusStreakSeconds >= 5400) {
-    const streakLabel = fmtMinutes(p.longestFocusStreakSeconds);
-    return `Your longest focus streak today was ${streakLabel} — that's strong deep work. Protect that same window tomorrow.`;
+  if (templates.length === 0) return null;
+
+  const { text } = await selectTemplate('D', templates, accountId);
+  return { score: 75, message: text };
+}
+
+// Condition E — Focus Quality vs Quantity Split (score: 70)
+// No minimum data. Fires on time-in-seat-not-present or short-but-deep patterns.
+async function conditionE(
+  p: DailyDigestPayload,
+  accountId: string,
+  todayFocusPct: number,
+  todayFocusScore: number
+): Promise<ConditionResult> {
+  const timeInSeatNotPresent = todayFocusPct >= 50 && todayFocusScore < 45;
+  const shortButDeep = todayFocusPct < 30 && todayFocusScore >= 70;
+
+  if (!timeInSeatNotPresent && !shortButDeep) return null;
+
+  const todayTrackedMin = Math.round(p.trackedSeconds / 60);
+  const todayFocusMin = Math.round(p.focusSeconds / 60);
+  const qualityGrade = focusGrade(p.focusQualityScore).label;
+
+  const templates: string[] = [];
+
+  if (timeInSeatNotPresent) {
+    templates.push(
+      `${todayFocusPct}% focus time today, but quality score only ${todayFocusScore}.\nTime in seat, but not fully there. Common after high-pressure or fragmented days.`
+    );
+  }
+  if (shortButDeep) {
+    templates.push(
+      `Short day — only ${todayTrackedMin}min tracked — but focus quality was ${qualityGrade}.\n${todayFocusMin}min of actual deep work. That counts.`
+    );
+    templates.push(
+      `Only ${todayTrackedMin}min tracked, but your focus score was ${todayFocusScore}.\nWhen you were working, you were really working.`
+    );
   }
 
-  // Priority 6: low focus quality
-  if (p.focusQualityScore < 0.45 && focusPct > 0.4) {
-    return `You spent a lot of time "in focus" today, but Ari's quality signal stayed low — a sign of surface-level work rather than deep engagement. More breaks or fewer parallel tasks often fixes this.`;
+  const { text } = await selectTemplate('E', templates, accountId);
+  return { score: 70, message: text };
+}
+
+// Condition F — Distraction Pattern (score: 65)
+// Minimum 5 days. Fires when distraction count, duration, or social loops are elevated.
+async function conditionF(
+  p: DailyDigestPayload,
+  h: UserHistory,
+  accountId: string
+): Promise<ConditionResult> {
+  if (h.daysOfData < 5) return null;
+
+  const avgDistrDurMin = (p.avgDistractionEpisodeDurationSeconds ?? 0) / 60;
+  const distractionCount = p.fragmentationEpisodeCount;
+  const aboveCount = h.avgDistractionCount > 0 && distractionCount > h.avgDistractionCount * 1.3;
+  const aboveDur = h.avgDistractionDurMin > 0 && avgDistrDurMin > h.avgDistractionDurMin * 1.3;
+  const belowDur = h.avgDistractionDurMin > 0 && avgDistrDurMin < h.avgDistractionDurMin && avgDistrDurMin > 0;
+  const socialLoops = p.socialMediaLoopCount >= 5;
+
+  if (!aboveCount && !aboveDur && !socialLoops) return null;
+
+  const avgDistrMin = Math.round(avgDistrDurMin);
+  const totalLostMin = Math.round(p.distractionSeconds / 60);
+
+  const templates: string[] = [];
+
+  if (aboveCount && !belowDur) {
+    templates.push(
+      `${distractionCount} distraction episodes today — above your usual ${Math.round(h.avgDistractionCount)}.\nAverage drift was ${avgDistrMin}min. Total focus lost: ${totalLostMin}min.`
+    );
+  }
+  if (socialLoops) {
+    templates.push(
+      `You returned to social media ${p.socialMediaLoopCount} times today.\nYour typical is lower. That's a pattern worth watching.`
+    );
+  }
+  // Fast recovery variant: count high but duration below average
+  if (aboveCount && belowDur) {
+    templates.push(
+      `${distractionCount} distraction episodes today, but you recovered from each in under ${avgDistrMin}min — faster than your average of ${Math.round(h.avgDistractionDurMin)}min.`
+    );
   }
 
-  // Priority 7: good day
-  if (focusPct >= 0.6 && p.focusQualityScore >= 0.65) {
-    return `Strong day — ${pct(p.focusSeconds, p.trackedSeconds)} focus time with good quality. Your distraction exposure was minimal. Keep the same rhythm tomorrow.`;
+  if (templates.length === 0) return null;
+
+  const { text } = await selectTemplate('F', templates, accountId);
+  return { score: 65, message: text };
+}
+
+// Condition G — Break Compliance (score: 60)
+// No minimum data. Fires on zero breaks or perfect compliance.
+async function conditionG(
+  p: DailyDigestPayload,
+  accountId: string
+): Promise<ConditionResult> {
+  const trackedMinutes = p.trackedSeconds / 60;
+  const noBreaksTaken = p.breaksTakenCount === 0 && trackedMinutes >= 90 && p.breaksSuggestedCount >= 1;
+  const allBreaksTaken = p.breaksTakenCount === p.breaksSuggestedCount && p.breaksSuggestedCount >= 2;
+
+  if (!noBreaksTaken && !allBreaksTaken) return null;
+
+  const todayTrackedH = (trackedMinutes / 60).toFixed(1);
+  const peakHour = p.peakPressureUtc ? new Date(p.peakPressureUtc).getUTCHours() : null;
+  const missed = p.breaksSuggestedCount - p.breaksTakenCount;
+
+  const templates: string[] = [];
+
+  if (noBreaksTaken) {
+    templates.push(
+      `No breaks across ${todayTrackedH}h of work.\nAri suggested ${p.breaksSuggestedCount}. Skipping recovery raises your overload risk over time.`
+    );
+  }
+  if (allBreaksTaken) {
+    templates.push(
+      `You took every break Ari suggested today — ${p.breaksTakenCount} of ${p.breaksSuggestedCount}.\nThat kind of compliance is rare. Your afternoon focus reflected it.`
+    );
+  }
+  if (!allBreaksTaken && p.breaksTakenCount > 0 && missed > 0 && peakHour !== null) {
+    templates.push(
+      `${p.breaksTakenCount} of ${p.breaksSuggestedCount} breaks taken.\nThe ${missed} you skipped coincided with your pressure peak at ${peakHour}:00.`
+    );
   }
 
-  // Default
-  return `You tracked ${fmtMinutes(p.trackedSeconds)} of activity today. Ari will build a clearer picture of your patterns as more days accumulate.`;
+  if (templates.length === 0) return null;
+
+  const { text } = await selectTemplate('G', templates, accountId);
+  return { score: 60, message: text };
+}
+
+// Condition H — Recovery After Below-Average Day (score: 55)
+// Minimum 2 days. Fires when today is above average and yesterday was below.
+async function conditionH(
+  p: DailyDigestPayload,
+  h: UserHistory,
+  accountId: string,
+  todayFocusPct: number,
+  todayFocusScore: number
+): Promise<ConditionResult> {
+  if (h.daysOfData < 2) return null;
+  if (todayFocusScore <= h.avgFocusScore) return null;
+
+  // Most recent row in daily_stats (today hasn't been written yet — it's written after this runs)
+  const recentRows = await getDailyStatsForAccount(accountId, 1);
+  const yesterdayRow = recentRows[0];
+  if (!yesterdayRow) return null;
+  if (yesterdayRow.dateLocal >= p.dateLocal) return null; // safety check
+  if (yesterdayRow.focusScore >= h.avgFocusScore) return null;
+
+  const templates: string[] = [
+    `Back above your average after yesterday.\n${todayFocusScore} today — your mean is ${Math.round(h.avgFocusScore)}. Good recovery.`,
+    `${todayFocusPct}% focus today, up from yesterday.\nAbove your average for the first time this week.`
+  ];
+
+  const { text } = await selectTemplate('H', templates, accountId);
+  return { score: 55, message: text };
+}
+
+// Condition I — Strong Window Recognition (score: 50)
+// Minimum 14 days. Fires when first focus block falls within the user's strongest hour window.
+async function conditionI(
+  p: DailyDigestPayload,
+  h: UserHistory,
+  accountId: string
+): Promise<ConditionResult> {
+  if (h.daysOfData < 14) return null;
+  if (h.strongWindowStart == null) return null;
+
+  const firstFocusHour = p.firstFocusBlockUtc ? new Date(p.firstFocusBlockUtc).getUTCHours() : null;
+  if (firstFocusHour === null) return null;
+
+  const windowEnd = h.strongWindowEnd ?? h.strongWindowStart + 2;
+  if (firstFocusHour < h.strongWindowStart || firstFocusHour > windowEnd) return null;
+
+  const strongWindowLabel = `${fmt12h(h.strongWindowStart)}–${fmt12h(windowEnd)}`;
+  const windowFocusMin = Math.round(p.longestFocusStreakSeconds / 60);
+
+  const templates: string[] = [
+    `You used your strongest window — ${strongWindowLabel}.\nThat block produced ${windowFocusMin}min of your best focus today.`,
+    `Your ${strongWindowLabel} window is consistently your sharpest.\nToday it delivered — ${windowFocusMin}min of deep work in that block.`
+  ];
+
+  const { text } = await selectTemplate('I', templates, accountId);
+  return { score: 50, message: text };
+}
+
+// Condition J — Quiet Day Fallback (score: 10)
+// Always produces a result. Guaranteed message.
+async function conditionJ(
+  p: DailyDigestPayload,
+  h: UserHistory | null,
+  accountId: string,
+  name: string
+): Promise<ConditionResult> {
+  const todayTrackedMin = Math.round(p.trackedSeconds / 60);
+  const avgTrackedMin = h ? Math.round(h.avgTrackedMin) : 0;
+  const daysOfData = h?.daysOfData ?? 0;
+  const streak = h?.consecutiveStreak ?? 0;
+
+  const templates: string[] = [];
+
+  if (daysOfData >= 3 && avgTrackedMin > 0) {
+    templates.push(
+      `Quiet day — ${todayTrackedMin}min tracked. Your usual is ${avgTrackedMin}min.\nAri is watching. Come back tomorrow.`
+    );
+  }
+  if (streak >= 2) {
+    templates.push(
+      `${name ? name + ', ' : ''}${todayTrackedMin}min today. ${streak} days tracked in a row —\nthat consistency matters more than any single session.`
+    );
+  }
+  if (daysOfData > 0 && daysOfData < 3) {
+    templates.push(
+      `${todayTrackedMin}min tracked today.\nAri has ${daysOfData} day${daysOfData === 1 ? '' : 's'} of your data — the picture sharpens every session.`
+    );
+  }
+  // Always-available fallback
+  templates.push(
+    `${todayTrackedMin}min of activity tracked.\nKeep showing up and Ari will get more specific about what it sees.`
+  );
+
+  const { text } = await selectTemplate('J', templates, accountId);
+  return { score: 10, message: text };
+}
+
+// ── Main observation builder ──────────────────────────────────────────────────
+
+async function buildAriObservation(
+  p: DailyDigestPayload,
+  h: UserHistory | null,
+  firstName: string | null
+): Promise<string> {
+  const accountId = (p.accountId ?? '').trim();
+  const name = (firstName ?? '').trim();
+  const todayFocusPct = p.trackedSeconds > 0 ? Math.round((p.focusSeconds / p.trackedSeconds) * 100) : 0;
+  const todayFocusScore = Math.round(p.focusQualityScore * 100);
+
+  // No account ID — can't do template rotation; return simple fallback
+  if (!accountId) {
+    const min = Math.round(p.trackedSeconds / 60);
+    return `${min}min of activity tracked. Keep showing up and Ari will get more specific about what it sees.`;
+  }
+
+  // Evaluate all conditions in parallel
+  const results: ConditionResult[] = await Promise.all([
+    h ? conditionA(p, h, accountId, name, todayFocusPct) : Promise.resolve(null),
+    h ? conditionB(p, h, accountId, name, todayFocusPct, todayFocusScore) : Promise.resolve(null),
+    h ? conditionC(p, h, accountId, name, todayFocusPct) : Promise.resolve(null),
+    h ? conditionD(p, h, accountId, name) : Promise.resolve(null),
+    conditionE(p, accountId, todayFocusPct, todayFocusScore),
+    h ? conditionF(p, h, accountId) : Promise.resolve(null),
+    conditionG(p, accountId),
+    h ? conditionH(p, h, accountId, todayFocusPct, todayFocusScore) : Promise.resolve(null),
+    h ? conditionI(p, h, accountId) : Promise.resolve(null),
+    conditionJ(p, h, accountId, name),   // guaranteed non-null
+  ]);
+
+  // Pick highest score
+  const winner = results
+    .filter((r): r is { score: number; message: string } => r !== null)
+    .sort((a, b) => b.score - a.score)[0];
+
+  return winner?.message ?? `${Math.round(p.trackedSeconds / 60)}min tracked. Ari is watching.`;
+}
+
+// ── Subject line ──────────────────────────────────────────────────────────────
+
+function buildSubjectLine(
+  p: DailyDigestPayload,
+  h: UserHistory | null,
+  todayIsPersonalBest: boolean,
+  dateDisplay: string
+): string {
+  if (h && h.consecutiveStreak >= 3) return `${h.consecutiveStreak} days in a row — ${dateDisplay}`;
+  if (todayIsPersonalBest) return `Personal best today — ${dateDisplay}`;
+  if (p.focusQualityScore >= 0.8) return `Strong focus day — ${dateDisplay}`;
+  if (p.overloadEpisodeCount >= 3) return `High pressure day — ${dateDisplay}`;
+  if (p.breaksTakenCount === 0 && p.trackedSeconds >= 5400) return `No breaks today — ${dateDisplay}`;
+  return `Your Ari digest — ${dateDisplay}`;
 }
 
 // ── Category bar helper ─────────────────────────────────────────────────────────
@@ -122,13 +565,20 @@ function categoryBar(label: string, seconds: number, totalSeconds: number, color
 
 // ── Main builder ──────────────────────────────────────────────────────────────────────
 
-export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://open'): { subject: string; html: string } {
+export async function buildDigestEmail(
+  p: DailyDigestPayload,
+  launchUrl = 'porta://open',
+  h: UserHistory | null = null,
+  firstName: string | null = null
+): Promise<{ subject: string; html: string }> {
   const trackedLabel = fmtMinutes(p.trackedSeconds);
   const focusLabel = fmtMinutes(p.focusSeconds);
   const focusPctLabel = pct(p.focusSeconds, p.trackedSeconds);
   const grade = focusGrade(p.focusQualityScore);
   const streakLabel = fmtMinutes(p.longestFocusStreakSeconds);
-  const ariObs = buildAriObservation(p);
+  const ariObs = await buildAriObservation(p, h, firstName);
+  // Convert newlines in observation to HTML line breaks
+  const ariObsHtml = ariObs.replace(/\n/g, '<br>');
 
   // Format date nicely: "Monday, 19 May 2025"
   let dateDisplay = p.dateLocal;
@@ -139,6 +589,17 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
     /* keep raw string */
   }
 
+  // Determine personal best for subject line
+  const todayFocusPct = p.trackedSeconds > 0 ? Math.round((p.focusSeconds / p.trackedSeconds) * 100) : 0;
+  const todayFocusScore = Math.round(p.focusQualityScore * 100);
+  const todayIsPersonalBest = h != null && h.daysOfData >= 5 && (
+    todayFocusScore > h.bestFocusScore ||
+    p.longestFocusStreakSeconds / 60 > h.bestStreakMin ||
+    todayFocusPct > h.bestFocusPct
+  );
+
+  const subject = buildSubjectLine(p, h, todayIsPersonalBest, dateDisplay);
+
   const breakComplianceLabel =
     p.breaksSuggestedCount === 0
       ? 'No breaks suggested'
@@ -146,8 +607,6 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
 
   const totalCategorySeconds =
     p.developmentSeconds + p.productivitySeconds + p.communicationSeconds + p.entertainmentSeconds;
-
-  const subject = `Your Ari daily digest — ${dateDisplay}`;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -312,7 +771,7 @@ export function buildDigestEmail(p: DailyDigestPayload, launchUrl = 'porta://ope
           <tr>
             <td bgcolor="#f7f7fc" style="background:#f7f7fc;border-left:3px solid #5252b0;border-radius:0 8px 8px 0;padding:14px 16px;">
               <p style="margin:0 0 6px;font-size:11px;font-weight:600;color:#8080b0;text-transform:uppercase;letter-spacing:0.1em;">Ari's observation</p>
-              <p style="margin:0;font-size:14px;color:#505070;line-height:1.6;">${ariObs}</p>
+              <p style="margin:0;font-size:14px;color:#505070;line-height:1.6;">${ariObsHtml}</p>
             </td>
           </tr>
         </table>

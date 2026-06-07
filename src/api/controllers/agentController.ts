@@ -13,6 +13,7 @@ import { appendDigestLogEntry } from '../../store/digestLogStore.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
 import { upsertDailyStats } from '../../store/dailyStatsStore.js';
 import { recomputeUserHistory } from '../../core/historyService.js';
+import { getUserHistory } from '../../store/userHistoryStore.js';
 
 const lastUptimeSampleMs = new Map<string, number>();
 const UPTIME_SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
@@ -433,7 +434,7 @@ export function createAgentController(): Router {
     }
   });
 
-  // Daily digest — sent by the agent at 23:30 Dubai time (19:30 UTC) when
+  // Daily digest -- sent by the agent at 23:30 Dubai time (19:30 UTC) when
   // the user has been active for at least 1 hour.
   router.post('/daily-digest', async (req, res, next) => {
     try {
@@ -451,7 +452,11 @@ export function createAgentController(): Router {
       const dateLocal = typeof body.dateLocal === 'string' ? body.dateLocal.trim() : '';
       const trackedSeconds = typeof body.trackedSeconds === 'number' ? body.trackedSeconds : 0;
 
-      const profile = await getAccountProfile(accountId);
+      const [profile, userHistory] = await Promise.all([
+        getAccountProfile(accountId),
+        getUserHistory(accountId),
+      ]);
+
       if (!profile) {
         await appendDigestLogEntry({
           machineId,
@@ -490,6 +495,39 @@ export function createAgentController(): Router {
           failureReason: 'under_1h',
           sentAtUtc: new Date().toISOString(),
         });
+        // Still write stats if there was any meaningful activity
+        if (trackedSeconds > 0) {
+          try {
+            const dateObj = new Date(dateLocal + 'T00:00:00');
+            await upsertDailyStats({
+              accountId,
+              dateLocal,
+              dayOfWeek: dateObj.getDay(),
+              trackedSeconds,
+              focusSeconds: typeof body.focusSeconds === 'number' ? body.focusSeconds : 0,
+              focusPct: trackedSeconds > 0 ? ((typeof body.focusSeconds === 'number' ? body.focusSeconds : 0) / trackedSeconds) * 100 : 0,
+              focusScore: typeof body.focusQualityScore === 'number' ? body.focusQualityScore * 100 : 0,
+              longestStreakSeconds: typeof body.longestFocusStreakSeconds === 'number' ? body.longestFocusStreakSeconds : 0,
+              distractionSeconds: typeof body.distractionSeconds === 'number' ? body.distractionSeconds : 0,
+              distractionCount: typeof body.fragmentationEpisodeCount === 'number' ? body.fragmentationEpisodeCount : 0,
+              avgDistractionDurationSeconds: typeof body.avgDistractionEpisodeDurationSeconds === 'number' ? body.avgDistractionEpisodeDurationSeconds : 0,
+              contextSwitchCount: typeof body.contextSwitchCount === 'number' ? body.contextSwitchCount : 0,
+              overloadEvents: typeof body.overloadEpisodeCount === 'number' ? body.overloadEpisodeCount : 0,
+              breaksTaken: typeof body.breaksTakenCount === 'number' ? body.breaksTakenCount : 0,
+              breaksSuggested: typeof body.breaksSuggestedCount === 'number' ? body.breaksSuggestedCount : 0,
+              socialMediaLoops: typeof body.socialMediaLoopCount === 'number' ? body.socialMediaLoopCount : 0,
+              socialMediaSeconds: typeof body.socialMediaSeconds === 'number' ? body.socialMediaSeconds : 0,
+              awaySeconds: typeof body.awaySeconds === 'number' ? body.awaySeconds : 0,
+              pressureAvgPct: 0,
+              firstFocusUtc: isOptionalString(body.firstFocusBlockUtc) ? (body.firstFocusBlockUtc as string | null | undefined)?.trim() || null : null,
+              peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
+              mostDistractedHour: null,
+            });
+            await recomputeUserHistory(accountId);
+          } catch (statsErr) {
+            console.error('[daily-digest] Failed to write under_1h stats for account ' + accountId + ':', statsErr);
+          }
+        }
         res.status(200).json({ skipped: true, reason: 'under_1h' });
         return;
       }
@@ -525,7 +563,7 @@ export function createAgentController(): Router {
         productivitySeconds: typeof body.productivitySeconds === 'number' ? body.productivitySeconds : 0,
         communicationSeconds: typeof body.communicationSeconds === 'number' ? body.communicationSeconds : 0,
         entertainmentSeconds: typeof body.entertainmentSeconds === 'number' ? body.entertainmentSeconds : 0,
-        // Phase 1A — new timeline fields
+        // Phase 1A -- new timeline fields
         firstFocusBlockUtc: isOptionalString(body.firstFocusBlockUtc) ? (body.firstFocusBlockUtc as string | null | undefined)?.trim() || null : null,
         peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
         avgDistractionEpisodeDurationSeconds: typeof body.avgDistractionEpisodeDurationSeconds === 'number' ? body.avgDistractionEpisodeDurationSeconds : 0,
@@ -533,8 +571,9 @@ export function createAgentController(): Router {
         preLongestDistractionFocusSeconds: typeof body.preLongestDistractionFocusSeconds === 'number' ? body.preLongestDistractionFocusSeconds : 0
       };
 
-      const baseUrl = `${req.protocol}://${req.get('host')}`;
-      const { subject, html } = buildDigestEmail(payload, `${baseUrl}/launch`);
+      const firstName = profile.firstName ?? null;
+      const baseUrl = req.protocol + '://' + req.get('host');
+      const { subject, html } = await buildDigestEmail(payload, baseUrl + '/launch', userHistory, firstName);
       const sent = await sendEmail({ to: profile.primaryEmail, subject, html });
 
       await appendDigestLogEntry({
@@ -548,12 +587,12 @@ export function createAgentController(): Router {
       });
 
       if (sent) {
-        console.log(`[daily-digest] Sent digest for account ${accountId} to ${profile.primaryEmail} (date: ${payload.dateLocal})`);
+        console.log('[daily-digest] Sent digest for account ' + accountId + ' to ' + profile.primaryEmail + ' (date: ' + payload.dateLocal + ')');
       } else {
-        console.warn(`[daily-digest] Failed to send digest for account ${accountId} to ${profile.primaryEmail} (date: ${payload.dateLocal})`);
+        console.warn('[daily-digest] Failed to send digest for account ' + accountId + ' to ' + profile.primaryEmail + ' (date: ' + payload.dateLocal + ')');
       }
 
-      // Phase 1C/1E — write daily_stats and recompute user_history regardless of email outcome
+      // Phase 1C/1E -- write daily_stats and recompute user_history regardless of email outcome
       try {
         const dateObj = new Date(payload.dateLocal + 'T00:00:00');
         await upsertDailyStats({
@@ -575,14 +614,14 @@ export function createAgentController(): Router {
           socialMediaLoops: payload.socialMediaLoopCount,
           socialMediaSeconds: payload.socialMediaSeconds,
           awaySeconds: payload.awaySeconds,
-          pressureAvgPct: 0,  // not in digest payload; computed by agent-side timeline
+          pressureAvgPct: 0,
           firstFocusUtc: payload.firstFocusBlockUtc ?? null,
           peakPressureUtc: payload.peakPressureUtc ?? null,
-          mostDistractedHour: null,  // label-only in payload; numeric not yet sent
+          mostDistractedHour: null,
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {
-        console.error(`[daily-digest] Failed to write daily_stats for account ${accountId}:`, statsErr);
+        console.error('[daily-digest] Failed to write daily_stats for account ' + accountId + ':', statsErr);
       }
 
       res.status(202).json({ accepted: true, sent });
