@@ -630,6 +630,30 @@ export function createAgentController(): Router {
     }
   });
 
+  // User context for Ari toast personalization — firstName, weakHour, avgStreakMin.
+  router.get('/user-context', async (req, res, next) => {
+    try {
+      const accountId = typeof req.query.accountId === 'string' ? req.query.accountId.trim() : null;
+      if (!accountId) {
+        res.status(400).json({ error: 'accountId required' });
+        return;
+      }
+      const [profile, history] = await Promise.all([
+        getAccountProfile(accountId),
+        getUserHistory(accountId),
+      ]);
+      res.json({
+        firstName: profile?.firstName ?? null,
+        weakHour: history?.weakHour ?? null,
+        avgStreakMin: history && history.avgStreakMin > 0 ? Math.round(history.avgStreakMin) : null,
+        strongWindowStart: history?.strongWindowStart ?? null,
+        strongWindowEnd: history?.strongWindowEnd ?? null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Simple diagnostic endpoint for local validation.
   router.get('/presence', (_req, res) => {
     res.json(listAgentPresence());
