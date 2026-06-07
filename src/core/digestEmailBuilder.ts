@@ -29,6 +29,12 @@ export interface DailyDigestPayload {
   productivitySeconds: number;
   communicationSeconds: number;
   entertainmentSeconds: number;
+  // Phase 1A — new timeline fields for messaging system
+  firstFocusBlockUtc?: string | null;
+  peakPressureUtc?: string | null;
+  avgDistractionEpisodeDurationSeconds?: number;
+  contextSwitchCount?: number;
+  preLongestDistractionFocusSeconds?: number;
 }
 
 // ── Formatting helpers ──────────────────────────────────────────────

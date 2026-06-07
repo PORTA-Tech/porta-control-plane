@@ -9,6 +9,7 @@ export interface AccountProfile {
     status: AccountStatus;
     authProvider?: AuthProvider | null;
     lastLoginAt?: string | null;
+    firstName?: string | null;
     createdAt: string;
     updatedAt: string;
 }

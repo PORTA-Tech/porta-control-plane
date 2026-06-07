@@ -11,6 +11,8 @@ import { buildDigestEmail, type DailyDigestPayload } from '../../core/digestEmai
 import { sendEmail } from '../../core/emailService.js';
 import { appendDigestLogEntry } from '../../store/digestLogStore.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
+import { upsertDailyStats } from '../../store/dailyStatsStore.js';
+import { recomputeUserHistory } from '../../core/historyService.js';
 
 const lastUptimeSampleMs = new Map<string, number>();
 const UPTIME_SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
@@ -522,7 +524,13 @@ export function createAgentController(): Router {
         developmentSeconds: typeof body.developmentSeconds === 'number' ? body.developmentSeconds : 0,
         productivitySeconds: typeof body.productivitySeconds === 'number' ? body.productivitySeconds : 0,
         communicationSeconds: typeof body.communicationSeconds === 'number' ? body.communicationSeconds : 0,
-        entertainmentSeconds: typeof body.entertainmentSeconds === 'number' ? body.entertainmentSeconds : 0
+        entertainmentSeconds: typeof body.entertainmentSeconds === 'number' ? body.entertainmentSeconds : 0,
+        // Phase 1A — new timeline fields
+        firstFocusBlockUtc: isOptionalString(body.firstFocusBlockUtc) ? (body.firstFocusBlockUtc as string | null | undefined)?.trim() || null : null,
+        peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
+        avgDistractionEpisodeDurationSeconds: typeof body.avgDistractionEpisodeDurationSeconds === 'number' ? body.avgDistractionEpisodeDurationSeconds : 0,
+        contextSwitchCount: typeof body.contextSwitchCount === 'number' ? body.contextSwitchCount : 0,
+        preLongestDistractionFocusSeconds: typeof body.preLongestDistractionFocusSeconds === 'number' ? body.preLongestDistractionFocusSeconds : 0
       };
 
       const baseUrl = `${req.protocol}://${req.get('host')}`;
@@ -545,6 +553,38 @@ export function createAgentController(): Router {
         console.warn(`[daily-digest] Failed to send digest for account ${accountId} to ${profile.primaryEmail} (date: ${payload.dateLocal})`);
       }
 
+      // Phase 1C/1E — write daily_stats and recompute user_history regardless of email outcome
+      try {
+        const dateObj = new Date(payload.dateLocal + 'T00:00:00');
+        await upsertDailyStats({
+          accountId,
+          dateLocal: payload.dateLocal,
+          dayOfWeek: dateObj.getDay(),
+          trackedSeconds: payload.trackedSeconds,
+          focusSeconds: payload.focusSeconds,
+          focusPct: payload.trackedSeconds > 0 ? (payload.focusSeconds / payload.trackedSeconds) * 100 : 0,
+          focusScore: payload.focusQualityScore * 100,
+          longestStreakSeconds: payload.longestFocusStreakSeconds,
+          distractionSeconds: payload.distractionSeconds,
+          distractionCount: payload.fragmentationEpisodeCount,
+          avgDistractionDurationSeconds: payload.avgDistractionEpisodeDurationSeconds ?? 0,
+          contextSwitchCount: payload.contextSwitchCount ?? 0,
+          overloadEvents: payload.overloadEpisodeCount,
+          breaksTaken: payload.breaksTakenCount,
+          breaksSuggested: payload.breaksSuggestedCount,
+          socialMediaLoops: payload.socialMediaLoopCount,
+          socialMediaSeconds: payload.socialMediaSeconds,
+          awaySeconds: payload.awaySeconds,
+          pressureAvgPct: 0,  // not in digest payload; computed by agent-side timeline
+          firstFocusUtc: payload.firstFocusBlockUtc ?? null,
+          peakPressureUtc: payload.peakPressureUtc ?? null,
+          mostDistractedHour: null,  // label-only in payload; numeric not yet sent
+        });
+        await recomputeUserHistory(accountId);
+      } catch (statsErr) {
+        console.error(`[daily-digest] Failed to write daily_stats for account ${accountId}:`, statsErr);
+      }
+
       res.status(202).json({ accepted: true, sent });
     } catch (error) {
       next(error);
@@ -557,4 +597,55 @@ export function createAgentController(): Router {
   });
 
   return router;
+}
+j = new Date(payload.dateLocal + 'T00:00:00');
+        await upsertDailyStats({
+          accountId,
+          dateLocal: payload.dateLocal,
+          dayOfWeek: dateObj.getDay(),
+          trackedSeconds: payload.trackedSeconds,
+          focusSeconds: payload.focusSeconds,
+          focusPct: payload.trackedSeconds > 0 ? (payload.focusSeconds / payload.trackedSeconds) * 100 : 0,
+          focusScore: payload.focusQualityScore * 100,
+          longestStreakSeconds: payload.longestFocusStreakSeconds,
+          distractionSeconds: payload.distractionSeconds,
+          distractionCount: payload.fragmentationEpisodeCount,
+          avgDistractionDurationSeconds: payload.avgDistractionEpisodeDurationSeconds ?? 0,
+          contextSwitchCount: payload.contextSwitchCount ?? 0,
+          overloadEvents: payload.overloadEpisodeCount,
+          breaksTaken: payload.breaksTakenCount,
+          breaksSuggested: payload.breaksSuggestedCount,
+          socialMediaLoops: payload.socialMediaLoopCount,
+          socialMediaSeconds: payload.socialMediaSeconds,
+          awaySeconds: payload.awaySeconds,
+          pressureAvgPct: 0,
+          firstFocusUtc: payload.firstFocusBlockUtc ?? null,
+          peakPressureUtc: payload.peakPressureUtc ?? null,
+          mostDistractedHour: null,
+        });
+        await recomputeUserHistory(accountId);
+      } catch (statsErr) {
+        console.error(`[daily-digest] Failed to write daily_stats for account ${accountId}:`, statsErr);
+      }
+
+      res.status(202).json({ accepted: true, sent });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Simple diagnostic endpoint for local validation.
+  router.get('/presence', (_req, res) => {
+    res.json(listAgentPresence());
+  });
+
+  return router;
+}
+
+  router.get('/presence', (_req, res) => {
+    res.json(listAgentPresence());
+  });
+
+  return router;
+}
 }

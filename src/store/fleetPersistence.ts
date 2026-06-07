@@ -451,6 +451,91 @@ async function initializeFleetSchema(): Promise<void> {
   `);
 
   await activePool.query(`
+    CREATE TABLE IF NOT EXISTS daily_stats (
+      account_id                        TEXT        NOT NULL,
+      date_local                        TEXT        NOT NULL,
+      day_of_week                       INTEGER     NOT NULL,
+      tracked_seconds                   REAL        NOT NULL DEFAULT 0,
+      focus_seconds                     REAL        NOT NULL DEFAULT 0,
+      focus_pct                         REAL        NOT NULL DEFAULT 0,
+      focus_score                       REAL        NOT NULL DEFAULT 0,
+      longest_streak_seconds            REAL        NOT NULL DEFAULT 0,
+      distraction_seconds               REAL        NOT NULL DEFAULT 0,
+      distraction_count                 INTEGER     NOT NULL DEFAULT 0,
+      avg_distraction_duration_seconds  REAL        NOT NULL DEFAULT 0,
+      context_switch_count              INTEGER     NOT NULL DEFAULT 0,
+      overload_events                   INTEGER     NOT NULL DEFAULT 0,
+      breaks_taken                      INTEGER     NOT NULL DEFAULT 0,
+      breaks_suggested                  INTEGER     NOT NULL DEFAULT 0,
+      social_media_loops                INTEGER     NOT NULL DEFAULT 0,
+      social_media_seconds              REAL        NOT NULL DEFAULT 0,
+      away_seconds                      REAL        NOT NULL DEFAULT 0,
+      pressure_avg_pct                  REAL        NOT NULL DEFAULT 0,
+      first_focus_utc                   TEXT,
+      peak_pressure_utc                 TEXT,
+      most_distracted_hour              INTEGER,
+      created_at_utc                    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (account_id, date_local)
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_daily_stats_account_date
+      ON daily_stats (account_id, date_local DESC);
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_daily_stats_account_dow
+      ON daily_stats (account_id, day_of_week);
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS user_history (
+      account_id              TEXT PRIMARY KEY,
+      days_of_data            INTEGER     NOT NULL DEFAULT 0,
+      consecutive_streak      INTEGER     NOT NULL DEFAULT 0,
+      focus_trend             TEXT        NOT NULL DEFAULT 'stable',
+      avg_focus_pct           REAL        NOT NULL DEFAULT 0,
+      avg_focus_score         REAL        NOT NULL DEFAULT 0,
+      avg_tracked_min         REAL        NOT NULL DEFAULT 0,
+      avg_streak_min          REAL        NOT NULL DEFAULT 0,
+      avg_pressure_pct        REAL        NOT NULL DEFAULT 0,
+      avg_distraction_count   REAL        NOT NULL DEFAULT 0,
+      avg_distraction_dur_min REAL        NOT NULL DEFAULT 0,
+      avg_context_switches    REAL        NOT NULL DEFAULT 0,
+      avg_breaks_taken        REAL        NOT NULL DEFAULT 0,
+      avg_breaks_suggested    REAL        NOT NULL DEFAULT 0,
+      best_focus_pct          REAL        NOT NULL DEFAULT 0,
+      best_focus_score        REAL        NOT NULL DEFAULT 0,
+      best_streak_min         REAL        NOT NULL DEFAULT 0,
+      best_tracked_min        REAL        NOT NULL DEFAULT 0,
+      best_streak_date        TEXT,
+      best_focus_score_date   TEXT,
+      dow_avg_focus_pct       TEXT        NOT NULL DEFAULT '{}',
+      dow_avg_tracked_min     TEXT        NOT NULL DEFAULT '{}',
+      dow_avg_focus_score     TEXT        NOT NULL DEFAULT '{}',
+      weak_hour               INTEGER,
+      strong_window_start     INTEGER,
+      strong_window_end       INTEGER,
+      updated_at_utc          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS message_rotation (
+      account_id    TEXT        NOT NULL,
+      message_key   TEXT        NOT NULL,
+      shown_at_utc  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (account_id, message_key)
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_message_rotation_account
+      ON message_rotation (account_id, shown_at_utc DESC);
+  `);
+
+  await activePool.query(`
     CREATE TABLE IF NOT EXISTS machine_uptime_samples (
       machine_id             TEXT        NOT NULL,
       sampled_at_utc         TIMESTAMPTZ NOT NULL,
