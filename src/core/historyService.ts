@@ -361,15 +361,3 @@ function computeConsecutiveStreak(sortedDatesDesc: string[], todayStr: string): 
   }
   return streak;
 }
-      break;
-    }
-    // date > expected means there's a future date, skip
-  }
-  return streak;
-}
-      break;
-    }
-    // date > expected means there's a future date, skip
-  }
-  return streak;
-}
