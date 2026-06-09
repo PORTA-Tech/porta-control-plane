@@ -434,6 +434,71 @@ export function createAgentController(): Router {
     }
   });
 
+
+  // Daily stats -- sent by DailyStatsReporter every 2 hours throughout the day.
+  // Writes to daily_stats and recomputes user_history so the server-side digest
+  // cron at 20:30 UTC has data even when the machine is off at 19:30 UTC.
+  // Does NOT send email and does NOT write to digest_log.
+  router.post('/daily-stats', async (req, res, next) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const accountId = typeof body.accountId === 'string' && body.accountId.trim().length > 0
+        ? body.accountId.trim()
+        : null;
+
+      if (!accountId) {
+        res.status(400).json({ error: 'accountId is required' });
+        return;
+      }
+
+      const machineId = typeof body.machineId === 'string' ? body.machineId.trim() : '';
+      const dateLocal = typeof body.dateLocal === 'string' ? body.dateLocal.trim() : '';
+      const trackedSeconds = typeof body.trackedSeconds === 'number' ? body.trackedSeconds : 0;
+
+      if (!dateLocal) {
+        res.status(400).json({ error: 'dateLocal is required' });
+        return;
+      }
+
+      try {
+        const dateObj = new Date(dateLocal + 'T00:00:00');
+        await upsertDailyStats({
+          accountId,
+          dateLocal,
+          dayOfWeek: dateObj.getDay(),
+          trackedSeconds,
+          focusSeconds: typeof body.focusSeconds === 'number' ? body.focusSeconds : 0,
+          focusPct: trackedSeconds > 0 ? ((typeof body.focusSeconds === 'number' ? body.focusSeconds : 0) / trackedSeconds) * 100 : 0,
+          focusScore: typeof body.focusQualityScore === 'number' ? body.focusQualityScore * 100 : 0,
+          longestStreakSeconds: typeof body.longestFocusStreakSeconds === 'number' ? body.longestFocusStreakSeconds : 0,
+          distractionSeconds: typeof body.distractionSeconds === 'number' ? body.distractionSeconds : 0,
+          distractionCount: typeof body.fragmentationEpisodeCount === 'number' ? body.fragmentationEpisodeCount : 0,
+          avgDistractionDurationSeconds: typeof body.avgDistractionEpisodeDurationSeconds === 'number' ? body.avgDistractionEpisodeDurationSeconds : 0,
+          contextSwitchCount: typeof body.contextSwitchCount === 'number' ? body.contextSwitchCount : 0,
+          overloadEvents: typeof body.overloadEpisodeCount === 'number' ? body.overloadEpisodeCount : 0,
+          breaksTaken: typeof body.breaksTakenCount === 'number' ? body.breaksTakenCount : 0,
+          breaksSuggested: typeof body.breaksSuggestedCount === 'number' ? body.breaksSuggestedCount : 0,
+          socialMediaLoops: typeof body.socialMediaLoopCount === 'number' ? body.socialMediaLoopCount : 0,
+          socialMediaSeconds: typeof body.socialMediaSeconds === 'number' ? body.socialMediaSeconds : 0,
+          awaySeconds: typeof body.awaySeconds === 'number' ? body.awaySeconds : 0,
+          pressureAvgPct: 0,
+          firstFocusUtc: isOptionalString(body.firstFocusBlockUtc) ? (body.firstFocusBlockUtc as string | null | undefined)?.trim() || null : null,
+          peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
+          mostDistractedHour: null,
+        });
+        await recomputeUserHistory(accountId);
+      } catch (statsErr) {
+        console.error('[daily-stats] Failed to write stats for account ' + accountId + ' machine ' + machineId + ':', statsErr);
+        res.status(500).json({ error: 'internal error' });
+        return;
+      }
+
+      res.status(202).json({ accepted: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Daily digest -- sent by the agent at 23:30 Dubai time (19:30 UTC) when
   // the user has been active for at least 1 hour.
   router.post('/daily-digest', async (req, res, next) => {

@@ -92,3 +92,33 @@ export async function listDigestLogEntries(limit = 100): Promise<DigestLogEntry[
     sentAtUtc: row.sent_at_utc instanceof Date ? row.sent_at_utc.toISOString() : String(row.sent_at_utc),
   }));
 }
+
+/**
+ * Returns true if a digest email was already sent for the given account on the given local date.
+ * Used by the server-side cron to skip accounts whose machines already sent the email at 19:30 UTC.
+ */
+export async function wasDigestSentForAccount(accountId: string, dateLocal: string): Promise<boolean> {
+  if (getFleetPersistenceMode() === 'memory') {
+    return Array.from(memoryStore.values()).some(
+      e => e.accountId === accountId && e.dateLocal === dateLocal && e.fired === true
+    );
+  }
+
+  await ensureFleetPersistenceReady();
+  const pool = getFleetPool();
+  if (!pool) {
+    return Array.from(memoryStore.values()).some(
+      e => e.accountId === accountId && e.dateLocal === dateLocal && e.fired === true
+    );
+  }
+
+  const result = await pool.query<{ exists: boolean }>(
+    `SELECT EXISTS(
+       SELECT 1 FROM digest_log
+       WHERE account_id = $1 AND date_local = $2 AND fired = true
+     ) AS exists`,
+    [accountId, dateLocal]
+  );
+
+  return result.rows[0]?.exists === true;
+}

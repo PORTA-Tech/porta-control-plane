@@ -152,3 +152,62 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     mostDistractedHour: r.most_distracted_hour
   }));
 }
+
+/**
+ * Returns all accounts that have qualifying stats (>= 3600 tracked seconds) for the given date.
+ * Used by the server-side digest cron to find who needs a fallback email.
+ */
+export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): Promise<DailyStats[]> {
+  if (getFleetPersistenceMode() === 'memory') {
+    return Array.from(memoryStore.values()).filter(
+      s => s.dateLocal === dateLocal && s.trackedSeconds >= 3600
+    );
+  }
+
+  await ensureFleetPersistenceReady();
+  const pool = getFleetPool();
+  if (!pool) {
+    return Array.from(memoryStore.values()).filter(
+      s => s.dateLocal === dateLocal && s.trackedSeconds >= 3600
+    );
+  }
+
+  const result = await pool.query<{
+    account_id: string; date_local: string; day_of_week: number;
+    tracked_seconds: number; focus_seconds: number; focus_pct: number;
+    focus_score: number; longest_streak_seconds: number; distraction_seconds: number;
+    distraction_count: number; avg_distraction_duration_seconds: number;
+    context_switch_count: number; overload_events: number; breaks_taken: number;
+    breaks_suggested: number; social_media_loops: number; social_media_seconds: number;
+    away_seconds: number; pressure_avg_pct: number; first_focus_utc: string | null;
+    peak_pressure_utc: string | null; most_distracted_hour: number | null;
+  }>(
+    'SELECT * FROM daily_stats WHERE date_local = $1 AND tracked_seconds >= 3600',
+    [dateLocal]
+  );
+
+  return result.rows.map(r => ({
+    accountId: r.account_id,
+    dateLocal: r.date_local,
+    dayOfWeek: r.day_of_week,
+    trackedSeconds: r.tracked_seconds,
+    focusSeconds: r.focus_seconds,
+    focusPct: r.focus_pct,
+    focusScore: r.focus_score,
+    longestStreakSeconds: r.longest_streak_seconds,
+    distractionSeconds: r.distraction_seconds,
+    distractionCount: r.distraction_count,
+    avgDistractionDurationSeconds: r.avg_distraction_duration_seconds,
+    contextSwitchCount: r.context_switch_count,
+    overloadEvents: r.overload_events,
+    breaksTaken: r.breaks_taken,
+    breaksSuggested: r.breaks_suggested,
+    socialMediaLoops: r.social_media_loops,
+    socialMediaSeconds: r.social_media_seconds,
+    awaySeconds: r.away_seconds,
+    pressureAvgPct: r.pressure_avg_pct,
+    firstFocusUtc: r.first_focus_utc,
+    peakPressureUtc: r.peak_pressure_utc,
+    mostDistractedHour: r.most_distracted_hour
+  }));
+}

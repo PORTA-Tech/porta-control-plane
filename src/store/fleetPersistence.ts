@@ -489,6 +489,19 @@ async function initializeFleetSchema(): Promise<void> {
       ON daily_stats (account_id, day_of_week);
   `);
 
+
+  // Index for server-side digest cron: scan all accounts with stats for a given date
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_daily_stats_date
+      ON daily_stats (date_local);
+  `);
+
+  // Index for digest deduplication: check if account already received email today
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_digest_log_account_date
+      ON digest_log (account_id, date_local);
+  `);
+
   await activePool.query(`
     CREATE TABLE IF NOT EXISTS user_history (
       account_id              TEXT PRIMARY KEY,
