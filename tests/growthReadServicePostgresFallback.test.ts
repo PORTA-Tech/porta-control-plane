@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
   listGrowthEvents: vi.fn(),
   listGrowthEventsForAccount: vi.fn(),
   listAccountActiveDays: vi.fn(),
-  listAccountActiveDaysForAccount: vi.fn()
+  listAccountActiveDaysForAccount: vi.fn(),
+  listMachineSummaries: vi.fn()
 }));
 
 vi.mock('../src/store/fleetPersistence.js', () => ({
@@ -32,6 +33,10 @@ vi.mock('../src/store/accountActiveDayStore.js', () => ({
   listAccountActiveDaysForAccount: mocks.listAccountActiveDaysForAccount
 }));
 
+vi.mock('../src/store/machineSummaryStore.js', () => ({
+  listMachineSummaries: mocks.listMachineSummaries
+}));
+
 vi.mock('../src/core/authSessionStore.js', () => ({
   readAuthUserIdentity: vi.fn()
 }));
@@ -46,6 +51,7 @@ describe('growth read service postgres fallback', () => {
     mocks.listGrowthEventsForAccount.mockResolvedValue([]);
     mocks.listAccountActiveDays.mockResolvedValue([]);
     mocks.listAccountActiveDaysForAccount.mockResolvedValue([]);
+    mocks.listMachineSummaries.mockResolvedValue([]);
   });
 
   it('falls back to self-serve account profiles when auth_users has not been backfilled yet', async () => {
@@ -85,5 +91,7 @@ describe('growth read service postgres fallback', () => {
     expect(summary.totalRegisteredUsers).toBe(1);
     expect(summary.newRegisteredUsers).toBe(1);
     expect(summary.activatedUsers).toBe(0);
+    expect(summary.totalInstalls).toBe(0);
+    expect(summary.unlinkedMachines).toBe(0);
   });
 });
