@@ -275,6 +275,9 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
       : null,
     userAgentSelfTestErrorCode: isOptionalString(row.userAgentSelfTestErrorCode)
       ? (row.userAgentSelfTestErrorCode?.trim() || null)
+      : null,
+    userAgentLogTail: isOptionalString(row.userAgentLogTail)
+      ? (row.userAgentLogTail?.trim().slice(0, 8000) || null)
       : null
   } as MachineSummaryReport);
 }
