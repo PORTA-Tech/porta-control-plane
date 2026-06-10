@@ -327,6 +327,9 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
       : null,
     userAgentLogTail: isOptionalString(row.userAgentLogTail)
       ? (row.userAgentLogTail?.trim().slice(0, 8000) || null)
+      : null,
+    windowsUpdateStatus: isOptionalString(row.windowsUpdateStatus)
+      ? (row.windowsUpdateStatus?.trim().slice(0, 2000) || null)
       : null
   } as MachineSummaryReport);
 }

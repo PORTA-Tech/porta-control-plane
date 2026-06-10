@@ -9,6 +9,11 @@ export interface WindowsClientReleaseManifest {
   title: string | null;
   summary: string | null;
   sha256: string | null;
+  // Manifest v2 (auto-update): Authenticode enforcement is manifest-controlled so
+  // unsigned preview builds can update via SHA-256 until the signing cert arrives.
+  requireSignature: boolean;
+  // Staged rollout 0-100; agents gate on hash(machineId) % 100 < rolloutPercent.
+  rolloutPercent: number;
 }
 
 function readEnv(name: string): string | null {
@@ -51,6 +56,20 @@ function normalizeIsoUtc(value: string | null): string | null {
   return parsed.toISOString();
 }
 
+function readPercent(name: string, fallback: number): number {
+  const value = readEnv(name);
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(100, Math.max(0, parsed));
+}
+
 function normalizeUrl(value: string | null): string | null {
   if (!value) {
     return null;
@@ -85,6 +104,8 @@ export function readLatestWindowsClientRelease(): WindowsClientReleaseManifest |
     required: readBoolean('PORTA_WINDOWS_RELEASE_REQUIRED'),
     title: readEnv('PORTA_WINDOWS_RELEASE_TITLE'),
     summary: readEnv('PORTA_WINDOWS_RELEASE_SUMMARY'),
-    sha256: readEnv('PORTA_WINDOWS_RELEASE_SHA256')
+    sha256: readEnv('PORTA_WINDOWS_RELEASE_SHA256'),
+    requireSignature: readBoolean('PORTA_WINDOWS_RELEASE_REQUIRE_SIGNATURE', false),
+    rolloutPercent: readPercent('PORTA_WINDOWS_RELEASE_ROLLOUT_PERCENT', 100)
   };
 }
