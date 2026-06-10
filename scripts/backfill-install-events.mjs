@@ -84,15 +84,11 @@ for (const row of uptimeRows.rows) {
 const summaries = await listMachineSummaries();
 let inserted = 0;
 let skipped = 0;
+let corrected = 0;
 
 for (const summary of summaries) {
   const machineId = summary.machineId.trim();
   const eventKey = `machine_installed:${machineId}`;
-  const existing = await getGrowthEventByKey(eventKey);
-  if (existing) {
-    skipped++;
-    continue;
-  }
 
   const candidates = [
     deviceFirstSeen.get(summary.machineName?.trim().toLowerCase() ?? ''),
@@ -100,6 +96,28 @@ for (const summary of summaries) {
     new Date(summary.reportedAtUtc)
   ].filter((date) => date instanceof Date && Number.isFinite(date.getTime()));
   const occurredAt = candidates.sort((left, right) => left.getTime() - right.getTime())[0] ?? new Date();
+
+  const existing = await getGrowthEventByKey(eventKey);
+  if (existing) {
+    // Events auto-recorded by the live endpoint carry the report time, not the
+    // true first-seen time. Pull them back when we know an earlier date.
+    const existingMs = Date.parse(existing.occurredAtUtc);
+    if (Number.isFinite(existingMs) && occurredAt.getTime() < existingMs) {
+      if (dryRun) {
+        console.log(`[dry-run] would correct ${eventKey} ${existing.occurredAtUtc} -> ${occurredAt.toISOString()}`);
+      } else {
+        await pool.query(
+          'UPDATE growth_events SET occurred_at_utc = $1 WHERE event_key = $2',
+          [occurredAt.toISOString(), eventKey]
+        );
+        console.log(`corrected ${eventKey} ${existing.occurredAtUtc} -> ${occurredAt.toISOString()}`);
+      }
+      corrected++;
+    } else {
+      skipped++;
+    }
+    continue;
+  }
 
   if (dryRun) {
     console.log(`[dry-run] would insert ${eventKey} occurred_at=${occurredAt.toISOString()}`);
@@ -123,5 +141,5 @@ for (const summary of summaries) {
   inserted++;
 }
 
-console.log(`Backfill complete. inserted=${inserted} skipped_existing=${skipped} dry_run=${dryRun}`);
+console.log(`Backfill complete. inserted=${inserted} corrected=${corrected} skipped_existing=${skipped} dry_run=${dryRun}`);
 process.exit(0);
