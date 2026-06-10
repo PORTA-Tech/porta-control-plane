@@ -51,7 +51,12 @@ export function createGrowthController(): Router {
         retention_rate_d30_pct: summary.retentionRateD30Pct,
         churn_rate_d1_pct: summary.churnRateD1Pct,
         churn_rate_d7_pct: summary.churnRateD7Pct,
-        churn_rate_d30_pct: summary.churnRateD30Pct
+        churn_rate_d30_pct: summary.churnRateD30Pct,
+        total_installs: summary.totalInstalls,
+        reporting_machines_48h: summary.reportingMachines48h,
+        linked_machines: summary.linkedMachines,
+        unlinked_machines: summary.unlinkedMachines,
+        install_to_registration_rate_pct: summary.installToRegistrationRatePct
       });
     } catch (error) {
       next(error);
@@ -61,8 +66,8 @@ export function createGrowthController(): Router {
   router.get('/series', async (req, res, next) => {
     try {
       const metric = parseSingleQueryValue(req.query.metric);
-      if (!metric || !['registrations', 'activations', 'active_users'].includes(metric)) {
-        res.status(400).json({ error: 'metric must be one of registrations, activations, active_users' });
+      if (!metric || !['registrations', 'activations', 'active_users', 'installs'].includes(metric)) {
+        res.status(400).json({ error: 'metric must be one of registrations, activations, active_users, installs' });
         return;
       }
 
@@ -85,7 +90,7 @@ export function createGrowthController(): Router {
       }
 
       const series = await readGrowthSeries({
-        metric: metric as GrowthSeriesMetric,
+        metric: metric as GrowthSeriesMetric | 'installs',
         interval: (interval ?? null) as GrowthSeriesInterval | null,
         from,
         to

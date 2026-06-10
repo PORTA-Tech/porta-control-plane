@@ -96,6 +96,40 @@ export async function recordGrowthEvent(input: AppendGrowthEventInput): Promise<
   });
 }
 
+// Records the first-ever contact from a machine as an install event. Idempotent via
+// the unique eventKey, so callers may invoke it on every report. accountId is null
+// for machines whose user never signed up — that is the point: installs are the top
+// of the growth funnel and must be counted even when no account exists.
+export async function recordMachineInstalledEvent(input: {
+  machineId: string;
+  agentVersion?: string | null;
+  accountId?: string | null;
+  orgId?: string | null;
+  deviceId?: string | null;
+  occurredAtUtc: string;
+  source?: string;
+}): Promise<GrowthEventRecord | null> {
+  const machineId = input.machineId?.trim();
+  if (!machineId) {
+    return null;
+  }
+
+  return recordGrowthEvent({
+    eventKey: `machine_installed:${machineId}`,
+    eventType: 'machine_installed',
+    accountId: input.accountId ?? null,
+    userId: null,
+    deviceId: input.deviceId ?? null,
+    orgId: input.orgId ?? null,
+    machineId,
+    occurredAtUtc: input.occurredAtUtc,
+    source: input.source ?? 'machine_summary',
+    metadata: {
+      agentVersion: input.agentVersion ?? null
+    }
+  });
+}
+
 export async function recordLifecycleGrowthEvent(input: AppendGrowthEventInput & {
   accountId: string;
   userId?: string | null;

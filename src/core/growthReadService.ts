@@ -20,6 +20,18 @@ import {
   listAccountActiveDaysForAccount,
   type AccountActiveDayRecord
 } from '../store/accountActiveDayStore.js';
+import { listMachineSummaries } from '../store/machineSummaryStore.js';
+
+// Funnel extension: growth must count installs (machines that ever reported),
+// not only registered accounts — otherwise unregistered installs are invisible
+// and the dashboard understates real adoption.
+export interface GrowthSummaryExtended extends GrowthSummary {
+  totalInstalls: number;
+  reportingMachines48h: number;
+  linkedMachines: number;
+  unlinkedMachines: number;
+  installToRegistrationRatePct: number | null;
+}
 
 const UTC_TIMEZONE = 'UTC';
 const DEFAULT_SUMMARY_WINDOW_DAYS = 30;
@@ -438,7 +450,7 @@ function buildCohortRows(dataset: GrowthDataset, options: CohortRangeOptions = {
   });
 }
 
-export async function readGrowthSummary(windowDays?: number | null): Promise<GrowthSummary> {
+export async function readGrowthSummary(windowDays?: number | null): Promise<GrowthSummaryExtended> {
   const dataset = await loadGrowthDataset();
   const window = resolveSummaryWindow(windowDays);
   const rows = buildCohortRows(dataset, {
@@ -457,6 +469,34 @@ export async function readGrowthSummary(windowDays?: number | null): Promise<Gro
   const d7 = aggregateRetention(rows, 7);
   const d30 = aggregateRetention(rows, 30);
 
+  const [allGrowthEvents, machineSummaries] = await Promise.all([
+    listGrowthEvents(),
+    listMachineSummaries()
+  ]);
+  const installedMachineIds = new Set<string>(
+    allGrowthEvents
+      .filter((event) => event.eventType === 'machine_installed' && typeof event.machineId === 'string' && event.machineId)
+      .map((event) => event.machineId as string)
+  );
+  // Safety net until the backfill has run: any machine with a stored summary is an install.
+  for (const summaryRow of machineSummaries) {
+    installedMachineIds.add(summaryRow.machineId);
+  }
+
+  const nowMs = Date.now();
+  const reportingMachines48h = machineSummaries.filter((summaryRow) => {
+    const reportedMs = Date.parse(summaryRow.reportedAtUtc);
+    return Number.isFinite(reportedMs) && nowMs - reportedMs <= 48 * 60 * 60 * 1000;
+  }).length;
+  const linkedMachines = machineSummaries.filter((summaryRow) => Boolean(summaryRow.accountId)).length;
+  const unlinkedMachines = machineSummaries.length - linkedMachines;
+  const linkedAccountIds = new Set<string>(
+    machineSummaries
+      .map((summaryRow) => summaryRow.accountId)
+      .filter((accountId): accountId is string => Boolean(accountId))
+  );
+  const totalInstalls = installedMachineIds.size;
+
   return {
     timezone: UTC_TIMEZONE,
     generatedAtUtc: new Date().toISOString(),
@@ -471,12 +511,17 @@ export async function readGrowthSummary(windowDays?: number | null): Promise<Gro
     retentionRateD30Pct: d30.retentionRatePct,
     churnRateD1Pct: d1.churnRatePct,
     churnRateD7Pct: d7.churnRatePct,
-    churnRateD30Pct: d30.churnRatePct
+    churnRateD30Pct: d30.churnRatePct,
+    totalInstalls,
+    reportingMachines48h,
+    linkedMachines,
+    unlinkedMachines,
+    installToRegistrationRatePct: roundPct(linkedAccountIds.size, totalInstalls)
   };
 }
 
 export async function readGrowthSeries(options: {
-  metric: GrowthSeriesMetric;
+  metric: GrowthSeriesMetric | 'installs';
   interval?: GrowthSeriesInterval | null;
   from?: string | null;
   to?: string | null;
@@ -488,6 +533,9 @@ export async function readGrowthSeries(options: {
   }
 
   const dataset = await loadGrowthDataset();
+  const installEvents = options.metric === 'installs'
+    ? (await listGrowthEvents()).filter((event) => event.eventType === 'machine_installed')
+    : [];
   const toExclusive = new Date(range.to.getTime() + 1);
   const points: GrowthSeries['points'] = [];
 
@@ -501,7 +549,12 @@ export async function readGrowthSeries(options: {
     const clippedEnd = new Date(Math.min(fullBucketEnd.getTime(), toExclusive.getTime()));
 
     let value = 0;
-    if (options.metric === 'registrations') {
+    if (options.metric === 'installs') {
+      value = installEvents.filter((event) => {
+        const timestamp = Date.parse(event.occurredAtUtc);
+        return timestamp >= clippedStart.getTime() && timestamp < clippedEnd.getTime();
+      }).length;
+    } else if (options.metric === 'registrations') {
       value = dataset.accounts.filter((account) => {
         const timestamp = Date.parse(account.registrationAtUtc);
         return timestamp >= clippedStart.getTime() && timestamp < clippedEnd.getTime();
@@ -539,7 +592,7 @@ export async function readGrowthSeries(options: {
   }
 
   return {
-    metric: options.metric,
+    metric: options.metric as GrowthSeriesMetric,
     interval,
     timezone: UTC_TIMEZONE,
     points
@@ -562,7 +615,9 @@ export async function readGrowthCohorts(options: CohortRangeOptions = {}): Promi
 
 function toJourneyEvent(record: GrowthEventRecord): GrowthUserJourneyEvent {
   return {
-    eventType: record.eventType,
+    // machine_installed events are machine-scoped and filtered out of journeys
+    // before this mapper runs; the cast keeps the vendored union type closed.
+    eventType: record.eventType as GrowthUserJourneyEvent['eventType'],
     occurredAtUtc: record.occurredAtUtc,
     ...(record.activityDate ? { activityDate: record.activityDate } : {}),
     ...(record.deviceId !== undefined ? { deviceId: record.deviceId ?? null } : {}),
@@ -584,7 +639,7 @@ export async function readGrowthUserJourney(accountId: string): Promise<GrowthUs
     listAccountActiveDaysForAccount(accountId)
   ]);
 
-  const filteredEvents = events.filter((record) => record.accountId === accountId);
+  const filteredEvents = events.filter((record) => record.accountId === accountId && record.eventType !== 'machine_installed');
   const activationAtUtc = dataset.activationAtByAccountId.get(accountId) ?? null;
 
   return {

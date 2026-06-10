@@ -4,7 +4,7 @@ import { runtimeState } from '../../store/runtimeState.js';
 import { listAgentPresence, upsertAgentPresence, upsertPresenceFromTelemetryBatch } from '../../store/agentPresenceStore.js';
 import { appendMachineActionEvent } from '../../store/machineActionStore.js';
 import { upsertMachineSummary, withCanonicalMachineSummary } from '../../store/machineSummaryStore.js';
-import { maybeActivateAccount, recordAccountActiveDay } from '../../core/growthService.js';
+import { maybeActivateAccount, recordAccountActiveDay, recordMachineInstalledEvent } from '../../core/growthService.js';
 import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileService.js';
 import { getAccountProfile } from '../../store/accountStore.js';
 import { buildDigestEmail, type DailyDigestPayload } from '../../core/digestEmailBuilder.js';
@@ -16,6 +16,7 @@ import { recomputeUserHistory } from '../../core/historyService.js';
 import { getUserHistory } from '../../store/userHistoryStore.js';
 
 const lastUptimeSampleMs = new Map<string, number>();
+const machineInstallEventRecorded = new Set<string>();
 const UPTIME_SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
 
 interface AgentStatusPayload {
@@ -28,6 +29,54 @@ interface AgentStatusPayload {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function parseAgentVersionTuple(version: unknown): [number, number, number] | null {
+  if (typeof version !== 'string') {
+    return null;
+  }
+
+  const match = version.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) {
+    return null;
+  }
+
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function isAgentVersionAtLeast(version: unknown, major: number, minor: number, patch: number): boolean {
+  const tuple = parseAgentVersionTuple(version);
+  if (!tuple) {
+    return false;
+  }
+
+  if (tuple[0] !== major) {
+    return tuple[0] > major;
+  }
+
+  if (tuple[1] !== minor) {
+    return tuple[1] > minor;
+  }
+
+  return tuple[2] >= patch;
+}
+
+// Growth integrity: agents below 1.2.82 fabricated lastActivityUtc (they reported the
+// summary-window end as "last activity" even when zero input was captured), which
+// inflated account_active_day and therefore activation/retention. For those versions
+// only the instantaneous activityDetected flag is trustworthy. From 1.2.82 the agent
+// only reports real captured input, so a recent accepted-input age also counts.
+function hasTrustworthyActivity(payload: MachineSummaryReport): boolean {
+  if (payload.activityDetected) {
+    return true;
+  }
+
+  if (!isAgentVersionAtLeast(payload.agentVersion, 1, 2, 82)) {
+    return false;
+  }
+
+  const age = payload.lastAcceptedInputAgeSeconds;
+  return typeof age === 'number' && Number.isFinite(age) && age < 3600;
 }
 
 function isOptionalString(value: unknown): value is string | null | undefined {
@@ -367,6 +416,22 @@ export function createAgentController(): Router {
       });
       await upsertMachineSummary(payload);
 
+      if (!machineInstallEventRecorded.has(payload.machineId)) {
+        machineInstallEventRecorded.add(payload.machineId);
+        try {
+          await recordMachineInstalledEvent({
+            machineId: payload.machineId,
+            agentVersion: payload.agentVersion,
+            accountId: payload.accountId ?? reconciledDevice?.currentAccountId ?? null,
+            orgId: payload.orgId ?? null,
+            deviceId: payload.deviceId ?? null,
+            occurredAtUtc: payload.reportedAtUtc
+          });
+        } catch {
+          machineInstallEventRecorded.delete(payload.machineId);
+        }
+      }
+
       const lastMs = lastUptimeSampleMs.get(payload.machineId) ?? 0;
       if (Date.now() - lastMs >= UPTIME_SAMPLE_INTERVAL_MS) {
         lastUptimeSampleMs.set(payload.machineId, Date.now());
@@ -382,7 +447,7 @@ export function createAgentController(): Router {
       if (reconciledDevice
         && reconciledDevice.status === 'active'
         && reconciledDevice.currentAccountId
-        && (payload.activityDetected || Boolean(payload.lastActivityUtc)))
+        && hasTrustworthyActivity(payload))
       {
         const activeDay = await recordAccountActiveDay({
           accountId: reconciledDevice.currentAccountId,

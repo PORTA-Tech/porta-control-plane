@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { GrowthUserJourneyEventType } from '@porta/api-contracts';
 import { ensureFleetPersistenceReady, getFleetPersistenceMode, getFleetPool } from './fleetPersistence.js';
 
-export type GrowthEventType = GrowthUserJourneyEventType;
+export type GrowthEventType = GrowthUserJourneyEventType | 'machine_installed';
 export type GrowthEventMetadata = Record<string, string | number | boolean | null>;
 
 export interface GrowthEventRecord {

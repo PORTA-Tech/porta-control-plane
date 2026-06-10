@@ -21,7 +21,21 @@ export interface JoinedDeviceFields {
   deviceRevokedAt: string | null;
 }
 
-export type MachineSummaryAdminView = MachineSummaryReport & JoinedIdentityFields & JoinedDeviceFields;
+// Server-derived truth fields so the console never has to guess:
+// - presence is liveness (deviceStatus only means "credential not revoked")
+// - hasInputData guards against rendering metrics computed from zero input
+// - selfTestEffective surfaces a self-test frozen at "pending" (dead capture loop)
+// - agentOutdated compares against the newest version seen anywhere in the fleet
+export interface DerivedFleetHealthFields {
+  presence: 'online' | 'recent' | 'offline';
+  offlineSinceUtc: string | null;
+  hasInputData: boolean;
+  selfTestEffective: string | null;
+  agentOutdated: boolean;
+  latestKnownAgentVersion: string | null;
+}
+
+export type MachineSummaryAdminView = MachineSummaryReport & JoinedIdentityFields & JoinedDeviceFields & DerivedFleetHealthFields;
 export type MachineActionAdminView = MachineActionEvent & JoinedIdentityFields & JoinedDeviceFields;
 
 // Admin views expose canonical focus-episode fields and keep legacy continuity
@@ -30,7 +44,7 @@ export type MachineActionAdminView = MachineActionEvent & JoinedIdentityFields &
 
 export async function listJoinedMachineSummaries(): Promise<MachineSummaryAdminView[]> {
   const rows = await listMachineSummaries();
-  return joinSummaries(rows);
+  return joinSummaries(rows, resolveLatestAgentVersion(rows));
 }
 
 export async function getJoinedMachineSummary(machineId: string): Promise<MachineSummaryAdminView | null> {
@@ -39,7 +53,8 @@ export async function getJoinedMachineSummary(machineId: string): Promise<Machin
     return null;
   }
 
-  const [joined] = await joinSummaries([row]);
+  const allRows = await listMachineSummaries();
+  const [joined] = await joinSummaries([row], resolveLatestAgentVersion(allRows));
   return joined ?? null;
 }
 
@@ -56,14 +71,103 @@ export async function listRecentJoinedMachineActionEvents(limit = 100): Promise<
   return joinActions(rows);
 }
 
-async function joinSummaries(rows: MachineSummaryReport[]): Promise<MachineSummaryAdminView[]> {
+async function joinSummaries(
+  rows: MachineSummaryReport[],
+  latestAgentVersion: string | null
+): Promise<MachineSummaryAdminView[]> {
   const joinCache = new IdentityJoinCache();
+  const nowMs = Date.now();
   return Promise.all(
     rows.map(async (row) => ({
       ...row,
-      ...(await joinCache.resolve(row.accountId ?? null, row.orgId ?? null, row.deviceId ?? null))
+      ...(await joinCache.resolve(row.accountId ?? null, row.orgId ?? null, row.deviceId ?? null)),
+      ...deriveFleetHealthFields(row, latestAgentVersion, nowMs)
     }))
   );
+}
+
+function parseVersionTuple(version: unknown): [number, number, number] | null {
+  if (typeof version !== 'string') {
+    return null;
+  }
+
+  const match = version.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) {
+    return null;
+  }
+
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareVersionTuples(left: [number, number, number], right: [number, number, number]): number {
+  for (let index = 0; index < 3; index++) {
+    if (left[index] !== right[index]) {
+      return (left[index] ?? 0) - (right[index] ?? 0);
+    }
+  }
+
+  return 0;
+}
+
+function resolveLatestAgentVersion(rows: MachineSummaryReport[]): string | null {
+  let latest: { version: string; tuple: [number, number, number] } | null = null;
+  for (const row of rows) {
+    const tuple = parseVersionTuple(row.agentVersion);
+    if (!tuple) {
+      continue;
+    }
+
+    if (!latest || compareVersionTuples(tuple, latest.tuple) > 0) {
+      latest = { version: row.agentVersion.trim(), tuple };
+    }
+  }
+
+  return latest?.version ?? null;
+}
+
+function isVersionAtLeastTuple(version: unknown, target: [number, number, number]): boolean {
+  const tuple = parseVersionTuple(version);
+  if (!tuple) {
+    return false;
+  }
+
+  return compareVersionTuples(tuple, target) >= 0;
+}
+
+function deriveFleetHealthFields(
+  row: MachineSummaryReport,
+  latestAgentVersion: string | null,
+  nowMs: number
+): DerivedFleetHealthFields {
+  const reportedMs = Date.parse(row.reportedAtUtc);
+  const ageSeconds = Number.isFinite(reportedMs) ? (nowMs - reportedMs) / 1000 : Number.POSITIVE_INFINITY;
+  const presence: DerivedFleetHealthFields['presence'] =
+    ageSeconds <= 120 ? 'online' : ageSeconds <= 3600 ? 'recent' : 'offline';
+  const offlineSinceUtc = presence === 'offline' && Number.isFinite(reportedMs) ? row.reportedAtUtc : null;
+
+  // Agents below 1.2.82 fabricated last-input timestamps, so for them only the
+  // instantaneous activity flag proves real input ever flowed.
+  const hasInputData = isVersionAtLeastTuple(row.agentVersion, [1, 2, 82])
+    ? row.lastAcceptedInputAgeSeconds !== null && row.lastAcceptedInputAgeSeconds !== undefined
+    : row.activityDetected === true;
+
+  const rawSelfTestState = (row as MachineSummaryReport & { userAgentSelfTestState?: string | null }).userAgentSelfTestState ?? null;
+  const selfTestEffective = rawSelfTestState === 'pending' && presence !== 'offline' && !hasInputData
+    ? 'stale_pending'
+    : rawSelfTestState;
+
+  const latestTuple = latestAgentVersion ? parseVersionTuple(latestAgentVersion) : null;
+  const rowTuple = parseVersionTuple(row.agentVersion);
+  const agentOutdated = Boolean(latestTuple && rowTuple && compareVersionTuples(rowTuple, latestTuple) < 0);
+
+  return {
+    presence,
+    offlineSinceUtc,
+    hasInputData,
+    selfTestEffective,
+    agentOutdated,
+    latestKnownAgentVersion: latestAgentVersion
+  };
 }
 
 async function joinActions(rows: MachineActionEvent[]): Promise<MachineActionAdminView[]> {
