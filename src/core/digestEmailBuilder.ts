@@ -39,7 +39,15 @@ export interface DailyDigestPayload {
   avgDistractionEpisodeDurationSeconds?: number;
   contextSwitchCount?: number;
   preLongestDistractionFocusSeconds?: number;
+  // Digest honesty — fields below let senders declare what they DON'T know,
+  // so the email renders "no data" instead of a confident zero.
+  /** Metrics whose source store had no data for this day. */
+  missingFields?: ReadonlyArray<DigestMissingField>;
+  /** True when assembled by the server cron from periodic stats (machine was offline at send time). */
+  isServerFallback?: boolean;
 }
+
+export type DigestMissingField = 'gaming' | 'socialMedia' | 'contextSwitches' | 'streak' | 'fragmentation';
 
 // ── Formatting helpers ──────────────────────────────────────────────
 
@@ -583,20 +591,25 @@ function buildSubjectLine(
   return `Your Ari digest — ${dateDisplay}`;
 }
 
-// ── Category bar helper ─────────────────────────────────────────────────────────
+// ── No-data helper ──────────────────────────────────────────────────────────────
+// Rendered wherever a metric's source store had no data. A confident "0m" for a
+// broken sensor destroys trust in the numbers that ARE real.
 
-function categoryBar(label: string, seconds: number, totalSeconds: number, color: string): string {
-  const p = totalSeconds > 0 ? Math.round((seconds / totalSeconds) * 100) : 0;
-  return `
-    <tr>
-      <td style="padding:5px 0;font-size:12px;color:#505070;width:120px;">${label}</td>
-      <td style="padding:5px 8px;">
-        <div style="background:#e0e0ef;border-radius:4px;height:7px;width:100%;">
-          <div style="background:${color};border-radius:4px;height:7px;width:${p}%;"></div>
-        </div>
-      </td>
-      <td style="padding:5px 0;font-size:12px;color:#505070;text-align:right;white-space:nowrap;width:64px;">${fmtMinutes(seconds)} <span style="color:#8080a0;">${p}%</span></td>
-    </tr>`;
+const NO_DATA_HTML = '<span style="color:#b0b0c8;font-weight:500;font-size:15px;">no data</span>';
+
+/**
+ * Missing-field set: explicit declarations from the sender, plus logical
+ * contradictions the builder can detect on its own:
+ * - a zero "longest streak" on a day with ≥30m of focus is impossible — the
+ *   streak field arrived broken, not as a real zero;
+ * - zero distraction episodes alongside ≥30m of distraction time is equally
+ *   impossible — episode detection was not delivering.
+ */
+function resolveMissingFields(p: DailyDigestPayload): Set<DigestMissingField> {
+  const missing = new Set<DigestMissingField>(p.missingFields ?? []);
+  if (p.longestFocusStreakSeconds <= 0 && p.focusSeconds >= 1800) missing.add('streak');
+  if (p.fragmentationEpisodeCount === 0 && p.distractionSeconds >= 1800) missing.add('fragmentation');
+  return missing;
 }
 
 // ── Main builder ──────────────────────────────────────────────────────────────────────
@@ -611,7 +624,8 @@ export async function buildDigestEmail(
   const focusLabel = fmtMinutes(p.focusSeconds);
   const focusPctLabel = pct(p.focusSeconds, p.trackedSeconds);
   const grade = focusGrade(p.focusQualityScore);
-  const streakLabel = fmtMinutes(p.longestFocusStreakSeconds);
+  const missing = resolveMissingFields(p);
+  const streakLabel = missing.has('streak') ? NO_DATA_HTML : fmtMinutes(p.longestFocusStreakSeconds);
   const ariObs = await buildAriObservation(p, h, firstName);
   // Convert newlines in observation to HTML line breaks
   const ariObsHtml = ariObs.replace(/\n/g, '<br>');
@@ -630,7 +644,7 @@ export async function buildDigestEmail(
   const todayFocusScore = Math.round(p.focusQualityScore * 100);
   const todayIsPersonalBest = h != null && h.daysOfData >= 5 && (
     todayFocusScore > h.bestFocusScore ||
-    p.longestFocusStreakSeconds / 60 > h.bestStreakMin ||
+    (!missing.has('streak') && p.longestFocusStreakSeconds / 60 > h.bestStreakMin) ||
     todayFocusPct > h.bestFocusPct
   );
 
@@ -640,9 +654,6 @@ export async function buildDigestEmail(
     p.breaksSuggestedCount === 0
       ? 'No breaks suggested'
       : `${p.breaksTakenCount} of ${p.breaksSuggestedCount} taken`;
-
-  const totalCategorySeconds =
-    p.developmentSeconds + p.productivitySeconds + p.communicationSeconds + p.entertainmentSeconds;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -675,6 +686,9 @@ export async function buildDigestEmail(
         <p style="margin:0 0 6px;font-size:11px;color:#8080b0;letter-spacing:0.1em;text-transform:uppercase;font-weight:500;">Ari by Porta</p>
         <h1 style="margin:0 0 5px;font-size:22px;font-weight:700;color:#111118;">Your day at a glance</h1>
         <p style="margin:0;font-size:13px;color:#505070;">${dateDisplay}</p>
+        ${p.isServerFallback
+          ? '<p style="margin:8px 0 0;font-size:11px;color:#a06030;">Your machine was offline at send time — this digest was assembled from stats reported during the day. Activity after the last report is not included.</p>'
+          : ''}
       </td>
     </tr>
 
@@ -717,11 +731,11 @@ export async function buildDigestEmail(
             </td>
             <td style="padding:0 16px;border-left:1px solid #e0e0ef;">
               <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Fragmentation</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${p.fragmentationEpisodeCount} <span style="font-size:12px;color:#8080a0;">episodes</span></p>
+              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${missing.has('fragmentation') ? NO_DATA_HTML : `${p.fragmentationEpisodeCount} <span style="font-size:12px;color:#8080a0;">episodes</span>`}</p>
             </td>
             <td style="padding:0 0 0 16px;border-left:1px solid #e0e0ef;">
               <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Context switches</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${fmtMinutes(p.contextExcursionSeconds)}</p>
+              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${missing.has('contextSwitches') ? NO_DATA_HTML : fmtMinutes(p.contextExcursionSeconds)}</p>
             </td>
           </tr>
         </table>
@@ -743,13 +757,17 @@ export async function buildDigestEmail(
             </td>
             <td style="padding:0 12px;border-left:1px solid #e0e0ef;vertical-align:top;">
               <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Social media loops</p>
-              <p style="margin:0;font-size:18px;font-weight:600;color:#111118;">${p.socialMediaLoopCount}×</p>
-              <p style="margin:0;font-size:11px;color:#8080a0;">${fmtMinutes(p.socialMediaSeconds)}</p>
+              ${missing.has('socialMedia')
+                ? `<p style="margin:0;">${NO_DATA_HTML}</p>`
+                : `<p style="margin:0;font-size:18px;font-weight:600;color:#111118;">${p.socialMediaLoopCount}×</p>
+              <p style="margin:0;font-size:11px;color:#8080a0;">${fmtMinutes(p.socialMediaSeconds)}</p>`}
             </td>
             <td style="padding:0 0 0 12px;border-left:1px solid #e0e0ef;vertical-align:top;">
               <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Gaming</p>
-              <p style="margin:0;font-size:18px;font-weight:600;color:#111118;">${fmtMinutes(p.gamingLauncherSeconds + p.gamingActiveSeconds)}</p>
-              <p style="margin:0;font-size:11px;color:#8080a0;">${p.gamingEpisodeCount} episodes</p>
+              ${missing.has('gaming')
+                ? `<p style="margin:0;">${NO_DATA_HTML}</p>`
+                : `<p style="margin:0;font-size:18px;font-weight:600;color:#111118;">${fmtMinutes(p.gamingLauncherSeconds + p.gamingActiveSeconds)}</p>
+              <p style="margin:0;font-size:11px;color:#8080a0;">${p.gamingEpisodeCount} episodes</p>`}
             </td>
           </tr>
         </table>
@@ -784,23 +802,11 @@ export async function buildDigestEmail(
     <!-- Divider -->
     <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
 
-    <!-- Section 5: App category breakdown -->
-    <tr>
-      <td style="padding:20px 36px 0;">
-        <p style="margin:0 0 14px;font-size:11px;font-weight:600;color:#207a80;text-transform:uppercase;letter-spacing:0.1em;">Time Breakdown</p>
-        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-          ${categoryBar('Development', p.developmentSeconds, totalCategorySeconds, '#5858a0')}
-          ${categoryBar('Productivity', p.productivitySeconds, totalCategorySeconds, '#207a80')}
-          ${categoryBar('Communication', p.communicationSeconds, totalCategorySeconds, '#287858')}
-          ${categoryBar('Entertainment', p.entertainmentSeconds, totalCategorySeconds, '#a05830')}
-        </table>
-      </td>
-    </tr>
+    <!-- App-category section removed: the four categories were derived from
+         focus strength, not real app usage. Reinstate only when genuine
+         app-category attribution ships in the agent. -->
 
-    <!-- Divider -->
-    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
-
-    <!-- Section 6: Ari observation -->
+    <!-- Section 5: Ari observation -->
     <tr>
       <td style="padding:20px 36px 0;">
         <table width="100%" cellpadding="0" cellspacing="0" border="0">

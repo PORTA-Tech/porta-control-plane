@@ -58,6 +58,11 @@ function statsToDigestPayload(stats: DailyStats): DailyDigestPayload {
     avgDistractionEpisodeDurationSeconds: stats.avgDistractionDurationSeconds,
     contextSwitchCount: stats.contextSwitchCount,
     preLongestDistractionFocusSeconds: 0,
+    // daily_stats has no gaming or context-excursion columns. Declaring them
+    // missing makes the email render "no data" instead of a confident 0
+    // (the zeros above are kept only to satisfy the payload shape).
+    missingFields: ['gaming', 'contextSwitches'],
+    isServerFallback: true,
   };
 }
 
