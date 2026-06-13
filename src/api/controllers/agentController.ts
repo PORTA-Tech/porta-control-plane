@@ -7,7 +7,7 @@ import { upsertMachineSummary, withCanonicalMachineSummary } from '../../store/m
 import { maybeActivateAccount, recordAccountActiveDay, recordMachineInstalledEvent } from '../../core/growthService.js';
 import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileService.js';
 import { getAccountProfile } from '../../store/accountStore.js';
-import { buildDigestEmail, type DailyDigestPayload } from '../../core/digestEmailBuilder.js';
+import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } from '../../core/digestEmailBuilder.js';
 import { sendEmail } from '../../core/emailService.js';
 import { appendDigestLogEntry } from '../../store/digestLogStore.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
@@ -704,8 +704,14 @@ export function createAgentController(): Router {
         peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
         avgDistractionEpisodeDurationSeconds: typeof body.avgDistractionEpisodeDurationSeconds === 'number' ? body.avgDistractionEpisodeDurationSeconds : 0,
         contextSwitchCount: typeof body.contextSwitchCount === 'number' ? body.contextSwitchCount : 0,
-        preLongestDistractionFocusSeconds: typeof body.preLongestDistractionFocusSeconds === 'number' ? body.preLongestDistractionFocusSeconds : 0
+        preLongestDistractionFocusSeconds: typeof body.preLongestDistractionFocusSeconds === 'number' ? body.preLongestDistractionFocusSeconds : 0,
       };
+      if (Array.isArray(body.missingFields)) {
+        (payload as unknown as Record<string, unknown>).missingFields = (body.missingFields as unknown[]).filter(
+          (f): f is DigestMissingField =>
+            typeof f === 'string' && ['gaming', 'socialMedia', 'contextSwitches', 'streak', 'fragmentation'].includes(f as DigestMissingField)
+        );
+      }
 
       const firstName = profile.firstName ?? null;
       const baseUrl = req.protocol + '://' + req.get('host');
