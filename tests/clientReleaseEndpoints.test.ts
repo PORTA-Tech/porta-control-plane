@@ -46,6 +46,8 @@ describe('client release endpoints', () => {
       publishedAtUtc: '2026-03-19T12:10:00.000Z',
       minimumSupportedVersion: '1.0.0',
       required: true,
+      requireSignature: false,
+      rolloutPercent: 100,
       title: 'Ari 1.0.2 is ready',
       summary: 'Fixes onboarding and device auto-linking.',
       sha256: 'deadbeef'
