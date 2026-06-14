@@ -33,8 +33,13 @@ interface SeededGrowthUser {
   registrationDate: string;
 }
 
+const TEST_OPERATOR_KEY = 'test-operator-key-growth';
+
 function withOperatorHeaders(req: supertest.Test): supertest.Test {
-  return req.set('x-operator-id', 'operator-growth').set('x-operator-role', 'operator');
+  return req
+    .set('x-operator-id', 'operator-growth')
+    .set('x-operator-role', 'operator')
+    .set('x-operator-key', TEST_OPERATOR_KEY);
 }
 
 function addDays(date: string, delta: number): string {
@@ -209,6 +214,7 @@ async function seedGrowthUser(input: {
 
 describe('growth endpoints', () => {
   beforeEach(() => {
+    process.env.PORTA_OPERATOR_KEY = TEST_OPERATOR_KEY;
     fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();
@@ -356,12 +362,4 @@ describe('growth endpoints', () => {
     ).toEqual([
       'account_registered',
       'membership_joined',
-      'device_linked',
-      'device_capture_consented',
-      'account_activated',
-      'account_active_day',
-      'account_active_day',
-      'account_active_day'
-    ]);
-  });
-});
+      'device_link

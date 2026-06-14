@@ -167,12 +167,20 @@ async function seedGrowthUserForContract(label: string): Promise<string> {
   return accountId;
 }
 
+const TEST_OPERATOR_KEY = 'test-operator-key-openapi';
+
 function withOperatorHeaders(req: supertest.Test): supertest.Test {
-  return req.set('x-operator-id', 'operator-openapi').set('x-operator-role', 'operator');
+  return req
+    .set('x-operator-id', 'operator-openapi')
+    .set('x-operator-role', 'operator')
+    .set('x-operator-key', TEST_OPERATOR_KEY);
 }
 
 function withAdminHeaders(req: supertest.Test): supertest.Test {
-  return req.set('x-operator-id', 'admin-openapi').set('x-operator-role', 'admin');
+  return req
+    .set('x-operator-id', 'admin-openapi')
+    .set('x-operator-role', 'admin')
+    .set('x-operator-key', TEST_OPERATOR_KEY);
 }
 
 function assertSchema(pathKey: string, method: string, status: number, body: unknown): void {
@@ -201,6 +209,7 @@ describe('openapi contract compliance', () => {
   });
 
   beforeEach(() => {
+    process.env.PORTA_OPERATOR_KEY = TEST_OPERATOR_KEY;
     fs.rmSync(dataDir, { recursive: true, force: true });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();
@@ -441,9 +450,4 @@ describe('openapi contract compliance', () => {
     assertSchema('/v1/audit/rollout-events', 'get', 200, response.body);
   });
 
-  it('GET /v1/audit/ledger-view matches OpenAPI schema', async () => {
-    const response = await withAdminHeaders(request(app).get('/v1/audit/ledger-view'));
-    expect(response.status).toBe(200);
-    assertSchema('/v1/audit/ledger-view', 'get', 200, response.body);
-  });
-});
+  it('GET /v1/audit/ledger-view matches OpenAPI schema
