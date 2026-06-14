@@ -450,4 +450,14 @@ describe('openapi contract compliance', () => {
     assertSchema('/v1/audit/rollout-events', 'get', 200, response.body);
   });
 
-  it('GET /v1/audit/ledger-view matches OpenAPI schema
+  it('GET /v1/audit/ledger-view matches OpenAPI schema', async () => {
+    const response = await withAdminHeaders(request(app).get('/v1/audit/ledger-view'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/audit/ledger-view', 'get', 200, response.body);
+  });
+});', async () => {
+    const response = await withAdminHeaders(request(app).get('/v1/audit/ledger-view'));
+    expect(response.status).toBe(200);
+    assertSchema('/v1/audit/ledger-view', 'get', 200, response.body);
+  });
+});

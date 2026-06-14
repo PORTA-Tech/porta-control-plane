@@ -362,4 +362,20 @@ describe('growth endpoints', () => {
     ).toEqual([
       'account_registered',
       'membership_joined',
-      'device_link
+      'device_linked',
+      'device_capture_consented',
+      'account_activated',
+      'account_active_day',
+      'account_active_day',
+      'account_active_day'
+    ]);
+  });
+});ed',
+      'device_capture_consented',
+      'account_activated',
+      'account_active_day',
+      'account_active_day',
+      'account_active_day'
+    ]);
+  });
+});
