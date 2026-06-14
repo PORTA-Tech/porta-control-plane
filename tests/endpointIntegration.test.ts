@@ -19,16 +19,25 @@ const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
 const app = createApp();
 
+const TEST_OPERATOR_KEY = 'test-operator-key-integration';
+
 function withOperatorHeaders(req: supertest.Test): supertest.Test {
-  return req.set('x-operator-id', 'operator-int').set('x-operator-role', 'operator');
+  return req
+    .set('x-operator-id', 'operator-int')
+    .set('x-operator-role', 'operator')
+    .set('x-operator-key', TEST_OPERATOR_KEY);
 }
 
 function withAdminHeaders(req: supertest.Test): supertest.Test {
-  return req.set('x-operator-id', 'admin-int').set('x-operator-role', 'admin');
+  return req
+    .set('x-operator-id', 'admin-int')
+    .set('x-operator-role', 'admin')
+    .set('x-operator-key', TEST_OPERATOR_KEY);
 }
 
 describe('endpoint integration', () => {
   beforeEach(() => {
+    process.env.PORTA_OPERATOR_KEY = TEST_OPERATOR_KEY;
     fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();
