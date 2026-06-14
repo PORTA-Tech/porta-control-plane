@@ -10,8 +10,13 @@ const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
 const app = createApp();
 
+const TEST_OPERATOR_KEY = 'test-operator-key-validation';
+
 function withOperatorHeaders(req: supertest.Test): supertest.Test {
-  return req.set('x-operator-id', 'operator-validation').set('x-operator-role', 'operator');
+  return req
+    .set('x-operator-id', 'operator-validation')
+    .set('x-operator-role', 'operator')
+    .set('x-operator-key', TEST_OPERATOR_KEY);
 }
 
 function buildValidationReport(success: boolean): {
@@ -58,6 +63,7 @@ function buildValidationReport(success: boolean): {
 
 describe('rollout validation endpoints', () => {
   beforeEach(() => {
+    process.env.PORTA_OPERATOR_KEY = TEST_OPERATOR_KEY;
     fs.rmSync(dataDir, { recursive: true, force: true });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();

@@ -12,12 +12,18 @@ const request = (
 ) as typeof import('supertest');
 const app = createApp();
 
+const TEST_OPERATOR_KEY = 'test-operator-key-rbac';
+
 function withHeaders(req: supertest.Test, role: 'viewer' | 'operator' | 'admin'): supertest.Test {
-  return req.set('x-operator-id', `${role}-user`).set('x-operator-role', role);
+  return req
+    .set('x-operator-id', `${role}-user`)
+    .set('x-operator-role', role)
+    .set('x-operator-key', TEST_OPERATOR_KEY);
 }
 
 describe('rbac policy', () => {
   beforeEach(() => {
+    process.env.PORTA_OPERATOR_KEY = TEST_OPERATOR_KEY;
     fs.rmSync(dataDir, { recursive: true, force: true });
     resetRuntimeStateForTests();
     resetSLOGateStateForTests();

@@ -10,12 +10,18 @@ const request = (
 const app = createApp();
 const dataDir = path.resolve('.data');
 
+const TEST_OPERATOR_KEY = 'test-operator-key-policy';
+
 function withHeaders(req: supertest.Test, role: 'operator' | 'admin' | 'auditor'): supertest.Test {
-  return req.set('x-operator-id', `${role}-user`).set('x-operator-role', role);
+  return req
+    .set('x-operator-id', `${role}-user`)
+    .set('x-operator-role', role)
+    .set('x-operator-key', TEST_OPERATOR_KEY);
 }
 
 describe('policy execution and governance', () => {
   beforeEach(() => {
+    process.env.PORTA_OPERATOR_KEY = TEST_OPERATOR_KEY;
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
