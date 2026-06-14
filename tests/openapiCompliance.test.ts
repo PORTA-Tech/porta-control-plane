@@ -455,9 +455,4 @@ describe('openapi contract compliance', () => {
     expect(response.status).toBe(200);
     assertSchema('/v1/audit/ledger-view', 'get', 200, response.body);
   });
-});', async () => {
-    const response = await withAdminHeaders(request(app).get('/v1/audit/ledger-view'));
-    expect(response.status).toBe(200);
-    assertSchema('/v1/audit/ledger-view', 'get', 200, response.body);
-  });
 });

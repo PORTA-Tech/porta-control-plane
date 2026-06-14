@@ -370,12 +370,4 @@ describe('growth endpoints', () => {
       'account_active_day'
     ]);
   });
-});ed',
-      'device_capture_consented',
-      'account_activated',
-      'account_active_day',
-      'account_active_day',
-      'account_active_day'
-    ]);
-  });
 });
