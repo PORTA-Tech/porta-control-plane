@@ -123,11 +123,24 @@ export async function requireAuthenticatedOperator(req: OperatorRequest, res: Re
       return;
     }
 
+    const operatorKey = process.env.PORTA_OPERATOR_KEY;
+    if (!operatorKey) {
+      // No secret configured — header-mode is disabled entirely.
+      res.status(401).json({ error: 'unauthorized', error_code: 'OPERATOR_KEY_NOT_CONFIGURED' });
+      return;
+    }
+
     const operatorId = req.header('x-operator-id');
     const operatorRole = req.header('x-operator-role')?.toLowerCase() as OperatorRole | undefined;
+    const providedKey = req.header('x-operator-key');
 
     if (!operatorId || !operatorRole || !allowedRoles.has(operatorRole)) {
       res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+
+    if (!providedKey || providedKey !== operatorKey) {
+      res.status(401).json({ error: 'unauthorized', error_code: 'INVALID_OPERATOR_KEY' });
       return;
     }
 
