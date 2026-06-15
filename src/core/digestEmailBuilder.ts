@@ -535,6 +535,76 @@ async function conditionJ(
   return { score: 10, message: text };
 }
 
+// Condition K — Focus Identity (score: 40)
+// Minimum 14 days + at least 3 DOW entries with ≥10-point spread.
+// Surfaces the user's strongest/weakest days and peak window as identity, not comparison.
+// Fires on ordinary days when no reactive condition wins — tells you who you are, not what today was.
+async function conditionK(
+  p: DailyDigestPayload,
+  h: UserHistory,
+  accountId: string
+): Promise<ConditionResult> {
+  if (h.daysOfData < 14) return null;
+
+  const entries = Object.entries(h.dowAvgFocusPct)
+    .map(([dow, pct]) => ({ dow: Number(dow), pct }))
+    .sort((a, b) => b.pct - a.pct);
+
+  if (entries.length < 3) return null;
+
+  const topPct = entries[0]!.pct;
+  const bottomPct = entries[entries.length - 1]!.pct;
+  // No meaningful pattern if all days are within 10 points of each other
+  if (topPct - bottomPct < 10) return null;
+
+  const top1 = entries[0]!;
+  const top2 = entries[1] ?? null;
+  const weakest = entries[entries.length - 1]!;
+
+  const top1Name = DAY_NAMES[top1.dow] ?? 'that day';
+  const top2Name = top2 ? (DAY_NAMES[top2.dow] ?? null) : null;
+  const weakName = DAY_NAMES[weakest.dow] ?? 'that day';
+
+  // UTC strong window → local time label
+  let windowLabel: string | null = null;
+  if (h.strongWindowStart != null) {
+    const localHour = Math.floor(((h.strongWindowStart + p.timezoneOffsetMinutes / 60) % 24 + 24) % 24);
+    const localEnd = (localHour + 2) % 24;
+    windowLabel = `${fmt12h(localHour)}–${fmt12h(localEnd)}`;
+  }
+
+  const templates: string[] = [];
+
+  // Best two days + weakest day
+  if (top2Name) {
+    templates.push(
+      `${top1Name} and ${top2Name} are your strongest days — you average ${Math.round(top1.pct)}% and ${Math.round(top2.pct)}% focus.\n${weakName} tends to be your softest at ${Math.round(weakest.pct)}%.`
+    );
+  }
+
+  // Best days + time window combined
+  if (windowLabel && top2Name) {
+    templates.push(
+      `Your best work happens on ${top1Name}s and ${top2Name}s, with focus peaking between ${windowLabel}.\nProtecting that window on those days is worth more than any single tactic.`
+    );
+  }
+
+  // Window identity alone
+  if (windowLabel) {
+    templates.push(
+      `Your focus peaks between ${windowLabel} — that's when your quality scores are consistently highest.\n${top1Name} is your best day to use it.`
+    );
+  }
+
+  // Quiet-day framing — always available as fallback within this condition
+  templates.push(
+    `Nothing unusual today — but across your data, ${top1Name} is your most consistent peak day.\nWorth protecting that one next week.`
+  );
+
+  const { text } = await selectTemplate('K', templates, accountId);
+  return { score: 40, message: text };
+}
+
 // ── Main observation builder ──────────────────────────────────────────────────
 
 async function buildAriObservation(
@@ -564,6 +634,7 @@ async function buildAriObservation(
     conditionG(p, accountId),
     h ? conditionH(p, h, accountId, todayFocusPct, todayFocusScore) : Promise.resolve(null),
     h ? conditionI(p, h, accountId) : Promise.resolve(null),
+    h ? conditionK(p, h, accountId) : Promise.resolve(null),
     conditionJ(p, h, accountId, name),   // guaranteed non-null
   ]);
 
