@@ -576,14 +576,14 @@ async function conditionK(
   const templates: string[] = [];
 
   // Best two days + weakest day
-  if (top2Name) {
+  if (top2 && top2Name) {
     templates.push(
       `${top1Name} and ${top2Name} are your strongest days — you average ${Math.round(top1.pct)}% and ${Math.round(top2.pct)}% focus.\n${weakName} tends to be your softest at ${Math.round(weakest.pct)}%.`
     );
   }
 
   // Best days + time window combined
-  if (windowLabel && top2Name) {
+  if (windowLabel && top2 && top2Name) {
     templates.push(
       `Your best work happens on ${top1Name}s and ${top2Name}s, with focus peaking between ${windowLabel}.\nProtecting that window on those days is worth more than any single tactic.`
     );
