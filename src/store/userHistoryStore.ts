@@ -27,6 +27,7 @@ export interface UserHistory {
   weakHour: number | null;
   strongWindowStart: number | null;
   strongWindowEnd: number | null;
+  avgFocusEpisodeDurMin: number;
   updatedAtUtc: string;
 }
 
@@ -59,6 +60,7 @@ const defaultHistory = (accountId: string): UserHistory => ({
   weakHour: null,
   strongWindowStart: null,
   strongWindowEnd: null,
+  avgFocusEpisodeDurMin: 0,
   updatedAtUtc: new Date().toISOString()
 });
 
@@ -85,10 +87,11 @@ export async function upsertUserHistory(h: UserHistory): Promise<void> {
         best_focus_pct, best_focus_score, best_streak_min, best_tracked_min,
         best_streak_date, best_focus_score_date,
         dow_avg_focus_pct, dow_avg_tracked_min, dow_avg_focus_score,
-        weak_hour, strong_window_start, strong_window_end, updated_at_utc
+        weak_hour, strong_window_start, strong_window_end,
+        avg_focus_episode_dur_min, updated_at_utc
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-        $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, NOW()
+        $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, NOW()
       )
       ON CONFLICT (account_id) DO UPDATE SET
         days_of_data = EXCLUDED.days_of_data,
@@ -116,6 +119,7 @@ export async function upsertUserHistory(h: UserHistory): Promise<void> {
         weak_hour = EXCLUDED.weak_hour,
         strong_window_start = EXCLUDED.strong_window_start,
         strong_window_end = EXCLUDED.strong_window_end,
+        avg_focus_episode_dur_min = EXCLUDED.avg_focus_episode_dur_min,
         updated_at_utc = NOW();
     `,
     [
@@ -126,7 +130,8 @@ export async function upsertUserHistory(h: UserHistory): Promise<void> {
       h.bestFocusPct, h.bestFocusScore, h.bestStreakMin, h.bestTrackedMin,
       h.bestStreakDate, h.bestFocusScoreDate,
       JSON.stringify(h.dowAvgFocusPct), JSON.stringify(h.dowAvgTrackedMin), JSON.stringify(h.dowAvgFocusScore),
-      h.weakHour ?? null, h.strongWindowStart ?? null, h.strongWindowEnd ?? null
+      h.weakHour ?? null, h.strongWindowStart ?? null, h.strongWindowEnd ?? null,
+      h.avgFocusEpisodeDurMin
     ]
   );
 }
@@ -177,6 +182,7 @@ export async function getUserHistory(accountId: string): Promise<UserHistory | n
     weakHour: r.weak_hour != null ? Number(r.weak_hour) : null,
     strongWindowStart: r.strong_window_start != null ? Number(r.strong_window_start) : null,
     strongWindowEnd: r.strong_window_end != null ? Number(r.strong_window_end) : null,
+    avgFocusEpisodeDurMin: Number(r.avg_focus_episode_dur_min ?? 0),
     updatedAtUtc: r.updated_at_utc as string
   };
 }

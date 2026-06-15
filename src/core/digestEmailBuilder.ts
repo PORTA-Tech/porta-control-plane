@@ -605,6 +605,33 @@ async function conditionK(
   return { score: 40, message: text };
 }
 
+// Condition L — Drift Pattern (score: 35)
+// Minimum 14 days. Fires when avgFocusEpisodeDurMin is in a meaningful range (10–90 min).
+// Observational only — surfaces the user's typical focus run length before context-switching.
+async function conditionL(
+  h: UserHistory,
+  accountId: string
+): Promise<ConditionResult> {
+  if (h.daysOfData < 14) return null;
+
+  const episodeMin = h.avgFocusEpisodeDurMin;
+  if (episodeMin < 10 || episodeMin > 90) return null;
+
+  // Round to nearest 5 for natural phrasing ("~35 minutes" not "~33 minutes")
+  const rounded = Math.round(episodeMin / 5) * 5;
+  const label = `~${rounded} minutes`;
+
+  const templates: string[] = [
+    `Your average focus run is ${label} before a context switch.\nThat's your natural episode length — Ari has seen it consistently across ${h.daysOfData} days.`,
+    `Across your data, you typically stay in deep work for ${label} before drifting.\nThat window is real — it shows up day after day.`,
+    `${label} of focused work, then a context switch. That's your pattern.\nAri has tracked it across ${h.daysOfData} days now.`,
+    `Your focus episodes average ${label}. On your best days that number climbs — on high-pressure days it compresses.\nThe baseline is ${label}.`,
+  ];
+
+  const { text } = await selectTemplate('L', templates, accountId);
+  return { score: 35, message: text };
+}
+
 // ── Main observation builder ──────────────────────────────────────────────────
 
 async function buildAriObservation(
@@ -635,6 +662,7 @@ async function buildAriObservation(
     h ? conditionH(p, h, accountId, todayFocusPct, todayFocusScore) : Promise.resolve(null),
     h ? conditionI(p, h, accountId) : Promise.resolve(null),
     h ? conditionK(p, h, accountId) : Promise.resolve(null),
+    h ? conditionL(h, accountId) : Promise.resolve(null),
     conditionJ(p, h, accountId, name),   // guaranteed non-null
   ]);
 

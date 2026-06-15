@@ -98,6 +98,7 @@ async function recomputeUserHistoryUnsafe(accountId: string): Promise<void> {
       avg_streak_min: number; avg_pressure_pct: number; avg_distraction_count: number;
       avg_distraction_dur_min: number; avg_context_switches: number;
       avg_breaks_taken: number; avg_breaks_suggested: number;
+      avg_focus_episode_dur_min: number;
     }>(
       `
         SELECT
@@ -110,7 +111,8 @@ async function recomputeUserHistoryUnsafe(accountId: string): Promise<void> {
           AVG(avg_distraction_duration_seconds / 60.0) as avg_distraction_dur_min,
           AVG(context_switch_count)                as avg_context_switches,
           AVG(breaks_taken)                        as avg_breaks_taken,
-          AVG(breaks_suggested)                    as avg_breaks_suggested
+          AVG(breaks_suggested)                    as avg_breaks_suggested,
+          AVG(focus_seconds / GREATEST(1.0, distraction_count + 1) / 60.0) as avg_focus_episode_dur_min
         FROM daily_stats
         WHERE account_id = $1 AND date_local >= $2;
       `,
@@ -129,6 +131,7 @@ async function recomputeUserHistoryUnsafe(accountId: string): Promise<void> {
       h.avgContextSwitches = round2(ar.avg_context_switches ?? 0);
       h.avgBreaksTaken = round2(ar.avg_breaks_taken ?? 0);
       h.avgBreaksSuggested = round2(ar.avg_breaks_suggested ?? 0);
+      h.avgFocusEpisodeDurMin = round2(ar.avg_focus_episode_dur_min ?? 0);
     }
   } else {
     const rows = await getDailyStatsForAccount(accountId, 30);
@@ -143,6 +146,7 @@ async function recomputeUserHistoryUnsafe(accountId: string): Promise<void> {
       h.avgContextSwitches = round2(avg(rows.map(r => r.contextSwitchCount)));
       h.avgBreaksTaken = round2(avg(rows.map(r => r.breaksTaken)));
       h.avgBreaksSuggested = round2(avg(rows.map(r => r.breaksSuggested)));
+      h.avgFocusEpisodeDurMin = round2(avg(rows.map(r => r.focusSeconds / Math.max(1, r.distractionCount + 1) / 60)));
     }
   }
 
@@ -347,7 +351,21 @@ function computeFocusTrend(
 }
 
 function computeConsecutiveStreak(sortedDatesDesc: string[], todayStr: string): number {
-  let streak = 0;
+  let streak  = 0;
+  let expected = todayStr;
+  for (const date of sortedDatesDesc) {
+    if (date === expected) {
+      streak++;
+      expected = formatDate(addDays(new Date(expected), -1));
+    } else if (date < expected) {
+      // Gap found — stop
+      break;
+    }
+    // date > expected means there's a future date, skip
+  }
+  return streak;
+}
+ 0;
   let expected = todayStr;
   for (const date of sortedDatesDesc) {
     if (date === expected) {

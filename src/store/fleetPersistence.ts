@@ -528,10 +528,17 @@ async function initializeFleetSchema(): Promise<void> {
       dow_avg_tracked_min     TEXT        NOT NULL DEFAULT '{}',
       dow_avg_focus_score     TEXT        NOT NULL DEFAULT '{}',
       weak_hour               INTEGER,
-      strong_window_start     INTEGER,
-      strong_window_end       INTEGER,
-      updated_at_utc          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      strong_window_start          INTEGER,
+      strong_window_end            INTEGER,
+      avg_focus_episode_dur_min    REAL        NOT NULL DEFAULT 0,
+      updated_at_utc               TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  // Safe migration: add column to existing deployments that predate this field.
+  await activePool.query(`
+    ALTER TABLE user_history
+      ADD COLUMN IF NOT EXISTS avg_focus_episode_dur_min REAL NOT NULL DEFAULT 0;
   `);
 
   await activePool.query(`
