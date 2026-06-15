@@ -365,17 +365,3 @@ function computeConsecutiveStreak(sortedDatesDesc: string[], todayStr: string): 
   }
   return streak;
 }
- 0;
-  let expected = todayStr;
-  for (const date of sortedDatesDesc) {
-    if (date === expected) {
-      streak++;
-      expected = formatDate(addDays(new Date(expected), -1));
-    } else if (date < expected) {
-      // Gap found — stop
-      break;
-    }
-    // date > expected means there's a future date, skip
-  }
-  return streak;
-}
