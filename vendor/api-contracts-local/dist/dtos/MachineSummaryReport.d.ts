@@ -64,4 +64,11 @@ export interface MachineSummaryReport {
     signalQualityScore?: number | null;
     partialData: boolean;
     missingMajorChannels: string[];
+    /**
+     * Diagnostic-only: WTS connect-state of the session the user-agent runs in
+     * ("active", "disconnected", "idle", ...). Used to tell apart a connected-but-blind
+     * machine (fixable foreground/desktop bug) from a disconnected RDP session
+     * (no foreground exists). Optional; older agents do not send it.
+     */
+    userAgentSessionConnectState?: string | null;
 }

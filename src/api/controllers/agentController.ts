@@ -330,6 +330,9 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
       : null,
     windowsUpdateStatus: isOptionalString(row.windowsUpdateStatus)
       ? (row.windowsUpdateStatus?.trim().slice(0, 2000) || null)
+      : null,
+    userAgentSessionConnectState: isOptionalString(row.userAgentSessionConnectState)
+      ? (row.userAgentSessionConnectState?.trim().slice(0, 64) || null)
       : null
   } as MachineSummaryReport);
 }
