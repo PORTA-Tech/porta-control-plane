@@ -71,4 +71,10 @@ export interface MachineSummaryReport {
      * (no foreground exists). Optional; older agents do not send it.
      */
     userAgentSessionConnectState?: string | null;
+    /**
+     * Diagnostic-only: "resolved" if the latest bucket hashed a real foreground app identity,
+     * "blank" if focus was observed but the app identity came through empty (focus capture
+     * works, app name does not resolve on this machine). Optional; older agents omit it.
+     */
+    focusAppIdentity?: string | null;
 }

@@ -333,6 +333,9 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
       : null,
     userAgentSessionConnectState: isOptionalString(row.userAgentSessionConnectState)
       ? (row.userAgentSessionConnectState?.trim().slice(0, 64) || null)
+      : null,
+    focusAppIdentity: isOptionalString(row.focusAppIdentity)
+      ? (row.focusAppIdentity?.trim().slice(0, 32) || null)
       : null
   } as MachineSummaryReport);
 }
