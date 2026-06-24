@@ -718,6 +718,15 @@ export function createAgentController(): Router {
             typeof f === 'string' && ['gaming', 'socialMedia', 'contextSwitches', 'streak', 'fragmentation'].includes(f as DigestMissingField)
         );
       }
+      if (Array.isArray(body.topApps)) {
+        const apps = (body.topApps as unknown[])
+          .map((a) => a as { label?: unknown; seconds?: unknown })
+          .filter((a) => typeof a.label === 'string' && a.label.trim().length > 0 && typeof a.seconds === 'number' && a.seconds > 0)
+          .map((a) => ({ label: (a.label as string).trim().slice(0, 40), seconds: a.seconds as number }));
+        if (apps.length > 0) {
+          (payload as unknown as Record<string, unknown>).topApps = apps;
+        }
+      }
 
       const firstName = profile.firstName ?? null;
       const baseUrl = req.protocol + '://' + req.get('host');

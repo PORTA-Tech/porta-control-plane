@@ -45,6 +45,8 @@ export interface DailyDigestPayload {
   missingFields?: ReadonlyArray<DigestMissingField>;
   /** True when assembled by the server cron from periodic stats (machine was offline at send time). */
   isServerFallback?: boolean;
+  /** Per-app foreground time for the day — coarse label + seconds. Powers "Where your time went". */
+  topApps?: ReadonlyArray<{ label: string; seconds: number }>;
 }
 
 export type DigestMissingField = 'gaming' | 'socialMedia' | 'contextSwitches' | 'streak' | 'fragmentation';
@@ -754,6 +756,26 @@ export async function buildDigestEmail(
       ? 'No breaks suggested'
       : `${p.breaksTakenCount} of ${p.breaksSuggestedCount} taken`;
 
+  // "Where your time went" — real named apps/sites with time. Coarse labels only.
+  const topAppsList = (p.topApps ?? []).filter((a) => a && typeof a.label === 'string' && a.seconds > 0).slice(0, 6);
+  const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const prettyAppLabel = (s: string) => (s.length === 0 ? s : s.charAt(0).toUpperCase() + s.slice(1));
+  const topAppsHtml = topAppsList.length === 0
+    ? ''
+    : `
+    <!-- Section: Where your time went -->
+    <tr>
+      <td style="padding:24px 36px 0;">
+        <p style="margin:0 0 10px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Where your time went</p>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          ${topAppsList.map((a) => `<tr>
+            <td style="padding:6px 0;font-size:14px;color:#111118;font-weight:500;">${escHtml(prettyAppLabel(a.label))}</td>
+            <td style="padding:6px 0;font-size:14px;color:#505070;text-align:right;">${fmtMinutes(a.seconds)}</td>
+          </tr>`).join('')}
+        </table>
+      </td>
+    </tr>`;
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -790,6 +812,8 @@ export async function buildDigestEmail(
           : ''}
       </td>
     </tr>
+
+    ${topAppsHtml}
 
     <!-- Section 1: Day at a glance -->
     <tr>
