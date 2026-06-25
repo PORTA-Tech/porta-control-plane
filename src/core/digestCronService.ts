@@ -62,6 +62,9 @@ function statsToDigestPayload(stats: DailyStats): DailyDigestPayload {
     // missing makes the email render "no data" instead of a confident 0
     // (the zeros above are kept only to satisfy the payload shape).
     missingFields: ['gaming', 'contextSwitches'],
+    // Real per-app foreground time captured during the day — same "where your time
+    // went" section the live digest shows, now available in the server-fallback path.
+    ...(stats.topApps && stats.topApps.length > 0 ? { topApps: stats.topApps } : {}),
     isServerFallback: true,
   };
 }

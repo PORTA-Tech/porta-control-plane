@@ -1,5 +1,11 @@
 import { ensureFleetPersistenceReady, getFleetPersistenceMode, getFleetPool } from './fleetPersistence.js';
 
+/** One app/site's coarse foreground time for the day. Label is a coarse token only. */
+export interface FocusAppUsage {
+  label: string;
+  seconds: number;
+}
+
 export interface DailyStats {
   accountId: string;
   dateLocal: string;           // "YYYY-MM-DD"
@@ -23,6 +29,7 @@ export interface DailyStats {
   firstFocusUtc: string | null;
   peakPressureUtc: string | null;
   mostDistractedHour: number | null;
+  topApps: FocusAppUsage[];
 }
 
 // In-memory fallback when Postgres is not available
@@ -53,10 +60,10 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
         distraction_count, avg_distraction_duration_seconds, context_switch_count,
         overload_events, breaks_taken, breaks_suggested, social_media_loops,
         social_media_seconds, away_seconds, pressure_avg_pct, first_focus_utc,
-        peak_pressure_utc, most_distracted_hour
+        peak_pressure_utc, most_distracted_hour, top_apps
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-        $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+        $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
       )
       ON CONFLICT (account_id, date_local) DO UPDATE SET
         day_of_week = EXCLUDED.day_of_week,
@@ -78,7 +85,8 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
         pressure_avg_pct = EXCLUDED.pressure_avg_pct,
         first_focus_utc = EXCLUDED.first_focus_utc,
         peak_pressure_utc = EXCLUDED.peak_pressure_utc,
-        most_distracted_hour = EXCLUDED.most_distracted_hour;
+        most_distracted_hour = EXCLUDED.most_distracted_hour,
+        top_apps = EXCLUDED.top_apps;
     `,
     [
       stats.accountId, stats.dateLocal, stats.dayOfWeek, stats.trackedSeconds,
@@ -86,9 +94,31 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
       stats.distractionSeconds, stats.distractionCount, stats.avgDistractionDurationSeconds,
       stats.contextSwitchCount, stats.overloadEvents, stats.breaksTaken, stats.breaksSuggested,
       stats.socialMediaLoops, stats.socialMediaSeconds, stats.awaySeconds, stats.pressureAvgPct,
-      stats.firstFocusUtc, stats.peakPressureUtc, stats.mostDistractedHour ?? null
+      stats.firstFocusUtc, stats.peakPressureUtc, stats.mostDistractedHour ?? null,
+      JSON.stringify(stats.topApps ?? [])
     ]
   );
+}
+
+/** Normalizes a stored JSONB top_apps value (or memory-store value) into a clean array. */
+function normalizeTopApps(value: unknown): FocusAppUsage[] {
+  let raw: unknown = value;
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: FocusAppUsage[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const label = (item as { label?: unknown }).label;
+    const seconds = (item as { seconds?: unknown }).seconds;
+    if (typeof label === 'string' && label.trim() !== '' && typeof seconds === 'number' && seconds > 0) {
+      out.push({ label: label.trim().slice(0, 40), seconds });
+    }
+  }
+  return out;
 }
 
 export async function getDailyStatsForAccount(accountId: string, limitDays = 90): Promise<DailyStats[]> {
@@ -117,6 +147,7 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     breaks_suggested: number; social_media_loops: number; social_media_seconds: number;
     away_seconds: number; pressure_avg_pct: number; first_focus_utc: string | null;
     peak_pressure_utc: string | null; most_distracted_hour: number | null;
+    top_apps: unknown;
   }>(
     `
       SELECT * FROM daily_stats
@@ -149,7 +180,8 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     pressureAvgPct: r.pressure_avg_pct,
     firstFocusUtc: r.first_focus_utc,
     peakPressureUtc: r.peak_pressure_utc,
-    mostDistractedHour: r.most_distracted_hour
+    mostDistractedHour: r.most_distracted_hour,
+    topApps: normalizeTopApps(r.top_apps)
   }));
 }
 
@@ -181,6 +213,7 @@ export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): 
     breaks_suggested: number; social_media_loops: number; social_media_seconds: number;
     away_seconds: number; pressure_avg_pct: number; first_focus_utc: string | null;
     peak_pressure_utc: string | null; most_distracted_hour: number | null;
+    top_apps: unknown;
   }>(
     'SELECT * FROM daily_stats WHERE date_local = $1 AND tracked_seconds >= 3600',
     [dateLocal]
@@ -208,6 +241,7 @@ export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): 
     pressureAvgPct: r.pressure_avg_pct,
     firstFocusUtc: r.first_focus_utc,
     peakPressureUtc: r.peak_pressure_utc,
-    mostDistractedHour: r.most_distracted_hour
+    mostDistractedHour: r.most_distracted_hour,
+    topApps: normalizeTopApps(r.top_apps)
   }));
 }

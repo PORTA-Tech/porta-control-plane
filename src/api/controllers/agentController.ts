@@ -87,6 +87,17 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+/** Validates an inbound topApps array into clean {label, seconds} entries. Coarse labels only. */
+function parseTopApps(value: unknown): { label: string; seconds: number }[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return (value as unknown[])
+    .map((a) => a as { label?: unknown; seconds?: unknown })
+    .filter((a) => typeof a.label === 'string' && a.label.trim().length > 0 && typeof a.seconds === 'number' && a.seconds > 0)
+    .map((a) => ({ label: (a.label as string).trim().slice(0, 40), seconds: a.seconds as number }));
+}
+
 function isBoolean(value: unknown): value is boolean {
   return typeof value === 'boolean';
 }
@@ -562,6 +573,7 @@ export function createAgentController(): Router {
           firstFocusUtc: isOptionalString(body.firstFocusBlockUtc) ? (body.firstFocusBlockUtc as string | null | undefined)?.trim() || null : null,
           peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
           mostDistractedHour: null,
+          topApps: parseTopApps(body.topApps),
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {
@@ -664,6 +676,7 @@ export function createAgentController(): Router {
               firstFocusUtc: isOptionalString(body.firstFocusBlockUtc) ? (body.firstFocusBlockUtc as string | null | undefined)?.trim() || null : null,
               peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
               mostDistractedHour: null,
+              topApps: parseTopApps(body.topApps),
             });
             await recomputeUserHistory(accountId);
           } catch (statsErr) {
@@ -718,14 +731,9 @@ export function createAgentController(): Router {
             typeof f === 'string' && ['gaming', 'socialMedia', 'contextSwitches', 'streak', 'fragmentation'].includes(f as DigestMissingField)
         );
       }
-      if (Array.isArray(body.topApps)) {
-        const apps = (body.topApps as unknown[])
-          .map((a) => a as { label?: unknown; seconds?: unknown })
-          .filter((a) => typeof a.label === 'string' && a.label.trim().length > 0 && typeof a.seconds === 'number' && a.seconds > 0)
-          .map((a) => ({ label: (a.label as string).trim().slice(0, 40), seconds: a.seconds as number }));
-        if (apps.length > 0) {
-          (payload as unknown as Record<string, unknown>).topApps = apps;
-        }
+      const apps = parseTopApps(body.topApps);
+      if (apps.length > 0) {
+        (payload as unknown as Record<string, unknown>).topApps = apps;
       }
 
       const firstName = profile.firstName ?? null;
@@ -775,6 +783,7 @@ export function createAgentController(): Router {
           firstFocusUtc: payload.firstFocusBlockUtc ?? null,
           peakPressureUtc: payload.peakPressureUtc ?? null,
           mostDistractedHour: null,
+          topApps: parseTopApps(body.topApps),
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {

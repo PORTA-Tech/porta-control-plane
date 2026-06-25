@@ -502,6 +502,13 @@ async function initializeFleetSchema(): Promise<void> {
       ON digest_log (account_id, date_local);
   `);
 
+  // Safe migration: coarse per-app foreground time for the day (JSON array of
+  // {label, seconds}). Powers the console per-app view and the server-fallback digest.
+  await activePool.query(`
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS top_apps JSONB;
+  `);
+
   await activePool.query(`
     CREATE TABLE IF NOT EXISTS user_history (
       account_id              TEXT PRIMARY KEY,
