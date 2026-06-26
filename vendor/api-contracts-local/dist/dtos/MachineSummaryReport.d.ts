@@ -77,4 +77,12 @@ export interface MachineSummaryReport {
      * works, app name does not resolve on this machine). Optional; older agents omit it.
      */
     focusAppIdentity?: string | null;
+    /**
+     * Coarse human label of the app/site the machine is currently focused on
+     * ("claude", "gmail", "youtube"), resolved from the dominant focus hash via the
+     * agent's local label map. Lets the live console show *what* a machine is focused on,
+     * not just "focused 30m". Coarse token only — no raw window title/URL. Optional;
+     * pre-1.2.100 agents (no label map) omit it.
+     */
+    focusAppLabel?: string | null;
 }

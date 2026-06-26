@@ -347,6 +347,9 @@ function normalizeMachineSummaryReport(value: unknown): MachineSummaryReport | n
       : null,
     focusAppIdentity: isOptionalString(row.focusAppIdentity)
       ? (row.focusAppIdentity?.trim().slice(0, 32) || null)
+      : null,
+    focusAppLabel: isOptionalString(row.focusAppLabel)
+      ? (row.focusAppLabel?.trim().slice(0, 40) || null)
       : null
   } as MachineSummaryReport);
 }
