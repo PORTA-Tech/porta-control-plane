@@ -1,9 +1,11 @@
 import { ensureFleetPersistenceReady, getFleetPersistenceMode, getFleetPool } from './fleetPersistence.js';
 
-/** One app/site's coarse foreground time for the day. Label is a coarse token only. */
+/** One app/site's coarse foreground time for the day. Label is a coarse token only.
+ * category is the coarse AppCategory enum value (0=Unknown) for distraction attribution. */
 export interface FocusAppUsage {
   label: string;
   seconds: number;
+  category: number;
 }
 
 export interface DailyStats {
@@ -114,8 +116,13 @@ function normalizeTopApps(value: unknown): FocusAppUsage[] {
     if (!item || typeof item !== 'object') continue;
     const label = (item as { label?: unknown }).label;
     const seconds = (item as { seconds?: unknown }).seconds;
+    const category = (item as { category?: unknown }).category;
     if (typeof label === 'string' && label.trim() !== '' && typeof seconds === 'number' && seconds > 0) {
-      out.push({ label: label.trim().slice(0, 40), seconds });
+      out.push({
+        label: label.trim().slice(0, 40),
+        seconds,
+        category: typeof category === 'number' && Number.isFinite(category) ? Math.trunc(category) : 0,
+      });
     }
   }
   return out;

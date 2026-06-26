@@ -87,15 +87,19 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
-/** Validates an inbound topApps array into clean {label, seconds} entries. Coarse labels only. */
-function parseTopApps(value: unknown): { label: string; seconds: number }[] {
+/** Validates an inbound topApps array into clean {label, seconds, category} entries. Coarse labels only. */
+function parseTopApps(value: unknown): { label: string; seconds: number; category: number }[] {
   if (!Array.isArray(value)) {
     return [];
   }
   return (value as unknown[])
-    .map((a) => a as { label?: unknown; seconds?: unknown })
+    .map((a) => a as { label?: unknown; seconds?: unknown; category?: unknown })
     .filter((a) => typeof a.label === 'string' && a.label.trim().length > 0 && typeof a.seconds === 'number' && a.seconds > 0)
-    .map((a) => ({ label: (a.label as string).trim().slice(0, 40), seconds: a.seconds as number }));
+    .map((a) => ({
+      label: (a.label as string).trim().slice(0, 40),
+      seconds: a.seconds as number,
+      category: typeof a.category === 'number' && Number.isFinite(a.category) ? Math.trunc(a.category) : 0,
+    }));
 }
 
 function isBoolean(value: unknown): value is boolean {

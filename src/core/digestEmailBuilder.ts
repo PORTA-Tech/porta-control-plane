@@ -45,8 +45,9 @@ export interface DailyDigestPayload {
   missingFields?: ReadonlyArray<DigestMissingField>;
   /** True when assembled by the server cron from periodic stats (machine was offline at send time). */
   isServerFallback?: boolean;
-  /** Per-app foreground time for the day — coarse label + seconds. Powers "Where your time went". */
-  topApps?: ReadonlyArray<{ label: string; seconds: number }>;
+  /** Per-app foreground time for the day — coarse label + seconds + category (0=Unknown).
+   * Powers "Where your time went" and "What pulled you off task". */
+  topApps?: ReadonlyArray<{ label: string; seconds: number; category?: number }>;
 }
 
 export type DigestMissingField = 'gaming' | 'socialMedia' | 'contextSwitches' | 'streak' | 'fragmentation';
@@ -776,6 +777,28 @@ export async function buildDigestEmail(
       </td>
     </tr>`;
 
+  // "What pulled you off task" — the distracting apps/sites (entertainment, social, gaming),
+  // attributed by name. Coarse categories: 1=Entertainment, 3=SocialMedia, 4=Gaming, 7=GamingLauncher.
+  const distractingCategories = new Set([1, 3, 4, 7]);
+  const distractingApps = (p.topApps ?? [])
+    .filter((a) => a && typeof a.label === 'string' && a.seconds > 0 && distractingCategories.has(a.category ?? 0))
+    .slice(0, 5);
+  const distractionHtml = distractingApps.length === 0
+    ? ''
+    : `
+    <!-- Section: What pulled you off task -->
+    <tr>
+      <td style="padding:24px 36px 0;">
+        <p style="margin:0 0 10px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">What pulled you off task</p>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          ${distractingApps.map((a) => `<tr>
+            <td style="padding:6px 0;font-size:14px;color:#111118;font-weight:500;">${escHtml(prettyAppLabel(a.label))}</td>
+            <td style="padding:6px 0;font-size:14px;color:#a05050;text-align:right;">${fmtMinutes(a.seconds)}</td>
+          </tr>`).join('')}
+        </table>
+      </td>
+    </tr>`;
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -814,6 +837,8 @@ export async function buildDigestEmail(
     </tr>
 
     ${topAppsHtml}
+
+    ${distractionHtml}
 
     <!-- Section 1: Day at a glance -->
     <tr>
