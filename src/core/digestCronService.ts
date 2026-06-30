@@ -55,6 +55,7 @@ function statsToDigestPayload(stats: DailyStats): DailyDigestPayload {
     entertainmentSeconds: 0,
     firstFocusBlockUtc: stats.firstFocusUtc ?? null,
     peakPressureUtc: stats.peakPressureUtc ?? null,
+    pressureAvgPct: stats.pressureAvgPct,
     avgDistractionEpisodeDurationSeconds: stats.avgDistractionDurationSeconds,
     contextSwitchCount: stats.contextSwitchCount,
     preLongestDistractionFocusSeconds: 0,

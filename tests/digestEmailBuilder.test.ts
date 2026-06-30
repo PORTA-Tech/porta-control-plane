@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildDigestEmail, type DailyDigestPayload } from '../src/core/digestEmailBuilder.js';
+import { buildDigestEmail, isHighPressureDay, type DailyDigestPayload } from '../src/core/digestEmailBuilder.js';
+import type { UserHistory } from '../src/store/userHistoryStore.js';
+
+const hist = (avgPressurePct: number): UserHistory => ({ avgPressurePct } as unknown as UserHistory);
 
 // Payload modeled on the real 2026-06-12 digest that contradicted itself:
 // 6h07m tracked, 2h48m focus, yet "Longest streak 0m" and an all-zero
@@ -39,6 +42,26 @@ function buildPayload(overrides: Partial<DailyDigestPayload> = {}): DailyDigestP
     ...overrides
   };
 }
+
+describe('isHighPressureDay', () => {
+  it('fires on real overload events regardless of pressure', () => {
+    expect(isHighPressureDay(buildPayload({ overloadEpisodeCount: 2 }), hist(30))).toBe(true);
+  });
+
+  it('fires when the day pressure is clearly above the user baseline', () => {
+    // baseline 30 -> needs >= 30*1.3 (39) and >= 30+8 (38); 50 clears both.
+    expect(isHighPressureDay(buildPayload({ pressureAvgPct: 50 }), hist(30))).toBe(true);
+  });
+
+  it('does not fire when pressure is only near the baseline', () => {
+    expect(isHighPressureDay(buildPayload({ pressureAvgPct: 34 }), hist(30))).toBe(false);
+  });
+
+  it('does not fire without a baseline or without a pressure value', () => {
+    expect(isHighPressureDay(buildPayload({ pressureAvgPct: 80 }), null)).toBe(false);
+    expect(isHighPressureDay(buildPayload({ pressureAvgPct: undefined }), hist(30))).toBe(false);
+  });
+});
 
 describe('buildDigestEmail honesty', () => {
   it('renders "no data" instead of 0m streak when the day had real focus', async () => {

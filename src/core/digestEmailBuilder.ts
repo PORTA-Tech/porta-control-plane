@@ -36,6 +36,9 @@ export interface DailyDigestPayload {
   // Phase 1A — new timeline fields for messaging system
   firstFocusBlockUtc?: string | null;
   peakPressureUtc?: string | null;
+  /** The day's average expressive pressure (0–100 pct). Used to detect a high-pressure
+   *  day relative to the user's own baseline, instead of the conservative overload count. */
+  pressureAvgPct?: number;
   avgDistractionEpisodeDurationSeconds?: number;
   contextSwitchCount?: number;
   preLongestDistractionFocusSeconds?: number;
@@ -257,8 +260,34 @@ async function conditionC(
   return { score: 80, message: text };
 }
 
+// "High pressure day" detection.
+//
+// The conservative overloadEpisodeCount (overloadActive activations) almost never fires in
+// the field, so gating high-pressure messaging on it alone left this path effectively dead.
+// We now ALSO treat a day whose average expressive pressure ran clearly above the user's own
+// rolling baseline as high-pressure. This is self-calibrating — it compares against the user's
+// normal, not an absolute cutoff — so it holds regardless of the pressure model's absolute
+// range and survives the agent's pressure recalibration without re-tuning.
+export const HIGH_PRESSURE_BASELINE_FACTOR = 1.3;
+export const HIGH_PRESSURE_MIN_DELTA_PCT = 8;
+
+export function isHighPressureDay(p: DailyDigestPayload, h: UserHistory | null): boolean {
+  // Strong conservative signal: real overload activations, on the rare days they happen.
+  if (p.overloadEpisodeCount >= 2) return true;
+  // Expressive signal: today's average pressure clearly above the user's own baseline.
+  const dayPct = p.pressureAvgPct;
+  const baselinePct = h?.avgPressurePct ?? 0;
+  return (
+    dayPct != null &&
+    baselinePct > 0 &&
+    dayPct >= baselinePct * HIGH_PRESSURE_BASELINE_FACTOR &&
+    dayPct - baselinePct >= HIGH_PRESSURE_MIN_DELTA_PCT
+  );
+}
+
 // Condition D — Pressure Pattern (score: 75)
-// Minimum 7 days. Fires when overload episodes are elevated OR peak pressure matched weak hour.
+// Minimum 7 days. Fires when pressure is elevated (above baseline or real overload events)
+// OR peak pressure matched the user's weak hour.
 async function conditionD(
   p: DailyDigestPayload,
   h: UserHistory,
@@ -268,8 +297,7 @@ async function conditionD(
   if (h.daysOfData < 7) return null;
 
   const contextSwitchCount = p.contextSwitchCount ?? 0;
-  const overloadEpisodes = p.overloadEpisodeCount;
-  const isHighPressure = overloadEpisodes >= 2;
+  const isHighPressure = isHighPressureDay(p, h);
 
   const peakHour = p.peakPressureUtc ? new Date(p.peakPressureUtc).getUTCHours() : null;
   const matchesWeakHour = h.weakHour != null && peakHour !== null && peakHour === h.weakHour;
@@ -289,12 +317,12 @@ async function conditionD(
   }
   if (isHighPressure && contextSwitchCount > 0) {
     templates.push(
-      `High pressure ${dayName}: ${overloadEpisodes} overload events versus your normal.\n${contextSwitchCount} context switches contributed. Wind down properly tonight.`
+      `High pressure ${dayName}: your pressure ran well above your normal.\n${contextSwitchCount} context switches contributed. Wind down properly tonight.`
     );
   }
   if (isHighPressure) {
     templates.push(
-      `${name ? name + ', pressure' : 'Pressure'} ran above your normal today — ${overloadEpisodes} overload events.\nThat usually predicts a harder next morning. Wind down properly tonight.`
+      `${name ? name + ', pressure' : 'Pressure'} ran above your normal today.\nThat usually predicts a harder next morning. Wind down properly tonight.`
     );
   }
 
@@ -688,7 +716,7 @@ function buildSubjectLine(
   if (h && h.consecutiveStreak >= 3) return `${h.consecutiveStreak} days in a row — ${dateDisplay}`;
   if (todayIsPersonalBest) return `Personal best today — ${dateDisplay}`;
   if (p.focusQualityScore >= 0.8) return `Strong focus day — ${dateDisplay}`;
-  if (p.overloadEpisodeCount >= 3) return `High pressure day — ${dateDisplay}`;
+  if (isHighPressureDay(p, h)) return `High pressure day — ${dateDisplay}`;
   if (p.breaksTakenCount === 0 && p.trackedSeconds >= 5400) return `No breaks today — ${dateDisplay}`;
   return `Your Ari digest — ${dateDisplay}`;
 }

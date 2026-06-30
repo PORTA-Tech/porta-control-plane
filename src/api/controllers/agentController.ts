@@ -728,6 +728,7 @@ export function createAgentController(): Router {
         // Phase 1A -- new timeline fields
         firstFocusBlockUtc: isOptionalString(body.firstFocusBlockUtc) ? (body.firstFocusBlockUtc as string | null | undefined)?.trim() || null : null,
         peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
+        pressureAvgPct: typeof body.pressureAvgPct === 'number' ? body.pressureAvgPct : undefined,
         avgDistractionEpisodeDurationSeconds: typeof body.avgDistractionEpisodeDurationSeconds === 'number' ? body.avgDistractionEpisodeDurationSeconds : 0,
         contextSwitchCount: typeof body.contextSwitchCount === 'number' ? body.contextSwitchCount : 0,
         preLongestDistractionFocusSeconds: typeof body.preLongestDistractionFocusSeconds === 'number' ? body.preLongestDistractionFocusSeconds : 0,
