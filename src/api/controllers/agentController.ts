@@ -102,6 +102,21 @@ function parseTopApps(value: unknown): { label: string; seconds: number; categor
     }));
 }
 
+/** Validates an inbound labelsByTarget array into clean {target, count, net} entries. Counts only. */
+function parseLabelsByTarget(value: unknown): { target: string; count: number; net: number }[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return (value as unknown[])
+    .map((a) => a as { target?: unknown; count?: unknown; net?: unknown })
+    .filter((a) => typeof a.target === 'string' && a.target.trim().length > 0 && typeof a.count === 'number')
+    .map((a) => ({
+      target: (a.target as string).trim().slice(0, 40),
+      count: Math.trunc(a.count as number),
+      net: typeof a.net === 'number' && Number.isFinite(a.net) ? Math.trunc(a.net) : 0,
+    }));
+}
+
 function isBoolean(value: unknown): value is boolean {
   return typeof value === 'boolean';
 }
@@ -581,6 +596,9 @@ export function createAgentController(): Router {
           peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
           mostDistractedHour: null,
           topApps: parseTopApps(body.topApps),
+          labelsToday: typeof body.labelsToday === 'number' ? Math.trunc(body.labelsToday) : 0,
+          labelsThisWeek: typeof body.labelsThisWeek === 'number' ? Math.trunc(body.labelsThisWeek) : 0,
+          labelsByTarget: parseLabelsByTarget(body.labelsByTarget),
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {
@@ -684,6 +702,9 @@ export function createAgentController(): Router {
               peakPressureUtc: isOptionalString(body.peakPressureUtc) ? (body.peakPressureUtc as string | null | undefined)?.trim() || null : null,
               mostDistractedHour: null,
               topApps: parseTopApps(body.topApps),
+          labelsToday: typeof body.labelsToday === 'number' ? Math.trunc(body.labelsToday) : 0,
+          labelsThisWeek: typeof body.labelsThisWeek === 'number' ? Math.trunc(body.labelsThisWeek) : 0,
+          labelsByTarget: parseLabelsByTarget(body.labelsByTarget),
             });
             await recomputeUserHistory(accountId);
           } catch (statsErr) {
@@ -792,6 +813,9 @@ export function createAgentController(): Router {
           peakPressureUtc: payload.peakPressureUtc ?? null,
           mostDistractedHour: null,
           topApps: parseTopApps(body.topApps),
+          labelsToday: typeof body.labelsToday === 'number' ? Math.trunc(body.labelsToday) : 0,
+          labelsThisWeek: typeof body.labelsThisWeek === 'number' ? Math.trunc(body.labelsThisWeek) : 0,
+          labelsByTarget: parseLabelsByTarget(body.labelsByTarget),
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {

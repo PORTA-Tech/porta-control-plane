@@ -509,6 +509,16 @@ async function initializeFleetSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS top_apps JSONB;
   `);
 
+  // Phase 1b — Step 4c: privacy-safe ground-truth label engagement (counts only, no content).
+  await activePool.query(`
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS labels_today INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS labels_this_week INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS labels_by_target JSONB;
+  `);
+
   await activePool.query(`
     CREATE TABLE IF NOT EXISTS user_history (
       account_id              TEXT PRIMARY KEY,

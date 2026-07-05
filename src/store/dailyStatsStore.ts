@@ -8,6 +8,13 @@ export interface FocusAppUsage {
   category: number;
 }
 
+// Phase 1b — Step 4c: privacy-safe ground-truth label engagement (counts only, no content).
+export interface LabelTargetCount {
+  target: string;
+  count: number;
+  net: number;
+}
+
 export interface DailyStats {
   accountId: string;
   dateLocal: string;           // "YYYY-MM-DD"
@@ -32,6 +39,9 @@ export interface DailyStats {
   peakPressureUtc: string | null;
   mostDistractedHour: number | null;
   topApps: FocusAppUsage[];
+  labelsToday?: number;
+  labelsThisWeek?: number;
+  labelsByTarget?: LabelTargetCount[];
 }
 
 // In-memory fallback when Postgres is not available
@@ -62,10 +72,12 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
         distraction_count, avg_distraction_duration_seconds, context_switch_count,
         overload_events, breaks_taken, breaks_suggested, social_media_loops,
         social_media_seconds, away_seconds, pressure_avg_pct, first_focus_utc,
-        peak_pressure_utc, most_distracted_hour, top_apps
+        peak_pressure_utc, most_distracted_hour, top_apps,
+        labels_today, labels_this_week, labels_by_target
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-        $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+        $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+        $24, $25, $26
       )
       ON CONFLICT (account_id, date_local) DO UPDATE SET
         day_of_week = EXCLUDED.day_of_week,
@@ -88,7 +100,10 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
         first_focus_utc = EXCLUDED.first_focus_utc,
         peak_pressure_utc = EXCLUDED.peak_pressure_utc,
         most_distracted_hour = EXCLUDED.most_distracted_hour,
-        top_apps = EXCLUDED.top_apps;
+        top_apps = EXCLUDED.top_apps,
+        labels_today = EXCLUDED.labels_today,
+        labels_this_week = EXCLUDED.labels_this_week,
+        labels_by_target = EXCLUDED.labels_by_target;
     `,
     [
       stats.accountId, stats.dateLocal, stats.dayOfWeek, stats.trackedSeconds,
@@ -97,9 +112,37 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
       stats.contextSwitchCount, stats.overloadEvents, stats.breaksTaken, stats.breaksSuggested,
       stats.socialMediaLoops, stats.socialMediaSeconds, stats.awaySeconds, stats.pressureAvgPct,
       stats.firstFocusUtc, stats.peakPressureUtc, stats.mostDistractedHour ?? null,
-      JSON.stringify(stats.topApps ?? [])
+      JSON.stringify(stats.topApps ?? []),
+      stats.labelsToday ?? 0, stats.labelsThisWeek ?? 0,
+      JSON.stringify(stats.labelsByTarget ?? [])
     ]
   );
+}
+
+/** Normalizes a stored JSONB labels_by_target value into a clean array (counts only, no content). */
+function normalizeLabelsByTarget(value: unknown): LabelTargetCount[] {
+  let raw: unknown = value;
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: LabelTargetCount[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const target = (item as { target?: unknown }).target;
+    const count = (item as { count?: unknown }).count;
+    const net = (item as { net?: unknown }).net;
+    if (typeof target === 'string' && target.trim() !== '' && typeof count === 'number') {
+      out.push({
+        target: target.trim().slice(0, 40),
+        count: Math.trunc(count),
+        net: typeof net === 'number' && Number.isFinite(net) ? Math.trunc(net) : 0,
+      });
+    }
+  }
+  return out;
 }
 
 /** Normalizes a stored JSONB top_apps value (or memory-store value) into a clean array. */
@@ -155,6 +198,7 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     away_seconds: number; pressure_avg_pct: number; first_focus_utc: string | null;
     peak_pressure_utc: string | null; most_distracted_hour: number | null;
     top_apps: unknown;
+    labels_today: number; labels_this_week: number; labels_by_target: unknown;
   }>(
     `
       SELECT * FROM daily_stats
@@ -188,7 +232,10 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     firstFocusUtc: r.first_focus_utc,
     peakPressureUtc: r.peak_pressure_utc,
     mostDistractedHour: r.most_distracted_hour,
-    topApps: normalizeTopApps(r.top_apps)
+    topApps: normalizeTopApps(r.top_apps),
+    labelsToday: r.labels_today ?? 0,
+    labelsThisWeek: r.labels_this_week ?? 0,
+    labelsByTarget: normalizeLabelsByTarget(r.labels_by_target)
   }));
 }
 
@@ -221,6 +268,7 @@ export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): 
     away_seconds: number; pressure_avg_pct: number; first_focus_utc: string | null;
     peak_pressure_utc: string | null; most_distracted_hour: number | null;
     top_apps: unknown;
+    labels_today: number; labels_this_week: number; labels_by_target: unknown;
   }>(
     'SELECT * FROM daily_stats WHERE date_local = $1 AND tracked_seconds >= 3600',
     [dateLocal]
@@ -249,6 +297,9 @@ export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): 
     firstFocusUtc: r.first_focus_utc,
     peakPressureUtc: r.peak_pressure_utc,
     mostDistractedHour: r.most_distracted_hour,
-    topApps: normalizeTopApps(r.top_apps)
+    topApps: normalizeTopApps(r.top_apps),
+    labelsToday: r.labels_today ?? 0,
+    labelsThisWeek: r.labels_this_week ?? 0,
+    labelsByTarget: normalizeLabelsByTarget(r.labels_by_target)
   }));
 }
