@@ -54,6 +54,7 @@ const routePolicies: RoutePolicy[] = [
   { method: 'GET', path: /^\/v1\/machines\/[^/]+$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/machines\/[^/]+\/actions$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/machines\/[^/]+\/uptime$/, roles: roleSet('viewer', 'operator', 'admin') },
+  { method: 'GET', path: /^\/v1\/machines\/[^/]+\/daily-stats$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/digest\/log$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/actions\/recent$/, roles: roleSet('viewer', 'operator', 'admin') },
   { method: 'GET', path: /^\/v1\/growth\/summary$/, roles: roleSet('viewer', 'operator', 'admin') },
