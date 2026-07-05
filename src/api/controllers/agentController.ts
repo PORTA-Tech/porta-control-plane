@@ -599,6 +599,10 @@ export function createAgentController(): Router {
           labelsToday: typeof body.labelsToday === 'number' ? Math.trunc(body.labelsToday) : 0,
           labelsThisWeek: typeof body.labelsThisWeek === 'number' ? Math.trunc(body.labelsThisWeek) : 0,
           labelsByTarget: parseLabelsByTarget(body.labelsByTarget),
+          promptsShownToday: typeof body.promptsShownToday === 'number' ? Math.trunc(body.promptsShownToday) : 0,
+          promptsAnsweredToday: typeof body.promptsAnsweredToday === 'number' ? Math.trunc(body.promptsAnsweredToday) : 0,
+          promptsShownThisWeek: typeof body.promptsShownThisWeek === 'number' ? Math.trunc(body.promptsShownThisWeek) : 0,
+          promptsAnsweredThisWeek: typeof body.promptsAnsweredThisWeek === 'number' ? Math.trunc(body.promptsAnsweredThisWeek) : 0,
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {
@@ -705,6 +709,10 @@ export function createAgentController(): Router {
           labelsToday: typeof body.labelsToday === 'number' ? Math.trunc(body.labelsToday) : 0,
           labelsThisWeek: typeof body.labelsThisWeek === 'number' ? Math.trunc(body.labelsThisWeek) : 0,
           labelsByTarget: parseLabelsByTarget(body.labelsByTarget),
+          promptsShownToday: typeof body.promptsShownToday === 'number' ? Math.trunc(body.promptsShownToday) : 0,
+          promptsAnsweredToday: typeof body.promptsAnsweredToday === 'number' ? Math.trunc(body.promptsAnsweredToday) : 0,
+          promptsShownThisWeek: typeof body.promptsShownThisWeek === 'number' ? Math.trunc(body.promptsShownThisWeek) : 0,
+          promptsAnsweredThisWeek: typeof body.promptsAnsweredThisWeek === 'number' ? Math.trunc(body.promptsAnsweredThisWeek) : 0,
             });
             await recomputeUserHistory(accountId);
           } catch (statsErr) {
@@ -816,6 +824,10 @@ export function createAgentController(): Router {
           labelsToday: typeof body.labelsToday === 'number' ? Math.trunc(body.labelsToday) : 0,
           labelsThisWeek: typeof body.labelsThisWeek === 'number' ? Math.trunc(body.labelsThisWeek) : 0,
           labelsByTarget: parseLabelsByTarget(body.labelsByTarget),
+          promptsShownToday: typeof body.promptsShownToday === 'number' ? Math.trunc(body.promptsShownToday) : 0,
+          promptsAnsweredToday: typeof body.promptsAnsweredToday === 'number' ? Math.trunc(body.promptsAnsweredToday) : 0,
+          promptsShownThisWeek: typeof body.promptsShownThisWeek === 'number' ? Math.trunc(body.promptsShownThisWeek) : 0,
+          promptsAnsweredThisWeek: typeof body.promptsAnsweredThisWeek === 'number' ? Math.trunc(body.promptsAnsweredThisWeek) : 0,
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {

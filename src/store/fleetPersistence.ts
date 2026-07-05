@@ -519,6 +519,18 @@ async function initializeFleetSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS labels_by_target JSONB;
   `);
 
+  // Anti-spam / #2: prompt response rate — shown vs answered — so the console shows real engagement.
+  await activePool.query(`
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS prompts_shown_today INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS prompts_answered_today INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS prompts_shown_week INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS prompts_answered_week INTEGER NOT NULL DEFAULT 0;
+  `);
+
   await activePool.query(`
     CREATE TABLE IF NOT EXISTS user_history (
       account_id              TEXT PRIMARY KEY,

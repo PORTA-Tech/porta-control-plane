@@ -42,6 +42,10 @@ export interface DailyStats {
   labelsToday?: number;
   labelsThisWeek?: number;
   labelsByTarget?: LabelTargetCount[];
+  promptsShownToday?: number;
+  promptsAnsweredToday?: number;
+  promptsShownThisWeek?: number;
+  promptsAnsweredThisWeek?: number;
 }
 
 // In-memory fallback when Postgres is not available
@@ -73,11 +77,13 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
         overload_events, breaks_taken, breaks_suggested, social_media_loops,
         social_media_seconds, away_seconds, pressure_avg_pct, first_focus_utc,
         peak_pressure_utc, most_distracted_hour, top_apps,
-        labels_today, labels_this_week, labels_by_target
+        labels_today, labels_this_week, labels_by_target,
+        prompts_shown_today, prompts_answered_today,
+        prompts_shown_week, prompts_answered_week
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
         $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-        $24, $25, $26
+        $24, $25, $26, $27, $28, $29, $30
       )
       ON CONFLICT (account_id, date_local) DO UPDATE SET
         day_of_week = EXCLUDED.day_of_week,
@@ -103,7 +109,11 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
         top_apps = EXCLUDED.top_apps,
         labels_today = EXCLUDED.labels_today,
         labels_this_week = EXCLUDED.labels_this_week,
-        labels_by_target = EXCLUDED.labels_by_target;
+        labels_by_target = EXCLUDED.labels_by_target,
+        prompts_shown_today = EXCLUDED.prompts_shown_today,
+        prompts_answered_today = EXCLUDED.prompts_answered_today,
+        prompts_shown_week = EXCLUDED.prompts_shown_week,
+        prompts_answered_week = EXCLUDED.prompts_answered_week;
     `,
     [
       stats.accountId, stats.dateLocal, stats.dayOfWeek, stats.trackedSeconds,
@@ -114,7 +124,9 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
       stats.firstFocusUtc, stats.peakPressureUtc, stats.mostDistractedHour ?? null,
       JSON.stringify(stats.topApps ?? []),
       stats.labelsToday ?? 0, stats.labelsThisWeek ?? 0,
-      JSON.stringify(stats.labelsByTarget ?? [])
+      JSON.stringify(stats.labelsByTarget ?? []),
+      stats.promptsShownToday ?? 0, stats.promptsAnsweredToday ?? 0,
+      stats.promptsShownThisWeek ?? 0, stats.promptsAnsweredThisWeek ?? 0
     ]
   );
 }
@@ -199,6 +211,8 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     peak_pressure_utc: string | null; most_distracted_hour: number | null;
     top_apps: unknown;
     labels_today: number; labels_this_week: number; labels_by_target: unknown;
+    prompts_shown_today: number; prompts_answered_today: number;
+    prompts_shown_week: number; prompts_answered_week: number;
   }>(
     `
       SELECT * FROM daily_stats
@@ -235,7 +249,11 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     topApps: normalizeTopApps(r.top_apps),
     labelsToday: r.labels_today ?? 0,
     labelsThisWeek: r.labels_this_week ?? 0,
-    labelsByTarget: normalizeLabelsByTarget(r.labels_by_target)
+    labelsByTarget: normalizeLabelsByTarget(r.labels_by_target),
+    promptsShownToday: r.prompts_shown_today ?? 0,
+    promptsAnsweredToday: r.prompts_answered_today ?? 0,
+    promptsShownThisWeek: r.prompts_shown_week ?? 0,
+    promptsAnsweredThisWeek: r.prompts_answered_week ?? 0
   }));
 }
 
@@ -269,6 +287,8 @@ export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): 
     peak_pressure_utc: string | null; most_distracted_hour: number | null;
     top_apps: unknown;
     labels_today: number; labels_this_week: number; labels_by_target: unknown;
+    prompts_shown_today: number; prompts_answered_today: number;
+    prompts_shown_week: number; prompts_answered_week: number;
   }>(
     'SELECT * FROM daily_stats WHERE date_local = $1 AND tracked_seconds >= 3600',
     [dateLocal]
@@ -300,6 +320,10 @@ export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): 
     topApps: normalizeTopApps(r.top_apps),
     labelsToday: r.labels_today ?? 0,
     labelsThisWeek: r.labels_this_week ?? 0,
-    labelsByTarget: normalizeLabelsByTarget(r.labels_by_target)
+    labelsByTarget: normalizeLabelsByTarget(r.labels_by_target),
+    promptsShownToday: r.prompts_shown_today ?? 0,
+    promptsAnsweredToday: r.prompts_answered_today ?? 0,
+    promptsShownThisWeek: r.prompts_shown_week ?? 0,
+    promptsAnsweredThisWeek: r.prompts_answered_week ?? 0
   }));
 }
