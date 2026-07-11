@@ -1,5 +1,6 @@
 import { createApp, initializeControlPlane } from './app.js';
 import { runDailyDigestCron } from './core/digestCronService.js';
+import { runAppCategoryCategorization } from './core/appCategoryWorker.js';
 
 initializeControlPlane();
 const app = createApp();
@@ -33,6 +34,13 @@ setInterval(() => {
     });
   }
 }, 60_000);
+
+// 2d: drain pending app-category tokens through Claude Haiku every 2 minutes.
+setInterval(() => {
+  runAppCategoryCategorization().catch((err: unknown) => {
+    console.error('[appCategoryWorker] pass error:', err instanceof Error ? err.message : String(err));
+  });
+}, 120_000);
 
 // Startup catch-up: run immediately if server restarts inside the 20:30-23:59 UTC window.
 (function startupCatchUp() {

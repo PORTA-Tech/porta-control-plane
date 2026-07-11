@@ -599,6 +599,26 @@ async function initializeFleetSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_uptime_machine_time
       ON machine_uptime_samples (machine_id, sampled_at_utc DESC);
   `);
+
+  // 2d: coarse app-category labels resolved for tokens the agent could not classify locally.
+  // token = coarse identity ([a-z0-9-]: a browser site token like "notion" or an exe base name
+  // like "obsidian"); NEVER a raw URL/title. category = one of the 8 AppCategory names (or
+  // 'Unknown' while pending). source precedence at read time: override > curated > llm > pending.
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS app_category_labels (
+      token       TEXT        PRIMARY KEY,
+      category    TEXT        NOT NULL,
+      source      TEXT        NOT NULL,
+      model_ver   TEXT        NULL,
+      created_at  TIMESTAMPTZ NOT NULL,
+      updated_at  TIMESTAMPTZ NOT NULL
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_app_category_labels_source
+      ON app_category_labels (source);
+  `);
 }
 
 export async function resetFleetPersistenceForTests(): Promise<void> {

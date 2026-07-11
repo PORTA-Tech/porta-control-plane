@@ -10,6 +10,7 @@ import { createCohortController } from './api/controllers/cohortController.js';
 import { createExperimentController } from './api/controllers/experimentController.js';
 import { createAdapterController } from './api/controllers/adapterController.js';
 import { createAgentController } from './api/controllers/agentController.js';
+import { createCategoryController } from './api/controllers/categoryController.js';
 import { createPolicyController } from './api/controllers/policyController.js';
 import { createAuthController } from './api/controllers/authController.js';
 import { createSecurityController } from './api/controllers/securityController.js';
@@ -199,6 +200,7 @@ export function createApp(): Express {
   app.use('/v1/security', createSecurityController());
   app.use('/v1/rbac', createRbacController());
   app.use('/v1/system', createSystemHealthController());
+  app.use('/v1/categories', createCategoryController());
 
   return app;
 }

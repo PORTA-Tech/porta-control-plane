@@ -14,8 +14,10 @@ import { appendUptimeSample } from '../../store/machineUptimeStore.js';
 import { upsertDailyStats } from '../../store/dailyStatsStore.js';
 import { recomputeUserHistory } from '../../core/historyService.js';
 import { getUserHistory } from '../../store/userHistoryStore.js';
+import { getKnown, queueUnknown } from '../../store/appCategoryLabelStore.js';
 
 const lastUptimeSampleMs = new Map<string, number>();
+const CATEGORY_RESOLVE_MAX_TOKENS = 100;
 const machineInstallEventRecorded = new Set<string>();
 const UPTIME_SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -438,6 +440,37 @@ export function createAgentController(): Router {
     const batch = Array.isArray(req.body) ? req.body : [];
     upsertPresenceFromTelemetryBatch(batch);
     res.status(202).json({ accepted: true, count: batch.length });
+  });
+
+  // 2d: the agent asks the fleet to categorize coarse tokens it could not classify locally.
+  // Body { agentId, tokens: string[] }. Known mappings return immediately; never-seen tokens are
+  // queued 'pending' for the Haiku worker and reported back in `pending` so the agent can re-ask
+  // later. Body-identified like /heartbeat — no bearer (that's operator-only).
+  router.post('/categories/resolve', async (req, res, next) => {
+    try {
+      const payload = (req.body ?? {}) as { agentId?: unknown; tokens?: unknown };
+      const agentId =
+        typeof payload.agentId === 'string' && payload.agentId.trim().length > 0
+          ? payload.agentId.trim()
+          : undefined;
+      if (!agentId) {
+        res.status(400).json({ error: 'agentId is required' });
+        return;
+      }
+
+      const rawTokens = Array.isArray(payload.tokens) ? payload.tokens : [];
+      const tokens = rawTokens
+        .filter((t): t is string => typeof t === 'string')
+        .slice(0, CATEGORY_RESOLVE_MAX_TOKENS);
+
+      const mappings = await getKnown(tokens);
+      const unresolved = tokens.filter((t) => !(t.trim().toLowerCase() in mappings));
+      const pending = await queueUnknown(unresolved);
+
+      res.status(200).json({ mappings, pending });
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.post('/machine-summary', async (req, res, next) => {
