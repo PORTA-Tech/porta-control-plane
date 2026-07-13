@@ -104,6 +104,29 @@ function parseTopApps(value: unknown): { label: string; seconds: number; categor
     }));
 }
 
+/** W4 — validates the inbound plan-vs-reality tasks array. Titles are user-authored
+ * (clamped, escaped at render); numbers must be finite and sane. */
+function parseTasks(value: unknown): { title: string; plannedSeconds: number; actualSeconds: number; offtaskSeconds: number; state: string }[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return (value as unknown[])
+    .map((t) => t as { title?: unknown; plannedSeconds?: unknown; actualSeconds?: unknown; offtaskSeconds?: unknown; state?: unknown })
+    .filter((t) =>
+      typeof t.title === 'string' && t.title.trim().length > 0
+      && typeof t.plannedSeconds === 'number' && Number.isFinite(t.plannedSeconds) && t.plannedSeconds > 0
+      && typeof t.actualSeconds === 'number' && Number.isFinite(t.actualSeconds) && t.actualSeconds >= 0
+      && (t.state === 'done' || t.state === 'abandoned'))
+    .slice(0, 16)
+    .map((t) => ({
+      title: (t.title as string).trim().slice(0, 80),
+      plannedSeconds: Math.trunc(t.plannedSeconds as number),
+      actualSeconds: t.actualSeconds as number,
+      offtaskSeconds: typeof t.offtaskSeconds === 'number' && Number.isFinite(t.offtaskSeconds) ? Math.max(0, t.offtaskSeconds) : 0,
+      state: t.state as string,
+    }));
+}
+
 /** Validates an inbound labelsByTarget array into clean {target, count, net} entries. Counts only. */
 function parseLabelsByTarget(value: unknown): { target: string; count: number; net: number }[] {
   if (!Array.isArray(value)) {
@@ -804,6 +827,10 @@ export function createAgentController(): Router {
       const apps = parseTopApps(body.topApps);
       if (apps.length > 0) {
         (payload as unknown as Record<string, unknown>).topApps = apps;
+      }
+      const digestTasks = parseTasks(body.tasks);
+      if (digestTasks.length > 0) {
+        (payload as unknown as Record<string, unknown>).tasks = digestTasks;
       }
 
       const firstName = profile.firstName ?? null;
