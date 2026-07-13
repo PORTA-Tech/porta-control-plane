@@ -51,6 +51,25 @@ export interface DailyDigestPayload {
   /** Per-app foreground time for the day — coarse label + seconds + category (0=Unknown).
    * Powers "Where your time went" and "What pulled you off task". */
   topApps?: ReadonlyArray<{ label: string; seconds: number; category?: number }>;
+  /** W4 — plan vs. reality: today's closed timed tasks, exactly the measured numbers.
+   * Empty/absent → the section is omitted entirely (grounding rule: no padding, ever). */
+  tasks?: ReadonlyArray<DigestTaskEntry>;
+}
+
+export interface DigestTaskEntry {
+  title: string;
+  plannedSeconds: number;
+  actualSeconds: number;
+  offtaskSeconds: number;
+  state: string; // done | abandoned
+}
+
+/** W5 — residual honesty: agents label unrecognized browser pages "web"; newer agents
+ * already send "Other browsing", but stats stored by older agents still say "web".
+ * The email must never print "web" — it is meaningless to users. */
+export const RESIDUAL_BROWSING_LABEL = 'Other browsing';
+function honestAppLabel(label: string): string {
+  return label.trim().toLowerCase() === 'web' ? RESIDUAL_BROWSING_LABEL : label;
 }
 
 export type DigestMissingField = 'gaming' | 'socialMedia' | 'contextSwitches' | 'streak' | 'fragmentation';
@@ -137,12 +156,15 @@ async function conditionA(
   const threshold = Math.round(h.avgFocusPct);
   const templates: string[] = [];
 
+  // Grounding audit (W5): every sentence here must trace to a field. No invented
+  // superlatives ("best this month") and no relabeled numbers (today's pct is not a
+  // "week average").
   if (hasStreak) {
     templates.push(
       `${name ? name + ', ' : ''}${h.consecutiveStreak} days in a row with focus above ${threshold}%.\nSomething is working — don't break the chain.`
     );
     templates.push(
-      `${h.consecutiveStreak} consecutive days above your average.\nYour best streak this month is ${h.consecutiveStreak} days. Keep going.`
+      `${h.consecutiveStreak} consecutive days above your average.\nKeep going.`
     );
   }
   if (hasTrend) {
@@ -152,7 +174,7 @@ async function conditionA(
   }
   if (hasStreak && hasTrend) {
     templates.push(
-      `${h.consecutiveStreak} days tracked in a row.\nYour focus average this week is ${todayFocusPct}% — your best stretch this month.`
+      `${h.consecutiveStreak} days tracked in a row, and the trend is still climbing.\nToday closed at ${todayFocusPct}% focus.`
     );
   }
 
@@ -188,7 +210,7 @@ async function conditionB(
   }
   if (isBestScore) {
     templates.push(
-      `Best focus score of the month — ${todayFocusScore}.\nYour previous best was ${Math.round(h.bestFocusScore)} on ${formatPastDate(h.bestFocusScoreDate)}.`
+      `Best focus score Ari has recorded for you — ${todayFocusScore}.\nYour previous best was ${Math.round(h.bestFocusScore)} on ${formatPastDate(h.bestFocusScoreDate)}.`
     );
   }
   if (isBestFocusPct) {
@@ -200,9 +222,11 @@ async function conditionB(
   if (p.firstFocusBlockUtc) {
     const firstHour = new Date(p.firstFocusBlockUtc).getUTCHours();
     if (firstHour < 9) {
+      // "Earliest Ari has seen" was never verified against history — say only what
+      // the payload actually shows: an early first focus block.
       const timeLabel = fmt12h(firstHour);
       templates.push(
-        `You hit deep work at ${timeLabel}.\nEarliest start Ari has seen from you.`
+        `You hit deep work at ${timeLabel}.\nAn early start.`
       );
     }
   }
@@ -242,8 +266,10 @@ async function conditionC(
   const templates: string[] = [];
 
   if (diff >= 15) {
+    // "best ${dayName} this month" was never verified — the data shows above-average,
+    // so that is exactly what gets said.
     templates.push(
-      `${name ? name + ', your' : 'Your'} ${todayFocusPct}% focus rate today is your best ${dayName} this month.\n${dayName}s average ${Math.round(dowAvg)}% for you.`
+      `${name ? name + ', your' : 'Your'} ${todayFocusPct}% focus rate today is well above your ${dayName} average.\n${dayName}s average ${Math.round(dowAvg)}% for you.`
     );
   } else {
     templates.push(
@@ -322,7 +348,7 @@ async function conditionD(
   }
   if (isHighPressure) {
     templates.push(
-      `${name ? name + ', pressure' : 'Pressure'} ran above your normal today.\nThat usually predicts a harder next morning. Wind down properly tonight.`
+      `${name ? name + ', pressure' : 'Pressure'} ran above your normal today.\nWind down properly tonight.`
     );
   }
 
@@ -353,7 +379,7 @@ async function conditionE(
 
   if (timeInSeatNotPresent) {
     templates.push(
-      `${todayFocusPct}% focus time today, but quality score only ${todayFocusScore}.\nTime in seat, but not fully there. Common after high-pressure or fragmented days.`
+      `${todayFocusPct}% focus time today, but quality score only ${todayFocusScore}.\nTime in seat, but not fully there.`
     );
   }
   if (shortButDeep) {
@@ -404,13 +430,17 @@ async function conditionF(
     );
   }
   if (socialLoops) {
+    // "Your typical is lower" was never checked against history — the count alone is
+    // the fact, so the count is what gets said.
     templates.push(
-      `You returned to social media ${p.socialMediaLoopCount} times today.\nYour typical is lower. That's a pattern worth watching.`
+      `You returned to social media ${p.socialMediaLoopCount} times today.\nThat's a pattern worth watching.`
     );
   }
   if (h.weakHour != null && aboveCount) {
+    // The payload doesn't say WHEN today's episodes happened — only history knows the
+    // weak window. Say each fact as what it is.
     templates.push(
-      `Drift episodes spiked around ${fmt12h(h.weakHour)}.\nThat's been your weak window. Worth protecting.`
+      `More drift episodes than your usual today.\nYour weak window has historically been around ${fmt12h(h.weakHour)}. Worth protecting.`
     );
   }
 
@@ -438,19 +468,22 @@ async function conditionG(
 
   const templates: string[] = [];
 
+  // Grounding audit (W5): the payload has counts and the pressure peak hour — it does
+  // NOT say what "the last hour showed", how the afternoon went, or when the skipped
+  // breaks happened. Only the measured facts get said.
   if (noBreaksTaken) {
     templates.push(
-      `No breaks across ${todayTrackedH}h of work.\nAri suggested ${p.breaksSuggestedCount}. Your call — but the last hour showed it.`
+      `No breaks across ${todayTrackedH}h of work.\nAri suggested ${p.breaksSuggestedCount}. Your call.`
     );
   }
   if (allBreaksTaken) {
     templates.push(
-      `You took every break Ari suggested today — ${p.breaksTakenCount} of ${p.breaksSuggestedCount}.\nRecovery compliance like that is rare. Your afternoon focus reflected it.`
+      `You took every break Ari suggested today — ${p.breaksTakenCount} of ${p.breaksSuggestedCount}.`
     );
   }
   if (!allBreaksTaken && p.breaksTakenCount > 0 && missed > 0 && peakHour !== null) {
     templates.push(
-      `${p.breaksTakenCount} of ${p.breaksSuggestedCount} breaks taken.\nThe ${missed} you skipped coincided with your pressure spike at ${fmt12h(peakHour)}.`
+      `${p.breaksTakenCount} of ${p.breaksSuggestedCount} breaks taken.\nPressure peaked at ${fmt12h(peakHour)}.`
     );
   }
 
@@ -483,9 +516,11 @@ async function conditionH(
   const prevDow = new Date(dateObj.getTime() - 86400000).getDay();
   const prevDayName = DAY_NAMES[prevDow] ?? 'yesterday';
 
+  // Grounding audit (W5): the condition verifies SCORE above average — the templates
+  // must not switch to focus-% claims, and "first time this week" was never checked.
   const templates: string[] = [
     `Back above your average after a rough ${prevDayName}.\n${todayFocusScore} today — your mean is ${Math.round(h.avgFocusScore)}. Good recovery.`,
-    `${todayFocusPct}% focus today, up from yesterday.\nAbove your average of ${Math.round(h.avgFocusPct)}% for the first time this week.`
+    `Focus score ${todayFocusScore} today, up from yesterday.\nAbove your average of ${Math.round(h.avgFocusScore)}.`
   ];
 
   const { text } = await selectTemplate('H', templates, accountId);
@@ -511,9 +546,11 @@ async function conditionI(
   const strongWindowLabel = `${fmt12h(h.strongWindowStart)}–${fmt12h(windowEnd)}`;
   const windowFocusMin = Math.round(p.longestFocusStreakSeconds / 60);
 
+  // Grounding audit (W5): the payload shows the day STARTED in the strong window and the
+  // day's longest streak — it does not attribute the streak to that window.
   const templates: string[] = [
-    `You used your strongest window — ${strongWindowLabel}.\nThat block alone produced ${windowFocusMin}min of deep work.`,
-    `Your ${strongWindowLabel} window is consistently your best.\nToday it produced ${windowFocusMin}min of focus. Protect it tomorrow.`
+    `You started in your strongest window — ${strongWindowLabel}.\nLongest focus run today: ${windowFocusMin}min.`,
+    `Your ${strongWindowLabel} window is consistently your best.\nToday's longest focus run was ${windowFocusMin}min. Protect that window tomorrow.`
   ];
 
   const { text } = await selectTemplate('I', templates, accountId);
@@ -798,7 +835,7 @@ export async function buildDigestEmail(
         <p style="margin:0 0 10px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Where your time went</p>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           ${topAppsList.map((a) => `<tr>
-            <td style="padding:6px 0;font-size:14px;color:#111118;font-weight:500;">${escHtml(prettyAppLabel(a.label))}</td>
+            <td style="padding:6px 0;font-size:14px;color:#111118;font-weight:500;">${escHtml(prettyAppLabel(honestAppLabel(a.label)))}</td>
             <td style="padding:6px 0;font-size:14px;color:#505070;text-align:right;">${fmtMinutes(a.seconds)}</td>
           </tr>`).join('')}
         </table>
@@ -820,8 +857,30 @@ export async function buildDigestEmail(
         <p style="margin:0 0 10px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">What pulled you off task</p>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           ${distractingApps.map((a) => `<tr>
-            <td style="padding:6px 0;font-size:14px;color:#111118;font-weight:500;">${escHtml(prettyAppLabel(a.label))}</td>
+            <td style="padding:6px 0;font-size:14px;color:#111118;font-weight:500;">${escHtml(prettyAppLabel(honestAppLabel(a.label)))}</td>
             <td style="padding:6px 0;font-size:14px;color:#a05050;text-align:right;">${fmtMinutes(a.seconds)}</td>
+          </tr>`).join('')}
+        </table>
+      </td>
+    </tr>`;
+
+  // W4 — "Plan vs. reality": one line per closed task, EXACTLY the measured numbers from
+  // the payload. Omitted entirely when the day has no closed tasks (grounding rule: a
+  // short honest digest beats a padded one).
+  const taskList = (p.tasks ?? []).filter(
+    (t) => t && typeof t.title === 'string' && t.title.length > 0 && t.plannedSeconds > 0
+  ).slice(0, 8);
+  const tasksHtml = taskList.length === 0
+    ? ''
+    : `
+    <!-- Section: Plan vs. reality -->
+    <tr>
+      <td style="padding:24px 36px 0;">
+        <p style="margin:0 0 10px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Plan vs. reality</p>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          ${taskList.map((t) => `<tr>
+            <td style="padding:6px 0;font-size:14px;color:#111118;font-weight:500;">${t.state === 'abandoned' ? '✕ ' : '✓ '}${escHtml(t.title)}</td>
+            <td style="padding:6px 0;font-size:13px;color:#505070;text-align:right;">planned ${fmtMinutes(t.plannedSeconds)} · took ${fmtMinutes(t.actualSeconds)}${Math.round(t.offtaskSeconds / 60) > 0 ? ` · ${Math.round(t.offtaskSeconds / 60)}m off-task` : ''}</td>
           </tr>`).join('')}
         </table>
       </td>
@@ -867,6 +926,8 @@ export async function buildDigestEmail(
     ${topAppsHtml}
 
     ${distractionHtml}
+
+    ${tasksHtml}
 
     <!-- Section 1: Day at a glance -->
     <tr>

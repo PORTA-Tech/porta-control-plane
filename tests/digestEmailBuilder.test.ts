@@ -119,3 +119,61 @@ describe('buildDigestEmail honesty', () => {
     expect(html).not.toContain('offline at send time');
   });
 });
+
+// W5 — per-section completeness gates: a section without real inputs is OMITTED,
+// never rendered with placeholders or generic text.
+describe('buildDigestEmail section gating', () => {
+  it('omits top-apps and distraction sections when topApps is empty', async () => {
+    const { html } = await buildDigestEmail(buildPayload());
+    expect(html).not.toContain('Where your time went');
+    expect(html).not.toContain('What pulled you off task');
+  });
+
+  it('renders top apps when present, with residual "web" as "Other browsing"', async () => {
+    const { html } = await buildDigestEmail(buildPayload({
+      topApps: [
+        { label: 'github', seconds: 3600 },
+        { label: 'web', seconds: 1800 }
+      ]
+    }));
+    expect(html).toContain('Where your time went');
+    expect(html).toContain('Github');
+    expect(html).toContain('Other browsing');
+    expect(html).not.toMatch(/>Web</);
+  });
+});
+
+// W4 — "Plan vs. reality": present iff the day has closed tasks, and every number in
+// the HTML is exactly the payload's measured value.
+describe('buildDigestEmail plan vs. reality', () => {
+  it('omits the section entirely when there are no tasks', async () => {
+    const { html: none } = await buildDigestEmail(buildPayload());
+    expect(none).not.toContain('Plan vs. reality');
+    const { html: empty } = await buildDigestEmail(buildPayload({ tasks: [] }));
+    expect(empty).not.toContain('Plan vs. reality');
+  });
+
+  it('renders one line per closed task with the exact measured numbers', async () => {
+    const { html } = await buildDigestEmail(buildPayload({
+      tasks: [
+        { title: 'write digest section', plannedSeconds: 3600, actualSeconds: 4440, offtaskSeconds: 720, state: 'done' },
+        { title: 'inbox sweep', plannedSeconds: 1800, actualSeconds: 900, offtaskSeconds: 0, state: 'abandoned' }
+      ]
+    }));
+    expect(html).toContain('Plan vs. reality');
+    expect(html).toContain('write digest section');
+    expect(html).toContain('planned 1h · took 1h 14m · 12m off-task');
+    expect(html).toContain('✕ inbox sweep');
+    expect(html).toContain('planned 30m · took 15m');
+  });
+
+  it('escapes task titles (user-authored text)', async () => {
+    const { html } = await buildDigestEmail(buildPayload({
+      tasks: [
+        { title: '<script>x</script>', plannedSeconds: 1800, actualSeconds: 1800, offtaskSeconds: 0, state: 'done' }
+      ]
+    }));
+    expect(html).not.toContain('<script>x</script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+});
