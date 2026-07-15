@@ -10,8 +10,14 @@ import type { DailyStats } from '../store/dailyStatsStore.js';
 // Dubai is UTC+4 — same timezone used by DailyDigestReporter.cs
 const DUBAI_OFFSET_MS = 4 * 60 * 60 * 1000;
 
-function todayInDubai(): string {
+// The cron fires at 20:30 UTC (and the startup catch-up runs up to 23:59 UTC),
+// which is 00:30–03:59 in Dubai — already the NEXT Dubai day. The digest we owe
+// is for the Dubai day that just ended, i.e. YESTERDAY in Dubai. The old code
+// used "today in Dubai", so it queried a day with no stats yet and the offline
+// fallback silently sent nothing every night.
+function digestTargetDateDubai(): string {
   const dubaiNow = new Date(Date.now() + DUBAI_OFFSET_MS);
+  dubaiNow.setUTCDate(dubaiNow.getUTCDate() - 1);
   return dubaiNow.toISOString().slice(0, 10); // "YYYY-MM-DD"
 }
 
@@ -76,7 +82,7 @@ function statsToDigestPayload(stats: DailyStats): DailyDigestPayload {
  * Called at 20:30 UTC daily from main.ts.
  */
 export async function runDailyDigestCron(): Promise<void> {
-  const dateLocal = todayInDubai();
+  const dateLocal = digestTargetDateDubai();
   const baseUrl = process.env.PORTA_CONTROL_PLANE_URL?.replace(/\/$/, '')
     ?? 'https://porta-control-plane.onrender.com';
   const launchUrl = baseUrl + '/launch';
