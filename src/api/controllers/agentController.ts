@@ -9,7 +9,7 @@ import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileS
 import { getAccountProfile } from '../../store/accountStore.js';
 import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } from '../../core/digestEmailBuilder.js';
 import { sendEmail } from '../../core/emailService.js';
-import { appendDigestLogEntry } from '../../store/digestLogStore.js';
+import { appendDigestLogEntry, wasDigestSentForAccount } from '../../store/digestLogStore.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
 import { upsertDailyStats } from '../../store/dailyStatsStore.js';
 import { recomputeUserHistory } from '../../core/historyService.js';
@@ -833,25 +833,39 @@ export function createAgentController(): Router {
         (payload as unknown as Record<string, unknown>).tasks = digestTasks;
       }
 
-      const firstName = profile.firstName ?? null;
-      const baseUrl = req.protocol + '://' + req.get('host');
-      const { subject, html } = await buildDigestEmail(payload, baseUrl + '/launch', userHistory, firstName);
-      const sent = await sendEmail({ to: profile.primaryEmail, subject, html });
+      // B1 — ONE digest per account per day, whatever asks for it. The agent's own guard
+      // (_lastSentDate) is in-memory only, so a service restart after 19:30 UTC (auto-update,
+      // crash, reboot) re-POSTs this endpoint and used to send a SECOND email — the reported
+      // duplicate. Two linked machines on one account would double up the same way. The server is
+      // the only place that can see every sender, so the dedup belongs here, mirroring the check
+      // the cron already does. daily_stats is still upserted below on this path, so suppressing the
+      // email never costs us the day's numbers.
+      const alreadySent = await wasDigestSentForAccount(accountId, payload.dateLocal);
+      let sent = false;
 
-      await appendDigestLogEntry({
-        machineId: payload.machineId,
-        accountId,
-        dateLocal: payload.dateLocal,
-        trackedSeconds: payload.trackedSeconds,
-        fired: sent,
-        failureReason: sent ? null : 'send_failed',
-        sentAtUtc: new Date().toISOString(),
-      });
-
-      if (sent) {
-        console.log('[daily-digest] Sent digest for account ' + accountId + ' to ' + profile.primaryEmail + ' (date: ' + payload.dateLocal + ')');
+      if (alreadySent) {
+        console.log('[daily-digest] Skipped duplicate digest for account ' + accountId + ' (date: ' + payload.dateLocal + ') — already sent today');
       } else {
-        console.warn('[daily-digest] Failed to send digest for account ' + accountId + ' to ' + profile.primaryEmail + ' (date: ' + payload.dateLocal + ')');
+        const firstName = profile.firstName ?? null;
+        const baseUrl = req.protocol + '://' + req.get('host');
+        const { subject, html } = await buildDigestEmail(payload, baseUrl + '/launch', userHistory, firstName);
+        sent = await sendEmail({ to: profile.primaryEmail, subject, html });
+
+        await appendDigestLogEntry({
+          machineId: payload.machineId,
+          accountId,
+          dateLocal: payload.dateLocal,
+          trackedSeconds: payload.trackedSeconds,
+          fired: sent,
+          failureReason: sent ? null : 'send_failed',
+          sentAtUtc: new Date().toISOString(),
+        });
+
+        if (sent) {
+          console.log('[daily-digest] Sent digest for account ' + accountId + ' to ' + profile.primaryEmail + ' (date: ' + payload.dateLocal + ')');
+        } else {
+          console.warn('[daily-digest] Failed to send digest for account ' + accountId + ' to ' + profile.primaryEmail + ' (date: ' + payload.dateLocal + ')');
+        }
       }
 
       // Phase 1C/1E -- write daily_stats and recompute user_history regardless of email outcome
@@ -894,7 +908,7 @@ export function createAgentController(): Router {
         console.error('[daily-digest] Failed to write daily_stats for account ' + accountId + ':', statsErr);
       }
 
-      res.status(202).json({ accepted: true, sent });
+      res.status(202).json({ accepted: true, sent, ...(alreadySent ? { skipped: 'already_sent' } : {}) });
     } catch (error) {
       next(error);
     }
