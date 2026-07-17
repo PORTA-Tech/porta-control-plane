@@ -72,6 +72,11 @@ function statsToDigestPayload(stats: DailyStats): DailyDigestPayload {
     // Real per-app foreground time captured during the day — same "where your time
     // went" section the live digest shows, now available in the server-fallback path.
     ...(stats.topApps && stats.topApps.length > 0 ? { topApps: stats.topApps } : {}),
+    // C1 — the day's goal + midday answer, uploaded by the agent's 2-hourly stats report (the
+    // goals table itself is agent-local). This is what lets the OFFLINE fallback digest still lead
+    // with the goal instead of dropping the headline section.
+    goal: stats.goal ?? null,
+    middayAnswer: stats.middayAnswer ?? null,
     isServerFallback: true,
   };
 }

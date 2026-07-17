@@ -11,7 +11,7 @@ import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } fr
 import { sendEmail } from '../../core/emailService.js';
 import { appendDigestLogEntry, wasDigestSentForAccount } from '../../store/digestLogStore.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
-import { upsertDailyStats } from '../../store/dailyStatsStore.js';
+import { upsertDailyStats, normalizeGoalText, normalizeMiddayAnswer } from '../../store/dailyStatsStore.js';
 import { recomputeUserHistory } from '../../core/historyService.js';
 import { getUserHistory } from '../../store/userHistoryStore.js';
 import { getKnown, queueUnknown } from '../../store/appCategoryLabelStore.js';
@@ -659,6 +659,10 @@ export function createAgentController(): Router {
           promptsAnsweredToday: typeof body.promptsAnsweredToday === 'number' ? Math.trunc(body.promptsAnsweredToday) : 0,
           promptsShownThisWeek: typeof body.promptsShownThisWeek === 'number' ? Math.trunc(body.promptsShownThisWeek) : 0,
           promptsAnsweredThisWeek: typeof body.promptsAnsweredThisWeek === 'number' ? Math.trunc(body.promptsAnsweredThisWeek) : 0,
+          // C1: the day's goal + midday answer, so the server-cron fallback digest can lead with
+          // them. Normalized in the store (blank → null, unknown answer → null).
+          goal: normalizeGoalText(body.goal),
+          middayAnswer: normalizeMiddayAnswer(body.middayAnswer),
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {
@@ -769,6 +773,10 @@ export function createAgentController(): Router {
           promptsAnsweredToday: typeof body.promptsAnsweredToday === 'number' ? Math.trunc(body.promptsAnsweredToday) : 0,
           promptsShownThisWeek: typeof body.promptsShownThisWeek === 'number' ? Math.trunc(body.promptsShownThisWeek) : 0,
           promptsAnsweredThisWeek: typeof body.promptsAnsweredThisWeek === 'number' ? Math.trunc(body.promptsAnsweredThisWeek) : 0,
+          // C1: the day's goal + midday answer, so the server-cron fallback digest can lead with
+          // them. Normalized in the store (blank → null, unknown answer → null).
+          goal: normalizeGoalText(body.goal),
+          middayAnswer: normalizeMiddayAnswer(body.middayAnswer),
             });
             await recomputeUserHistory(accountId);
           } catch (statsErr) {
@@ -817,6 +825,9 @@ export function createAgentController(): Router {
         avgDistractionEpisodeDurationSeconds: typeof body.avgDistractionEpisodeDurationSeconds === 'number' ? body.avgDistractionEpisodeDurationSeconds : 0,
         contextSwitchCount: typeof body.contextSwitchCount === 'number' ? body.contextSwitchCount : 0,
         preLongestDistractionFocusSeconds: typeof body.preLongestDistractionFocusSeconds === 'number' ? body.preLongestDistractionFocusSeconds : 0,
+        // C1 — the digest leads with goal vs reality. null → the Goal section is omitted.
+        goal: normalizeGoalText(body.goal),
+        middayAnswer: normalizeMiddayAnswer(body.middayAnswer),
       };
       if (Array.isArray(body.missingFields)) {
         (payload as unknown as Record<string, unknown>).missingFields = (body.missingFields as unknown[]).filter(
@@ -902,6 +913,10 @@ export function createAgentController(): Router {
           promptsAnsweredToday: typeof body.promptsAnsweredToday === 'number' ? Math.trunc(body.promptsAnsweredToday) : 0,
           promptsShownThisWeek: typeof body.promptsShownThisWeek === 'number' ? Math.trunc(body.promptsShownThisWeek) : 0,
           promptsAnsweredThisWeek: typeof body.promptsAnsweredThisWeek === 'number' ? Math.trunc(body.promptsAnsweredThisWeek) : 0,
+          // C1: the day's goal + midday answer, so the server-cron fallback digest can lead with
+          // them. Normalized in the store (blank → null, unknown answer → null).
+          goal: normalizeGoalText(body.goal),
+          middayAnswer: normalizeMiddayAnswer(body.middayAnswer),
         });
         await recomputeUserHistory(accountId);
       } catch (statsErr) {

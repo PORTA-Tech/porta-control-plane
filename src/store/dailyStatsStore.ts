@@ -39,6 +39,10 @@ export interface DailyStats {
   peakPressureUtc: string | null;
   mostDistractedHour: number | null;
   topApps: FocusAppUsage[];
+  // Digest C1 — the day's stated goal + midday yes/partly/not_yet answer (Workstream D), uploaded
+  // with the stats because daily_goals lives only on the agent. null = no goal set that day.
+  goal?: string | null;
+  middayAnswer?: string | null;
   labelsToday?: number;
   labelsThisWeek?: number;
   labelsByTarget?: LabelTargetCount[];
@@ -79,11 +83,12 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
         peak_pressure_utc, most_distracted_hour, top_apps,
         labels_today, labels_this_week, labels_by_target,
         prompts_shown_today, prompts_answered_today,
-        prompts_shown_week, prompts_answered_week
+        prompts_shown_week, prompts_answered_week,
+        goal, midday_answer
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
         $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-        $24, $25, $26, $27, $28, $29, $30
+        $24, $25, $26, $27, $28, $29, $30, $31, $32
       )
       ON CONFLICT (account_id, date_local) DO UPDATE SET
         day_of_week = EXCLUDED.day_of_week,
@@ -113,7 +118,11 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
         prompts_shown_today = EXCLUDED.prompts_shown_today,
         prompts_answered_today = EXCLUDED.prompts_answered_today,
         prompts_shown_week = EXCLUDED.prompts_shown_week,
-        prompts_answered_week = EXCLUDED.prompts_answered_week;
+        prompts_answered_week = EXCLUDED.prompts_answered_week,
+        -- C1: COALESCE so a later upload that happens to omit the goal (or a stats report from a
+        -- machine where it was never set) cannot erase a goal already recorded for the day.
+        goal = COALESCE(EXCLUDED.goal, daily_stats.goal),
+        midday_answer = COALESCE(EXCLUDED.midday_answer, daily_stats.midday_answer);
     `,
     [
       stats.accountId, stats.dateLocal, stats.dayOfWeek, stats.trackedSeconds,
@@ -126,9 +135,24 @@ export async function upsertDailyStats(stats: DailyStats): Promise<void> {
       stats.labelsToday ?? 0, stats.labelsThisWeek ?? 0,
       JSON.stringify(stats.labelsByTarget ?? []),
       stats.promptsShownToday ?? 0, stats.promptsAnsweredToday ?? 0,
-      stats.promptsShownThisWeek ?? 0, stats.promptsAnsweredThisWeek ?? 0
+      stats.promptsShownThisWeek ?? 0, stats.promptsAnsweredThisWeek ?? 0,
+      normalizeGoalText(stats.goal), normalizeMiddayAnswer(stats.middayAnswer)
     ]
   );
+}
+
+/** C1 — a stated goal is free text: trim, cap, and treat blank as "no goal" (never an empty string). */
+export function normalizeGoalText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed.slice(0, 200);
+}
+
+/** C1 — the midday answer is a closed set; anything else is "not answered" rather than a guess. */
+export function normalizeMiddayAnswer(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const v = value.trim().toLowerCase();
+  return v === 'yes' || v === 'partly' || v === 'not_yet' ? v : null;
 }
 
 /** Normalizes a stored JSONB labels_by_target value into a clean array (counts only, no content). */
@@ -213,6 +237,7 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     labels_today: number; labels_this_week: number; labels_by_target: unknown;
     prompts_shown_today: number; prompts_answered_today: number;
     prompts_shown_week: number; prompts_answered_week: number;
+    goal: string | null; midday_answer: string | null;
   }>(
     `
       SELECT * FROM daily_stats
@@ -247,6 +272,8 @@ export async function getDailyStatsForAccount(accountId: string, limitDays = 90)
     peakPressureUtc: r.peak_pressure_utc,
     mostDistractedHour: r.most_distracted_hour,
     topApps: normalizeTopApps(r.top_apps),
+    goal: r.goal ?? null,
+    middayAnswer: r.midday_answer ?? null,
     labelsToday: r.labels_today ?? 0,
     labelsThisWeek: r.labels_this_week ?? 0,
     labelsByTarget: normalizeLabelsByTarget(r.labels_by_target),
@@ -289,6 +316,7 @@ export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): 
     labels_today: number; labels_this_week: number; labels_by_target: unknown;
     prompts_shown_today: number; prompts_answered_today: number;
     prompts_shown_week: number; prompts_answered_week: number;
+    goal: string | null; midday_answer: string | null;
   }>(
     'SELECT * FROM daily_stats WHERE date_local = $1 AND tracked_seconds >= 3600',
     [dateLocal]
@@ -318,6 +346,8 @@ export async function getAccountsWithQualifyingStatsForDate(dateLocal: string): 
     peakPressureUtc: r.peak_pressure_utc,
     mostDistractedHour: r.most_distracted_hour,
     topApps: normalizeTopApps(r.top_apps),
+    goal: r.goal ?? null,
+    middayAnswer: r.midday_answer ?? null,
     labelsToday: r.labels_today ?? 0,
     labelsThisWeek: r.labels_this_week ?? 0,
     labelsByTarget: normalizeLabelsByTarget(r.labels_by_target),

@@ -71,19 +71,30 @@ describe('buildDigestEmail honesty', () => {
     expect(html).not.toMatch(/Longest streak<\/p>\s*<p[^>]*>0m</);
   });
 
-  it('renders "no data" for fragmentation when episodes are 0 but distraction has hours', async () => {
-    const { html } = await buildDigestEmail(buildPayload());
-    expect(html).not.toMatch(/Fragmentation<\/p>\s*<p[^>]*>0 </);
+  // C3 — jargon the user can't act on is cut from the USER-FACING digest (still measured, still
+  // uploaded, still in daily_stats). A metric nobody understands reads as filler.
+  it('renders none of the cut jargon metrics', async () => {
+    const { html } = await buildDigestEmail(buildPayload({
+      longestFocusStreakSeconds: 2700,
+      fragmentationEpisodeCount: 3,
+      contextSwitchCount: 12,
+      contextExcursionSeconds: 900,
+      distractionSeconds: 3600
+    }));
+    expect(html).not.toContain('Fragmentation');
+    expect(html).not.toContain('Context switches');
+    expect(html).not.toContain('Focus Quality');
+    expect(html).not.toContain('Quality');
   });
 
   it('keeps real values when the data is consistent', async () => {
     const { html } = await buildDigestEmail(buildPayload({
-      longestFocusStreakSeconds: 2700, // 45m
+      longestFocusStreakSeconds: 2700, // 45m — the C0 "Best run" stat
       fragmentationEpisodeCount: 3,
       distractionSeconds: 3600
     }));
     expect(html).toContain('45m');
-    expect(html).toContain('3 <span');
+    expect(html).toContain('Best run');
     expect(html).not.toContain('no data');
   });
 
@@ -104,11 +115,13 @@ describe('buildDigestEmail honesty', () => {
       missingFields: ['gaming', 'contextSwitches']
     }));
     expect(html).toContain('offline at send time');
-    // gaming and context switches show no data, social media still shows numbers
+    // Gaming is declared missing and still renders "no data" rather than a confident 0.
     const gamingSection = html.slice(html.indexOf('Gaming'));
     expect(gamingSection.slice(0, 300)).toContain('no data');
-    const ctxSection = html.slice(html.indexOf('Context switches'));
-    expect(ctxSection.slice(0, 300)).toContain('no data');
+    // 'contextSwitches' stays a valid missing-field declaration on the payload (the metric is
+    // still measured and uploaded), but C3 removed it from the user-facing email entirely — so
+    // there is no longer a section for it to mark.
+    expect(html).not.toContain('Context switches');
   });
 
   it('agent-path digests carry no fallback banner', async () => {

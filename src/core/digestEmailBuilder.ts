@@ -1,4 +1,5 @@
 import type { UserHistory } from '../store/userHistoryStore.js';
+import { buildAriTake } from './digestNarrative.js';
 import { wasMessageShownRecently, recordMessageShown } from '../store/messageRotationStore.js';
 import { getDailyStatsForAccount } from '../store/dailyStatsStore.js';
 
@@ -48,6 +49,13 @@ export interface DailyDigestPayload {
   missingFields?: ReadonlyArray<DigestMissingField>;
   /** True when assembled by the server cron from periodic stats (machine was offline at send time). */
   isServerFallback?: boolean;
+  /**
+   * C1 — the day's stated morning goal (Workstream D check-ins) and the midday
+   * yes/partly/not_yet answer. The digest leads with goal vs reality; null/absent means the user
+   * set no goal that day, and the Goal section is omitted rather than rendered empty.
+   */
+  goal?: string | null;
+  middayAnswer?: string | null;
   /** Per-app foreground time for the day — coarse label + seconds + category (0=Unknown).
    * Powers "Where your time went" and "What pulled you off task". */
   topApps?: ReadonlyArray<{ label: string; seconds: number; category?: number }>;
@@ -68,6 +76,15 @@ export interface DigestTaskEntry {
  * already send "Other browsing", but stats stored by older agents still say "web".
  * The email must never print "web" — it is meaningless to users. */
 export const RESIDUAL_BROWSING_LABEL = 'Other browsing';
+/**
+ * Escapes text before it goes into the email HTML. A function declaration (not a const arrow) so
+ * it is hoisted and usable anywhere in the builder — the goal is user-typed free text rendered
+ * near the top of the message, well above where the local `escHtml` helper is defined.
+ */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function honestAppLabel(label: string): string {
   return label.trim().toLowerCase() === 'web' ? RESIDUAL_BROWSING_LABEL : label;
 }
@@ -793,9 +810,28 @@ export async function buildDigestEmail(
   const grade = focusGrade(p.focusQualityScore);
   const missing = resolveMissingFields(p);
   const streakLabel = missing.has('streak') ? NO_DATA_HTML : fmtMinutes(p.longestFocusStreakSeconds);
-  const ariObs = await buildAriObservation(p, h, firstName);
-  // Convert newlines in observation to HTML line breaks
-  const ariObsHtml = ariObs.replace(/\n/g, '<br>');
+  // C0 section 7 / C-decision — "Ari's take" is LLM-written from THIS day's real numbers + the
+  // goal + the midday answer. It replaces the recurring templated line ("N days in a row with
+  // focus above X% — don't break the chain"), which is the exact generic-filler failure the
+  // overhaul removes. buildAriTake never throws: on any failure it returns null and the section
+  // is OMITTED — never a fallback to the old generic line.
+  const ariTake = await buildAriTake(p);
+  const ariTakeHtml = ariTake === null
+    ? ''
+    : `
+    <!-- C0 section 7: Ari's take -->
+    <tr>
+      <td style="padding:20px 36px 0;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td bgcolor="#f7f7fc" style="background:#f7f7fc;border-left:3px solid #5252b0;border-radius:0 8px 8px 0;padding:14px 16px;">
+              <p style="margin:0 0 6px;font-size:11px;font-weight:600;color:#8080b0;text-transform:uppercase;letter-spacing:0.1em;">Ari's take</p>
+              <p style="margin:0;font-size:14px;color:#505070;line-height:1.6;">${escapeHtml(ariTake).replace(/\n/g, '<br>')}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`;
 
   // Format date nicely: "Monday, 19 May 2025"
   let dateDisplay = p.dateLocal;
@@ -821,6 +857,61 @@ export async function buildDigestEmail(
     p.breaksSuggestedCount === 0
       ? 'No breaks suggested'
       : `${p.breaksTakenCount} of ${p.breaksSuggestedCount} taken`;
+
+  // C0 section 3 — the stat row is these FOUR only: worked / focused / best run / breaks.
+  // The old "Quality" tile (a 0-100 score), fragmentation, and context switches were cut per C3:
+  // a metric the user can't act on or understand reads as filler. All three are still measured and
+  // still uploaded to daily_stats — they just no longer headline the email.
+  //
+  // C0 stat 4 — breaks taken/suggested. Uses the A3-fixed counts (taken was structurally 0 before).
+  const breaksStatLabel = p.breaksSuggestedCount === 0 ? '—' : `${p.breaksTakenCount}/${p.breaksSuggestedCount}`;
+  const breaksStatSubLabel = p.breaksSuggestedCount === 0 ? 'none suggested' : 'taken';
+
+  // C0 section 2 / C1 — lead with the GOAL. Omitted entirely when the user set none, so a digest
+  // never shows an empty or invented goal.
+  const goalText = (p.goal ?? '').trim();
+  const middayChip = ((): string => {
+    const answer = (p.middayAnswer ?? '').trim();
+    if (answer === 'yes') return '<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:#e7f6ee;color:#1d7a4c;font-size:12px;font-weight:600;">Done</span>';
+    if (answer === 'partly') return '<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:#fdf3e3;color:#9a6410;font-size:12px;font-weight:600;">Partway</span>';
+    if (answer === 'not_yet') return '<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:#fdeceb;color:#a33a30;font-size:12px;font-weight:600;">Not yet</span>';
+    return '';
+  })();
+  const goalHtml = goalText.length === 0
+    ? ''
+    : `
+    <!-- C0 section 2: Goal — the co-pilot loop. What they set out to do, and the midday answer. -->
+    <tr>
+      <td style="padding:0 36px 20px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f3ff" style="background:#f4f3ff;border-radius:10px;">
+          <tr>
+            <td style="padding:18px 20px;">
+              <p style="margin:0 0 6px;font-size:11px;color:#6b6b9a;text-transform:uppercase;letter-spacing:0.06em;">This morning you set out to</p>
+              <p style="margin:0 0 ${middayChip ? '10px' : '0'};font-size:16px;font-weight:600;color:#111118;line-height:1.45;">${escapeHtml(goalText)}</p>
+              ${middayChip}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`;
+
+  // Two sections were dropped from the rendered email here (C0/C3), and both are still measured
+  // and still uploaded to daily_stats — only the user-facing headline changed:
+  //   - "Pressure & Breaks": break compliance is now one of the four headline stats, so it was
+  //     duplicated, and "overload episodes" is a metric the user cannot act on.
+  //   - "Focus Quality" (longest streak / fragmentation / context switches): the streak moved
+  //     into the stat row as "Best run"; the other two are the jargon C3 names explicitly.
+  //
+  // C0 section 6 — the away note. The A1 fix moves lock-screen time out of app dwell and into
+  // away, so this states it honestly instead of it silently inflating "worked".
+  const awayNoteHtml = p.awaySeconds < 300
+    ? ''
+    : `
+    <tr>
+      <td style="padding:14px 36px 0;">
+        <p style="margin:0;font-size:12px;color:#8080a0;">${fmtMinutes(p.awaySeconds)} locked / away — not counted as work.</p>
+      </td>
+    </tr>`;
 
   // "Where your time went" — real named apps/sites with time. Coarse labels only.
   const topAppsList = (p.topApps ?? []).filter((a) => a && typeof a.label === 'string' && a.seconds > 0).slice(0, 6);
@@ -923,69 +1014,41 @@ export async function buildDigestEmail(
       </td>
     </tr>
 
-    ${topAppsHtml}
+    ${goalHtml}
 
-    ${distractionHtml}
-
-    ${tasksHtml}
-
-    <!-- Section 1: Day at a glance -->
+    <!-- C0 section 3: stat row -->
     <tr>
       <td style="padding:0 36px 0;">
         <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f7f7fc" style="background:#f7f7fc;border-radius:10px;">
           <tr>
-            <td style="text-align:center;padding:20px 8px 20px 0;">
-              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Tracked</p>
-              <p style="margin:0;font-size:26px;font-weight:700;color:#111118;">${trackedLabel}</p>
+            <td style="text-align:center;padding:20px 4px 20px 0;">
+              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Worked</p>
+              <p style="margin:0;font-size:22px;font-weight:700;color:#111118;">${trackedLabel}</p>
             </td>
-            <td style="text-align:center;padding:20px 8px;border-left:1px solid #e0e0ef;border-right:1px solid #e0e0ef;">
-              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Focus</p>
-              <p style="margin:0;font-size:26px;font-weight:700;color:#5252a0;">${focusLabel}</p>
+            <td style="text-align:center;padding:20px 4px;border-left:1px solid #e0e0ef;">
+              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Focused</p>
+              <p style="margin:0;font-size:22px;font-weight:700;color:#5252a0;">${focusLabel}</p>
               <p style="margin:0;font-size:12px;color:#8080a0;">${focusPctLabel} of day</p>
             </td>
-            <td style="text-align:center;padding:20px 0 20px 8px;">
-              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Quality</p>
-              <p style="margin:0;font-size:26px;font-weight:700;color:${grade.color};">${grade.label}</p>
-              <p style="margin:0;font-size:12px;color:#8080a0;">${Math.round(p.focusQualityScore * 100)}/100</p>
+            <td style="text-align:center;padding:20px 4px;border-left:1px solid #e0e0ef;">
+              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Best run</p>
+              <p style="margin:0;font-size:22px;font-weight:700;color:#111118;">${streakLabel}</p>
+            </td>
+            <td style="text-align:center;padding:20px 0 20px 4px;border-left:1px solid #e0e0ef;">
+              <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Breaks</p>
+              <p style="margin:0;font-size:22px;font-weight:700;color:#111118;">${breaksStatLabel}</p>
+              <p style="margin:0;font-size:12px;color:#8080a0;">${breaksStatSubLabel}</p>
             </td>
           </tr>
         </table>
       </td>
     </tr>
 
-    <!-- Divider -->
-    <tr><td style="padding:22px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
+    ${topAppsHtml}
 
-    <!-- Section 2: Focus quality -->
     <tr>
-      <td style="padding:20px 36px 0;">
-        <p style="margin:0 0 14px;font-size:11px;font-weight:600;color:#5050a0;text-transform:uppercase;letter-spacing:0.1em;">Focus Quality</p>
-        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-          <tr>
-            <td style="padding:0 16px 0 0;">
-              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Longest streak</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${streakLabel}</p>
-            </td>
-            <td style="padding:0 16px;border-left:1px solid #e0e0ef;">
-              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Fragmentation</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${missing.has('fragmentation') ? NO_DATA_HTML : `${p.fragmentationEpisodeCount} <span style="font-size:12px;color:#8080a0;">episodes</span>`}</p>
-            </td>
-            <td style="padding:0 0 0 16px;border-left:1px solid #e0e0ef;">
-              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Context switches</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${missing.has('contextSwitches') ? NO_DATA_HTML : fmtMinutes(p.contextExcursionSeconds)}</p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-
-    <!-- Divider -->
-    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
-
-    <!-- Section 3: Distraction patterns -->
-    <tr>
-      <td style="padding:20px 36px 0;">
-        <p style="margin:0 0 14px;font-size:11px;font-weight:600;color:#b06030;text-transform:uppercase;letter-spacing:0.1em;">Distraction Patterns</p>
+      <td style="padding:24px 36px 0;">
+        <p style="margin:0 0 14px;font-size:11px;font-weight:600;color:#b06030;text-transform:uppercase;letter-spacing:0.1em;">What pulled you off</p>
         <table width="100%" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="padding:0 12px 0 0;vertical-align:top;">
@@ -1014,48 +1077,13 @@ export async function buildDigestEmail(
       </td>
     </tr>
 
-    <!-- Divider -->
-    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
+    ${distractionHtml}
 
-    <!-- Section 4: Pressure & Breaks -->
-    <tr>
-      <td style="padding:20px 36px 0;">
-        <p style="margin:0 0 14px;font-size:11px;font-weight:600;color:#8a406a;text-transform:uppercase;letter-spacing:0.1em;">Pressure &amp; Breaks</p>
-        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-          <tr>
-            <td style="padding:0 16px 0 0;">
-              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Overload episodes</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:${p.overloadEpisodeCount >= 3 ? '#c04055' : '#111118'};">${p.overloadEpisodeCount}</p>
-            </td>
-            <td style="padding:0 0 0 16px;border-left:1px solid #e0e0ef;">
-              <p style="margin:0 0 2px;font-size:12px;color:#8080a0;">Break compliance</p>
-              <p style="margin:0;font-size:19px;font-weight:600;color:#111118;">${breakComplianceLabel}</p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
+    ${tasksHtml}
 
-    <!-- Divider -->
-    <tr><td style="padding:20px 36px 0;"><div style="height:1px;background:#e0e0ef;"></div></td></tr>
+    ${awayNoteHtml}
 
-    <!-- App-category section removed: the four categories were derived from
-         focus strength, not real app usage. Reinstate only when genuine
-         app-category attribution ships in the agent. -->
-
-    <!-- Section 5: Ari observation -->
-    <tr>
-      <td style="padding:20px 36px 0;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0">
-          <tr>
-            <td bgcolor="#f7f7fc" style="background:#f7f7fc;border-left:3px solid #5252b0;border-radius:0 8px 8px 0;padding:14px 16px;">
-              <p style="margin:0 0 6px;font-size:11px;font-weight:600;color:#8080b0;text-transform:uppercase;letter-spacing:0.1em;">Ari's observation</p>
-              <p style="margin:0;font-size:14px;color:#505070;line-height:1.6;">${ariObsHtml}</p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
+    ${ariTakeHtml}
 
     <!-- CTA -->
     <tr>

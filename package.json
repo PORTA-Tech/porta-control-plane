@@ -14,6 +14,7 @@
     "step16:load": "node ./scripts/step16-policy-load.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.112.1",
     "@porta/api-contracts": "file:vendor/api-contracts-local",
     "express": "^4.21.1",
     "pg": "^8.20.0",

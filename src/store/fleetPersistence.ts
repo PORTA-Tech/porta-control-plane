@@ -509,6 +509,17 @@ async function initializeFleetSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS top_apps JSONB;
   `);
 
+  // Digest C1: the day's stated goal + the midday yes/partly/not_yet answer, uploaded by the
+  // agent's 2-hourly stats report. daily_goals is an AGENT-LOCAL table, so this is the only way
+  // the server-cron fallback digest (built from daily_stats) can lead with the user's goal.
+  // Nullable by design — a user who set no goal must render as "no goal", never as an empty one.
+  await activePool.query(`
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS goal TEXT;
+    ALTER TABLE daily_stats
+      ADD COLUMN IF NOT EXISTS midday_answer TEXT;
+  `);
+
   // Phase 1b — Step 4c: privacy-safe ground-truth label engagement (counts only, no content).
   await activePool.query(`
     ALTER TABLE daily_stats
