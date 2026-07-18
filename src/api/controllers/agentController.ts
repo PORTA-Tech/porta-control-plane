@@ -11,6 +11,7 @@ import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } fr
 import { sendEmail } from '../../core/emailService.js';
 import { appendDigestLogEntry, wasDigestSentForAccount } from '../../store/digestLogStore.js';
 import { isWithinAgentDigestSendWindow, isFutureDubaiDate } from '../../core/digestSendWindow.js';
+import { buildNarrativeLine, NARRATIVE_KINDS, type NarrativeKind, type NarrativeSituation } from '../../core/narrativeService.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
 import { upsertDailyStats, normalizeGoalText, normalizeMiddayAnswer } from '../../store/dailyStatsStore.js';
 import { recomputeUserHistory } from '../../core/historyService.js';
@@ -675,6 +676,41 @@ export function createAgentController(): Router {
       res.status(202).json({ accepted: true });
     } catch (error) {
       next(error);
+    }
+  });
+
+  // Part 5 — live check-in copy. The agent asks for one line per high-value moment (the gate on
+  // the agent decided to speak BEFORE this call; the server only words it). Fail-soft top to
+  // bottom: any problem returns { line: null } with 200 and the agent renders its template — this
+  // route must never be a reason a check-in card is late or missing.
+  router.post('/narrative', async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const accountId = typeof body.accountId === 'string' && body.accountId.trim().length > 0
+        ? body.accountId.trim()
+        : null;
+      const dateLocal = typeof body.dateLocal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.dateLocal.trim())
+        ? body.dateLocal.trim()
+        : null;
+      const kind = typeof body.kind === 'string' && (NARRATIVE_KINDS as readonly string[]).includes(body.kind)
+        ? (body.kind as NarrativeKind)
+        : null;
+
+      if (!accountId || !dateLocal || !kind) {
+        res.status(400).json({ line: null, error: 'accountId, dateLocal and a valid kind are required' });
+        return;
+      }
+
+      const situation: NarrativeSituation =
+        typeof body.situation === 'object' && body.situation !== null
+          ? (body.situation as NarrativeSituation)
+          : {};
+
+      const line = await buildNarrativeLine(accountId, dateLocal, kind, situation);
+      res.status(200).json({ line });
+    } catch (error) {
+      console.error('[narrative] Route failed:', error instanceof Error ? error.message : String(error));
+      res.status(200).json({ line: null });
     }
   });
 
