@@ -807,6 +807,11 @@ export async function buildDigestEmail(
   const trackedLabel = fmtMinutes(p.trackedSeconds);
   const focusLabel = fmtMinutes(p.focusSeconds);
   const focusPctLabel = pct(p.focusSeconds, p.trackedSeconds);
+  // focusSeconds is focus-episode time (matches the Control Center); focusQualityScore is the
+  // separate intensity signal (weighted ÷ episode). Never render the weighted number as time.
+  const focusQualitySubLabel = p.focusQualityScore > 0
+    ? ` · ${Math.round(p.focusQualityScore * 100)}% focus quality`
+    : '';
   const grade = focusGrade(p.focusQualityScore);
   const missing = resolveMissingFields(p);
   const streakLabel = missing.has('streak') ? NO_DATA_HTML : fmtMinutes(p.longestFocusStreakSeconds);
@@ -1028,7 +1033,7 @@ export async function buildDigestEmail(
             <td style="text-align:center;padding:20px 4px;border-left:1px solid #e0e0ef;">
               <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Focused</p>
               <p style="margin:0;font-size:22px;font-weight:700;color:#5252a0;">${focusLabel}</p>
-              <p style="margin:0;font-size:12px;color:#8080a0;">${focusPctLabel} of day</p>
+              <p style="margin:0;font-size:12px;color:#8080a0;">${focusPctLabel} of day${focusQualitySubLabel}</p>
             </td>
             <td style="text-align:center;padding:20px 4px;border-left:1px solid #e0e0ef;">
               <p style="margin:0 0 4px;font-size:11px;color:#8080a0;text-transform:uppercase;letter-spacing:0.06em;">Best run</p>
