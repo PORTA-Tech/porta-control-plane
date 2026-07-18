@@ -10,6 +10,7 @@ import { getAccountProfile } from '../../store/accountStore.js';
 import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } from '../../core/digestEmailBuilder.js';
 import { sendEmail } from '../../core/emailService.js';
 import { appendDigestLogEntry, wasDigestSentForAccount } from '../../store/digestLogStore.js';
+import { isWithinAgentDigestSendWindow, isFutureDubaiDate } from '../../core/digestSendWindow.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
 import { upsertDailyStats, normalizeGoalText, normalizeMiddayAnswer } from '../../store/dailyStatsStore.js';
 import { recomputeUserHistory } from '../../core/historyService.js';
@@ -694,6 +695,22 @@ export function createAgentController(): Router {
       const machineId = typeof body.machineId === 'string' ? body.machineId.trim() : '';
       const dateLocal = typeof body.dateLocal === 'string' ? body.dateLocal.trim() : '';
       const trackedSeconds = typeof body.trackedSeconds === 'number' ? body.trackedSeconds : 0;
+
+      // Part 4 — reject digests that cannot be legitimate: agent sends only happen 19:30 UTC →
+      // midnight, and a date_local in Dubai's future is the wrong-day stamping bug. Both cases
+      // previously wrote fired=true rows that suppressed the NEXT real digest as "already sent".
+      // No digest_log write here: an upsert would clobber a legitimate fired=true row for the
+      // same machine+date and re-open the duplicate-email hole.
+      const guardReason = !isWithinAgentDigestSendWindow()
+        ? 'outside_send_window'
+        : isFutureDubaiDate(dateLocal)
+          ? 'future_date_local'
+          : null;
+      if (guardReason) {
+        console.warn(`[daily-digest] Rejected digest for account ${accountId} machine ${machineId} date ${dateLocal}: ${guardReason}`);
+        res.status(202).json({ accepted: true, sent: false, reason: guardReason });
+        return;
+      }
 
       const [profile, userHistory] = await Promise.all([
         getAccountProfile(accountId),
