@@ -5,6 +5,7 @@ import {
   buildSituationFacts,
   tryConsumeCallBudget,
   resetNarrativeStateForTests,
+  KIND_INSTRUCTION,
   NARRATIVE_DAILY_CALL_CAP,
   type NarrativeSituation,
 } from '../src/core/narrativeService.js';
@@ -26,6 +27,23 @@ function fakeClient(reply: string, stopReason = 'end_turn'): Anthropic {
 afterEach(() => {
   resetNarrativeStateForTests();
   vi.restoreAllMocks();
+});
+
+// Part 2a — the midday/eod cards render answer controls (buttons / plan box), so the model line must
+// END with the question those controls answer. The old "no questions" / "do not ask" restriction is
+// gone for these two kinds.
+describe('KIND_INSTRUCTION (Part 2a)', () => {
+  it('midday asks the progress question and drops the no-questions restriction', () => {
+    expect(KIND_INSTRUCTION.midday).toContain('?');
+    expect(KIND_INSTRUCTION.midday.toLowerCase()).not.toContain('no questions');
+    expect(KIND_INSTRUCTION.midday.toLowerCase()).not.toContain('do not ask');
+  });
+
+  it('eod asks the tomorrow question and drops the no-questions restriction', () => {
+    expect(KIND_INSTRUCTION.eod).toContain('?');
+    expect(KIND_INSTRUCTION.eod.toLowerCase()).not.toContain('no questions');
+    expect(KIND_INSTRUCTION.eod.toLowerCase()).not.toContain('do not ask');
+  });
 });
 
 describe('buildSituationFacts', () => {
@@ -64,6 +82,17 @@ describe('buildSituationFacts', () => {
 
     const checkIn = buildSituationFacts('morning', { userText: 'Write chapter 3' }, {});
     expect(checkIn).not.toContain('Their reply just now');
+  });
+
+  it('surfaces the whole-day facts (Part 1b) only when closing the day', () => {
+    const eod = buildSituationFacts('eod', { goalToday: 'Ship it', middaySkipped: true, awayGap: true }, {});
+    expect(eod).toContain('midday check-in was never answered');
+    expect(eod).toContain('away from the computer for a substantial stretch');
+
+    // The same flags on a midday moment are not surfaced — they only frame the EOD wrap.
+    const midday = buildSituationFacts('midday', { goalToday: 'Ship it', middaySkipped: true, awayGap: true }, {});
+    expect(midday).not.toContain('midday check-in was never answered');
+    expect(midday).not.toContain('away from the computer for a substantial stretch');
   });
 
   it('includes enrichment patterns when provided', () => {

@@ -50,6 +50,8 @@ export interface NarrativeSituation {
   topApps?: { label: string; seconds: number }[];
   localTimeHHmm?: string;
   userText?: string | null;      // the typed reply — reply_* kinds only
+  middaySkipped?: boolean;       // eod (Part 1b): a morning goal was set but midday was never answered
+  awayGap?: boolean;             // eod (Part 1b): a substantial away stretch today
 }
 
 const SYSTEM_PROMPT = [
@@ -65,20 +67,25 @@ const SYSTEM_PROMPT = [
   '- Address the reader as "you".',
 ].join('\n');
 
-const KIND_INSTRUCTION: Record<NarrativeKind, string> = {
+// Exported for tests — the per-kind instruction the model gets. midday/eod must END with the actual
+// question (Part 2a) so the card's answer controls are never orphaned.
+export const KIND_INSTRUCTION: Record<NarrativeKind, string> = {
   morning: [
     'Write 1-2 short sentences to open the morning check-in. Frame the day around the goal or',
     'carried-over plan if one is given; reference yesterday\'s outcome when provided. End in a way',
     'that invites them to state or confirm today\'s goal.',
   ].join('\n'),
   midday: [
-    'Write ONE specific, actionable sentence for the midday check-in: read the stated goal against',
-    'the real numbers so far and say the one thing worth doing with the afternoon. Do not ask more',
-    'than one thing.',
+    'Write one or two short sentences for the midday check-in: read the stated goal against the real',
+    'numbers so far, then end by asking whether they got to it — e.g. "did you get to it?". The card',
+    'shows Yes / Partly / Not-yet buttons under your line, so your last sentence must be that question.',
   ].join('\n'),
   eod: [
-    'Write 1-2 short sentences to close the day: an honest reflection on how the day went against',
-    'the goal (if given), ending by inviting a one-line plan for tomorrow.',
+    'Write one or two short sentences to close the day: an honest reflection on how the day went',
+    'against the goal (if given). If the midday check-in was skipped or they were away a while, frame',
+    'it as ONE whole-day wrap that acknowledges the gap rather than treating it as a full work day.',
+    'End by asking: what is the one thing for tomorrow? The card shows a plan text box under your',
+    'line, so your last sentence must be that question.',
   ].join('\n'),
   reply_morning: [
     'The user just typed their goal for today (given as their reply). Respond with ONE short',
@@ -198,6 +205,16 @@ export function buildSituationFacts(
   if (apps.length > 0) {
     const top = apps.slice(0, 3).map((a) => `${a.label} ${humanDuration(a.seconds)}`).join(', ');
     lines.push(`Where the time went so far: ${top}`);
+  }
+
+  // Part 1b — the EOD whole-day facts. Only meaningful when closing the day, so scoped to 'eod'.
+  if (kind === 'eod') {
+    if (situation.middaySkipped) {
+      lines.push('A morning goal was set, but the midday check-in was never answered today.');
+    }
+    if (situation.awayGap) {
+      lines.push('They were away from the computer for a substantial stretch today.');
+    }
   }
 
   if (enrichment.yesterdayGoal) {
