@@ -10,7 +10,7 @@ import { getAccountProfile } from '../../store/accountStore.js';
 import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } from '../../core/digestEmailBuilder.js';
 import { sendEmail } from '../../core/emailService.js';
 import { appendDigestLogEntry, wasDigestSentForAccount } from '../../store/digestLogStore.js';
-import { isWithinAgentDigestSendWindow, isFutureDubaiDate } from '../../core/digestSendWindow.js';
+import { isWithinAgentDigestSendWindow, isFutureDubaiDate, hasReportableTrackedTime } from '../../core/digestSendWindow.js';
 import { buildNarrativeLine, NARRATIVE_KINDS, type NarrativeKind, type NarrativeSituation } from '../../core/narrativeService.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
 import { upsertDailyStats, normalizeGoalText, normalizeMiddayAnswer } from '../../store/dailyStatsStore.js';
@@ -781,7 +781,9 @@ export function createAgentController(): Router {
         return;
       }
 
-      if (trackedSeconds < 3600) {
+      // Part 3a — near-zero / low-activity guard: below the threshold we neither send nor write a
+      // fired=true row, so an essentially-empty payload can never phantom-suppress the real digest.
+      if (!hasReportableTrackedTime(trackedSeconds)) {
         await appendDigestLogEntry({
           machineId,
           accountId,

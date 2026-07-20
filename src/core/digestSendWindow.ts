@@ -16,6 +16,22 @@ export function isWithinAgentDigestSendWindow(now: Date = new Date()): boolean {
   return minutesUtc >= AGENT_DIGEST_WINDOW_OPEN_MINUTES || minutesUtc <= AGENT_DIGEST_WINDOW_CLOSE_MINUTES;
 }
 
+// Part 3a — the minimum tracked time a digest must carry to be SENT and to mark the day sent.
+// A payload below this — near-zero, e.g. a just-after-midnight "today" digest from a misbehaving or
+// old agent — must never be sent NOR write a fired=true row: that phantom row would later suppress
+// the real evening digest as "already sent" (the pattern behind Aymene's wrong/duplicate digest).
+// 3600s also doubles as the low-activity product rule (we don't email a digest for a day with under
+// an hour of real work); near-zero is a strict subset of that, so one threshold covers both cases.
+// Named + exported so the guard is explicit and unit-testable rather than a bare magic number.
+export const DIGEST_MIN_TRACKED_SECONDS = 3600;
+
+/** True when the digest carries enough real tracked time to be delivered and mark the day sent. */
+export function hasReportableTrackedTime(trackedSeconds: number): boolean {
+  return typeof trackedSeconds === 'number'
+    && Number.isFinite(trackedSeconds)
+    && trackedSeconds >= DIGEST_MIN_TRACKED_SECONDS;
+}
+
 const DUBAI_OFFSET_MS = 4 * 60 * 60 * 1000;
 
 /** Today's calendar date in Dubai (UTC+4) as "YYYY-MM-DD". */

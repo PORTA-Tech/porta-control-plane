@@ -3,6 +3,8 @@ import {
   isWithinAgentDigestSendWindow,
   isFutureDubaiDate,
   dubaiTodayDate,
+  hasReportableTrackedTime,
+  DIGEST_MIN_TRACKED_SECONDS,
 } from '../src/core/digestSendWindow.js';
 
 // Part 4 — the confirmed phantom-digest incident: an agent digest POSTed at 06:50 UTC (10:50 in
@@ -55,5 +57,26 @@ describe('dubaiTodayDate / isFutureDubaiDate', () => {
   it('ignores malformed dates', () => {
     expect(isFutureDubaiDate('not-a-date', new Date())).toBe(false);
     expect(isFutureDubaiDate('', new Date())).toBe(false);
+  });
+});
+
+// Part 3a — the near-zero / low-activity guard. Below the threshold, a digest must neither be sent
+// nor mark the day sent, so an essentially-empty payload can never phantom-suppress the real digest.
+describe('hasReportableTrackedTime (Part 3a)', () => {
+  it('rejects near-zero tracked time (a misbehaving/old agent’s empty digest)', () => {
+    expect(hasReportableTrackedTime(0)).toBe(false);
+    expect(hasReportableTrackedTime(30)).toBe(false);       // 30 seconds
+    expect(hasReportableTrackedTime(5 * 60)).toBe(false);   // 5 minutes
+  });
+
+  it('accepts a real day (at or above the threshold)', () => {
+    expect(hasReportableTrackedTime(DIGEST_MIN_TRACKED_SECONDS)).toBe(true);
+    expect(hasReportableTrackedTime(4 * 3600)).toBe(true);
+  });
+
+  it('rejects non-finite / non-number tracked seconds defensively', () => {
+    expect(hasReportableTrackedTime(Number.NaN)).toBe(false);
+    expect(hasReportableTrackedTime(Number.POSITIVE_INFINITY)).toBe(false);
+    expect(hasReportableTrackedTime(undefined as unknown as number)).toBe(false);
   });
 });
