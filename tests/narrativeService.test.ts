@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import {
   buildNarrativeLine,
@@ -9,6 +9,33 @@ import {
   NARRATIVE_DAILY_CALL_CAP,
   type NarrativeSituation,
 } from '../src/core/narrativeService.js';
+import { clearAccountStoreForTests, upsertAccountProfile } from '../src/store/accountStore.js';
+
+// buildNarrativeLine only spends a model call on an account that actually exists — the
+// endpoint is unauthenticated, so a made-up accountId must never reach Anthropic. Account
+// ids are `uuid` columns, so these have to be well-formed UUIDs, not 'acc-1' style labels.
+const ACCOUNT_A = '11111111-1111-4111-8111-111111111111';
+const ACCOUNT_CAP = '22222222-2222-4222-8222-222222222222';
+const ACCOUNT_OTHER = '33333333-3333-4333-8333-333333333333';
+const ACCOUNT_UNKNOWN = '44444444-4444-4444-8444-444444444444';
+
+async function seedAccount(accountId: string): Promise<void> {
+  const now = new Date().toISOString();
+  await upsertAccountProfile({
+    accountId,
+    displayName: 'Test Account',
+    primaryEmail: `${accountId}@example.test`,
+    emailVerified: true,
+    status: 'active',
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+beforeEach(async () => {
+  clearAccountStoreForTests();
+  await Promise.all([seedAccount(ACCOUNT_A), seedAccount(ACCOUNT_CAP), seedAccount(ACCOUNT_OTHER)]);
+});
 
 // Part 5 contracts: grounding (only given facts appear), fail-soft (null on any failure — the
 // agent's template takes over, never a generic line), and one call per moment (cache + daily cap).
@@ -113,16 +140,41 @@ describe('buildSituationFacts', () => {
 describe('buildNarrativeLine', () => {
   it('returns the model line for a check-in moment', async () => {
     const line = await buildNarrativeLine(
-      'acc-1', '2026-07-18', 'midday', { goalToday: 'Ship it' },
+      ACCOUNT_A, '2026-07-18', 'midday', { goalToday: 'Ship it' },
       fakeClient('You said the API was the day — 2h focused so far says protect the next hour for it.')
     );
     expect(line).toContain('protect the next hour');
   });
 
+  // The endpoint is unauthenticated, and the daily cap is keyed on accountId — so without
+  // this gate an attacker mints a fresh 16-call budget per made-up id, forever.
+  it('never calls the model for an account that does not exist', async () => {
+    const client = fakeClient('Should never be produced.');
+    const line = await buildNarrativeLine(ACCOUNT_UNKNOWN, '2026-07-18', 'morning', {}, client);
+    expect(line).toBeNull();
+    expect((client.messages.create as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it('never calls the model for a malformed account id', async () => {
+    const client = fakeClient('Should never be produced.');
+    const line = await buildNarrativeLine('not-a-uuid', '2026-07-18', 'morning', {}, client);
+    expect(line).toBeNull();
+    expect((client.messages.create as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it('leaves the daily budget untouched when the account is rejected', async () => {
+    const client = fakeClient('Should never be produced.');
+    for (let i = 0; i < NARRATIVE_DAILY_CALL_CAP + 5; i++) {
+      await buildNarrativeLine(ACCOUNT_UNKNOWN, '2026-07-18', 'reply_morning', { userText: `t${i}` }, client);
+    }
+    // Budget was never consumed, because the call never got that far.
+    expect(tryConsumeCallBudget(ACCOUNT_UNKNOWN, '2026-07-18')).toBe(true);
+  });
+
   it('caches check-in lines per account+kind+day — one model call per moment', async () => {
     const client = fakeClient('Morning line.');
-    const first = await buildNarrativeLine('acc-1', '2026-07-18', 'morning', {}, client);
-    const second = await buildNarrativeLine('acc-1', '2026-07-18', 'morning', {}, client);
+    const first = await buildNarrativeLine(ACCOUNT_A, '2026-07-18', 'morning', {}, client);
+    const second = await buildNarrativeLine(ACCOUNT_A, '2026-07-18', 'morning', {}, client);
     expect(first).toBe('Morning line.');
     expect(second).toBe('Morning line.');
     expect((client.messages.create as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
@@ -130,18 +182,18 @@ describe('buildNarrativeLine', () => {
 
   it('does NOT cache typed replies (each utterance differs)', async () => {
     const client = fakeClient('Reply line.');
-    await buildNarrativeLine('acc-1', '2026-07-18', 'reply_morning', { userText: 'a' }, client);
-    await buildNarrativeLine('acc-1', '2026-07-18', 'reply_morning', { userText: 'b' }, client);
+    await buildNarrativeLine(ACCOUNT_A, '2026-07-18', 'reply_morning', { userText: 'a' }, client);
+    await buildNarrativeLine(ACCOUNT_A, '2026-07-18', 'reply_morning', { userText: 'b' }, client);
     expect((client.messages.create as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
   });
 
   it('returns null on refusal', async () => {
-    const line = await buildNarrativeLine('acc-1', '2026-07-18', 'eod', {}, fakeClient('anything', 'refusal'));
+    const line = await buildNarrativeLine(ACCOUNT_A, '2026-07-18', 'eod', {}, fakeClient('anything', 'refusal'));
     expect(line).toBeNull();
   });
 
   it('returns null on an unusable reply', async () => {
-    const line = await buildNarrativeLine('acc-1', '2026-07-18', 'eod', {}, fakeClient('short'));
+    const line = await buildNarrativeLine(ACCOUNT_A, '2026-07-18', 'eod', {}, fakeClient('short'));
     expect(line).toBeNull();
   });
 
@@ -149,7 +201,7 @@ describe('buildNarrativeLine', () => {
     const client = {
       messages: { create: vi.fn().mockRejectedValue(new Error('boom')) },
     } as unknown as Anthropic;
-    const line = await buildNarrativeLine('acc-1', '2026-07-18', 'morning', {}, client);
+    const line = await buildNarrativeLine(ACCOUNT_A, '2026-07-18', 'morning', {}, client);
     expect(line).toBeNull();
   });
 
@@ -157,7 +209,7 @@ describe('buildNarrativeLine', () => {
     const previous = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     try {
-      const line = await buildNarrativeLine('acc-1', '2026-07-18', 'morning', {});
+      const line = await buildNarrativeLine(ACCOUNT_A, '2026-07-18', 'morning', {});
       expect(line).toBeNull();
     } finally {
       if (previous !== undefined) process.env.ANTHROPIC_API_KEY = previous;
@@ -167,13 +219,13 @@ describe('buildNarrativeLine', () => {
   it('stops at the daily per-account cap', async () => {
     const client = fakeClient('A perfectly reasonable reply line for the cap test.');
     for (let i = 0; i < NARRATIVE_DAILY_CALL_CAP; i++) {
-      const line = await buildNarrativeLine('acc-cap', '2026-07-18', 'reply_midday', { userText: `t${i}` }, client);
+      const line = await buildNarrativeLine(ACCOUNT_CAP, '2026-07-18', 'reply_midday', { userText: `t${i}` }, client);
       expect(line).not.toBeNull();
     }
-    const over = await buildNarrativeLine('acc-cap', '2026-07-18', 'reply_midday', { userText: 'over' }, client);
+    const over = await buildNarrativeLine(ACCOUNT_CAP, '2026-07-18', 'reply_midday', { userText: 'over' }, client);
     expect(over).toBeNull();
     // A different account is unaffected.
-    const other = await buildNarrativeLine('acc-other', '2026-07-18', 'reply_midday', { userText: 'x' }, client);
+    const other = await buildNarrativeLine(ACCOUNT_OTHER, '2026-07-18', 'reply_midday', { userText: 'x' }, client);
     expect(other).not.toBeNull();
   });
 });

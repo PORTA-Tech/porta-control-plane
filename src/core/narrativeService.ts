@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getUserHistory } from '../store/userHistoryStore.js';
 import { getDailyStatsForAccount } from '../store/dailyStatsStore.js';
+import { getAccountProfile } from '../store/accountStore.js';
 
 /**
  * Part 5 — live check-in copy. The digest already proved the pattern (digestNarrative.buildAriTake):
@@ -23,6 +24,33 @@ const MAX_TOKENS = 250;
 
 /** Hard per-account daily ceiling across ALL narrative calls (3 check-ins + replies + slack). */
 export const NARRATIVE_DAILY_CALL_CAP = 16;
+
+/**
+ * The daily cap is keyed on accountId, and POST /api/agent/narrative is unauthenticated
+ * (mounted before requireAuthenticatedOperator in app.ts). Without this check the cap costs
+ * an attacker nothing: any string is a fresh key, so 16 calls per made-up account becomes
+ * unlimited calls. Requiring a REAL account narrows the spend to accounts that already
+ * exist — which an attacker would have to know the UUID of.
+ *
+ * Remove this only once per-device auth guards /api/agent.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function isKnownAccount(accountId: string): Promise<boolean> {
+  // Shape first: account_id columns are `uuid`, so a malformed id would make Postgres throw
+  // on the `$1::uuid` cast rather than return "not found".
+  if (!UUID_PATTERN.test(accountId)) {
+    return false;
+  }
+
+  try {
+    return (await getAccountProfile(accountId)) !== null;
+  } catch (error) {
+    // Fail closed: an unreachable store must not become a free pass to the model.
+    console.warn('[narrative] Account lookup failed:', error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
 
 export type NarrativeKind =
   | 'morning'
@@ -309,6 +337,13 @@ export async function buildNarrativeLine(
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!client && !apiKey) {
     console.warn('[narrative] ANTHROPIC_API_KEY not set — agent will use its template.');
+    return null;
+  }
+
+  // Gate on a real account BEFORE the budget is consumed or the model is called. A fake
+  // account can therefore never reach Anthropic, and never populates the cache above.
+  if (!(await isKnownAccount(accountId))) {
+    console.warn(`[narrative] Rejected unknown account ${accountId}.`);
     return null;
   }
 
