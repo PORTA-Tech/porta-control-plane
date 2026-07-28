@@ -15,6 +15,7 @@ import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../sr
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests, getDeviceProfile } from '../src/store/deviceStore.js';
 import { issueAuthSession } from '../src/core/authSessionStore.js';
+import { clearDeviceCredentialStoreForTests, issueDeviceSecret } from '../src/store/deviceCredentialStore.js';
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
@@ -50,6 +51,7 @@ describe('endpoint integration', () => {
     clearOrganizationStoreForTests();
     clearMembershipStoreForTests();
     clearDeviceStoreForTests();
+    clearDeviceCredentialStoreForTests();
     delete process.env.CONTROL_PLANE_ADAPTER_EXPANSION_ENABLED;
     loadRuntimeState();
   });
@@ -147,7 +149,14 @@ describe('endpoint integration', () => {
       missingMajorChannels: []
     };
 
-    const ingest = await request(app).post('/api/agent/machine-summary').send(summary);
+    // machine-summary reconciles an account only for a credentialed device; an
+    // uncredentialed report is accepted as anonymous inventory with the account dropped.
+    const { secret: deviceSecret } = await issueDeviceSecret('d26b9f02-34b7-41c3-9dd4-6cbb4d281ac4');
+    const ingest = await request(app)
+      .post('/api/agent/machine-summary')
+      .set('x-porta-device-id', 'd26b9f02-34b7-41c3-9dd4-6cbb4d281ac4')
+      .set('x-porta-device-secret', deviceSecret)
+      .send(summary);
     expect(ingest.status).toBe(202);
 
     const listResponse = await withOperatorHeaders(request(app).get('/v1/machines/summary'));
@@ -393,7 +402,12 @@ describe('endpoint integration', () => {
     });
     expect(consentResponse.status).toBe(200);
 
-    const ingest = await request(app).post('/api/agent/machine-summary').send({
+    const { secret: activationSecret } = await issueDeviceSecret(deviceId);
+    const ingest = await request(app)
+      .post('/api/agent/machine-summary')
+      .set('x-porta-device-id', deviceId)
+      .set('x-porta-device-secret', activationSecret)
+      .send({
       deviceId,
       accountId,
       orgId,

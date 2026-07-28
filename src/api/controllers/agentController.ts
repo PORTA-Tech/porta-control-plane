@@ -6,6 +6,8 @@ import { appendMachineActionEvent } from '../../store/machineActionStore.js';
 import { upsertMachineSummary, withCanonicalMachineSummary } from '../../store/machineSummaryStore.js';
 import { maybeActivateAccount, recordAccountActiveDay, recordMachineInstalledEvent } from '../../core/growthService.js';
 import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileService.js';
+import { attachDeviceIdentity, type DeviceRequest } from '../middleware/deviceAuth.js';
+import { incrementAuditMetric } from '../../core/policyGovernanceStore.js';
 import { getAccountProfile } from '../../store/accountStore.js';
 import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } from '../../core/digestEmailBuilder.js';
 import { sendEmail } from '../../core/emailService.js';
@@ -498,23 +500,71 @@ export function createAgentController(): Router {
     }
   });
 
-  router.post('/machine-summary', async (req, res, next) => {
+  router.post('/machine-summary', attachDeviceIdentity, async (req, res, next) => {
     try {
-      const payload = normalizeMachineSummaryReport(req.body);
-      if (!payload) {
+      const rawPayload = normalizeMachineSummaryReport(req.body);
+      if (!rawPayload) {
         res.status(400).json({ error: 'invalid machine summary payload' });
         return;
       }
+
+      // Two tiers, permanently -- this route is not subject to PORTA_DEVICE_AUTH_MODE.
+      //
+      // Without a valid credential the report is accepted as anonymous inventory only: the
+      // machine stays visible in the console (which is the point -- a machine that installed
+      // and was never signed into is exactly the one you need to see during a rollout), but
+      // the caller-supplied accountId and orgId are discarded and nothing account-attributed
+      // is written. Anyone can post; nobody can write a row that names an account.
+      //
+      // This is a stronger rule than heartbeat/telemetry, which are simply open. Those are
+      // memory-only; this one persists to devices, machine_summaries and growth events, so
+      // an unauthenticated write here would outlive the process.
+      const deviceAuthenticated = (req as DeviceRequest).deviceAuthenticated === true;
+      const authenticatedDeviceId = (req as DeviceRequest).authenticatedDeviceId ?? null;
+
+      // A credential proves one device. It must not be usable to write another device's row.
+      const credentialMatchesPayload = deviceAuthenticated
+        && (rawPayload.deviceId == null || rawPayload.deviceId === authenticatedDeviceId);
+
+      const trusted = deviceAuthenticated && credentialMatchesPayload;
+      const payload: MachineSummaryReport = trusted
+        ? rawPayload
+        : { ...rawPayload, accountId: null, orgId: null };
 
       const reconciledDevice = await reconcileDeviceProfileFromTelemetry({
         deviceId: payload.deviceId ?? null,
         machineName: payload.machineName,
         agentVersion: payload.agentVersion,
         reportedAtUtc: payload.reportedAtUtc,
-        accountId: payload.accountId ?? null,
-        orgId: payload.orgId ?? null
+        accountId: trusted ? payload.accountId ?? null : null,
+        orgId: trusted ? payload.orgId ?? null : null
       });
       await upsertMachineSummary(payload);
+
+      // Growth and activation are account-attributed by definition, so an anonymous report
+      // must not produce them -- not even with a null account, which would still let an
+      // unauthenticated caller append growth rows at will.
+      // Uptime samples stay on the anonymous path: they are machine-scoped presence, the
+      // same inventory the console needs for a machine nobody has signed into.
+      const lastAnonMs = lastUptimeSampleMs.get(payload.machineId) ?? 0;
+      if (!trusted && Date.now() - lastAnonMs >= UPTIME_SAMPLE_INTERVAL_MS) {
+        lastUptimeSampleMs.set(payload.machineId, Date.now());
+        void appendUptimeSample({
+          machineId: payload.machineId,
+          sampledAtUtc: payload.reportedAtUtc,
+          agentRunning: payload.agentRunning,
+          userSessionConnected: payload.userSessionConnected,
+          activityDetected: payload.activityDetected,
+        });
+      }
+
+      if (!trusted) {
+        incrementAuditMetric('agent_machine_summary_anonymous_total', 1, {
+          reason: deviceAuthenticated ? 'device_id_mismatch' : 'no_device_credential'
+        });
+        res.status(202).json({ accepted: true, machineId: payload.machineId, reportedAtUtc: payload.reportedAtUtc });
+        return;
+      }
 
       if (!machineInstallEventRecorded.has(payload.machineId)) {
         machineInstallEventRecorded.add(payload.machineId);

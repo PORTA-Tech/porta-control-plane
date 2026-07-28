@@ -226,7 +226,10 @@ type MetricName =
   | 'audit_signature_verification_total'
   | 'correlation_trace_complete_total'
   | 'correlation_trace_incomplete_total'
-  | 'alerts_triggered_total';
+  | 'alerts_triggered_total'
+  // Machine summaries accepted as anonymous inventory because the caller proved no device
+  // credential. This is the counter that tells you whether the fleet is ready for enforce.
+  | 'agent_machine_summary_anonymous_total';
 
 interface MetricRecord {
   metric_name: string;
