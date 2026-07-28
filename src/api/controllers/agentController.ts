@@ -6,7 +6,7 @@ import { appendMachineActionEvent } from '../../store/machineActionStore.js';
 import { upsertMachineSummary, withCanonicalMachineSummary } from '../../store/machineSummaryStore.js';
 import { maybeActivateAccount, recordAccountActiveDay, recordMachineInstalledEvent } from '../../core/growthService.js';
 import { reconcileDeviceProfileFromTelemetry } from '../../core/identityProfileService.js';
-import { attachDeviceIdentity, type DeviceRequest } from '../middleware/deviceAuth.js';
+import { allowDeviceAccountAccess, attachDeviceIdentity, requireDeviceAuth, type DeviceRequest } from '../middleware/deviceAuth.js';
 import { incrementAuditMetric } from '../../core/policyGovernanceStore.js';
 import { getAccountProfile } from '../../store/accountStore.js';
 import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } from '../../core/digestEmailBuilder.js';
@@ -473,7 +473,7 @@ export function createAgentController(): Router {
   // Body { agentId, tokens: string[] }. Known mappings return immediately; never-seen tokens are
   // queued 'pending' for the Haiku worker and reported back in `pending` so the agent can re-ask
   // later. Body-identified like /heartbeat — no bearer (that's operator-only).
-  router.post('/categories/resolve', async (req, res, next) => {
+  router.post('/categories/resolve', requireDeviceAuth, async (req, res, next) => {
     try {
       const payload = (req.body ?? {}) as { agentId?: unknown; tokens?: unknown };
       const agentId =
@@ -621,7 +621,7 @@ export function createAgentController(): Router {
     }
   });
 
-  router.post('/action-events', async (req, res, next) => {
+  router.post('/action-events', requireDeviceAuth, async (req, res, next) => {
     try {
       const payload = Array.isArray(req.body) ? req.body : [];
       if (!payload.every(isMachineActionEvent)) {
@@ -657,7 +657,7 @@ export function createAgentController(): Router {
   // Writes to daily_stats and recomputes user_history so the server-side digest
   // cron at 20:30 UTC has data even when the machine is off at 19:30 UTC.
   // Does NOT send email and does NOT write to digest_log.
-  router.post('/daily-stats', async (req, res, next) => {
+  router.post('/daily-stats', requireDeviceAuth, async (req, res, next) => {
     try {
       const body = req.body as Record<string, unknown>;
       const accountId = typeof body.accountId === 'string' && body.accountId.trim().length > 0
@@ -733,7 +733,7 @@ export function createAgentController(): Router {
   // the agent decided to speak BEFORE this call; the server only words it). Fail-soft top to
   // bottom: any problem returns { line: null } with 200 and the agent renders its template — this
   // route must never be a reason a check-in card is late or missing.
-  router.post('/narrative', async (req, res) => {
+  router.post('/narrative', requireDeviceAuth, async (req, res) => {
     try {
       const body = req.body as Record<string, unknown>;
       const accountId = typeof body.accountId === 'string' && body.accountId.trim().length > 0
@@ -766,7 +766,7 @@ export function createAgentController(): Router {
 
   // Daily digest -- sent by the agent at 23:30 Dubai time (19:30 UTC) when
   // the user has been active for at least 1 hour.
-  router.post('/daily-digest', async (req, res, next) => {
+  router.post('/daily-digest', requireDeviceAuth, async (req, res, next) => {
     try {
       const body = req.body as Record<string, unknown>;
       const accountId = typeof body.accountId === 'string' && body.accountId.trim().length > 0
@@ -1035,13 +1035,26 @@ export function createAgentController(): Router {
   });
 
   // User context for Ari toast personalization — firstName, weakHour, avgStreakMin.
-  router.get('/user-context', async (req, res, next) => {
+  router.get('/user-context', requireDeviceAuth, async (req, res, next) => {
     try {
       const accountId = typeof req.query.accountId === 'string' ? req.query.accountId.trim() : null;
       if (!accountId) {
         res.status(400).json({ error: 'accountId required' });
         return;
       }
+
+      // This route returns a person's behavioural profile for an accountId taken straight off
+      // the query string. The device must prove it is the one linked to that account. In log
+      // mode a mismatch is counted and allowed through so the deploy cannot break the fleet.
+      if (!(await allowDeviceAccountAccess(req, accountId, 'user-context'))) {
+        res.status(403).json({
+          error: 'forbidden',
+          error_code: 'DEVICE_ACCOUNT_MISMATCH',
+          message: 'This device is not linked to the requested account.'
+        });
+        return;
+      }
+
       const [profile, history] = await Promise.all([
         getAccountProfile(accountId),
         getUserHistory(accountId),

@@ -229,7 +229,10 @@ type MetricName =
   | 'alerts_triggered_total'
   // Machine summaries accepted as anonymous inventory because the caller proved no device
   // credential. This is the counter that tells you whether the fleet is ready for enforce.
-  | 'agent_machine_summary_anonymous_total';
+  | 'agent_machine_summary_anonymous_total'
+  // A device asked about an account it is not linked to, or proved no device at all. In log
+  // mode these are allowed through and counted; in enforce mode they are refused.
+  | 'agent_device_account_mismatch_total';
 
 interface MetricRecord {
   metric_name: string;

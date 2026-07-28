@@ -1,5 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import { deviceSecretMatches, getDeviceCredential } from '../../store/deviceCredentialStore.js';
+import { getDeviceProfile } from '../../store/deviceStore.js';
+import { incrementAuditMetric } from '../../core/policyGovernanceStore.js';
 
 export type DeviceAuthMode = 'log' | 'enforce';
 
@@ -70,6 +72,38 @@ export async function requireDeviceAuth(req: DeviceRequest, res: Response, next:
       message: 'This endpoint requires a device credential.'
     });
   });
+}
+
+/**
+ * Confirms the calling device is linked to the account it is asking about, and decides what to
+ * do when it is not.
+ *
+ * Returns true when the request may proceed. In log mode it always returns true and records why
+ * it would have been refused, so the enforce flip holds no surprises. Callers must still be
+ * written as if it can return false.
+ */
+export async function allowDeviceAccountAccess(
+  req: DeviceRequest,
+  accountId: string,
+  route: string
+): Promise<boolean> {
+  const enforcing = getDeviceAuthMode() === 'enforce';
+
+  if (!req.deviceAuthenticated || !req.authenticatedDeviceId) {
+    incrementAuditMetric('agent_device_account_mismatch_total', 1, { route, reason: 'no_device_credential' });
+    return !enforcing;
+  }
+
+  const device = await getDeviceProfile(req.authenticatedDeviceId);
+  if (!device || device.currentAccountId !== accountId) {
+    incrementAuditMetric('agent_device_account_mismatch_total', 1, {
+      route,
+      reason: device ? 'device_not_linked_to_account' : 'device_not_found'
+    });
+    return !enforcing;
+  }
+
+  return true;
 }
 
 function readHeader(req: Request, name: string): string | null {
