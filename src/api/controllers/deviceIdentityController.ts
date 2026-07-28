@@ -2,6 +2,8 @@ import { Request, Response, Router } from 'express';
 import type { ConsentState, DeviceAccountLinkRequest, DeviceAccountUnlinkRequest, DeviceRegistrationRequest, TelemetryLevel } from '@porta/api-contracts';
 import { linkDeviceIdentity, registerDeviceIdentity, unlinkDeviceIdentity } from '../../core/identityProfileService.js';
 import { requireAccountSession, type OperatorRequest } from '../middleware/auth.js';
+import { getDeviceProfile } from '../../store/deviceStore.js';
+import { issueDeviceSecret } from '../../store/deviceCredentialStore.js';
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -196,6 +198,66 @@ export function createDeviceIdentityController(): Router {
       }
 
       res.json(result.value);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Issues the per-device credential. Separate from /register on purpose: registration is
+   * called by the service as LocalSystem at boot, before anyone has signed in, so it cannot
+   * carry a credential and must stay open as inventory-only. Handing out a secret is the part
+   * that needs proof of who is asking, so it lives here behind an account session.
+   *
+   * The plaintext secret is returned exactly once. Calling this again rotates it, which is
+   * also how a leaked credential is revoked.
+   */
+  router.post('/issue-credential', requireAccountSession, async (req: Request, res: Response, next) => {
+    try {
+      const body = req.body as Record<string, unknown> | undefined;
+      const deviceId = isNonEmptyString(body?.deviceId) ? body.deviceId.trim() : null;
+      if (!deviceId) {
+        res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'A deviceId is required.' });
+        return;
+      }
+
+      const sessionAccountId = (req as OperatorRequest).operatorAccountId;
+      if (!sessionAccountId) {
+        res.status(403).json({ error_code: 'ACCOUNT_MISMATCH', message: 'This session has no account.' });
+        return;
+      }
+
+      const device = await getDeviceProfile(deviceId);
+      if (!device) {
+        res.status(404).json({ error_code: 'DEVICE_NOT_FOUND', message: 'Device profile was not found.' });
+        return;
+      }
+
+      // A credential is only meaningful for a device this account owns. An unlinked device
+      // has no account to speak for, so it gets no secret.
+      if (device.currentAccountId !== sessionAccountId) {
+        res.status(403).json({
+          error_code: 'ACCOUNT_MISMATCH',
+          message: 'A device credential may only be issued for a device linked to the signed-in account.'
+        });
+        return;
+      }
+
+      if (device.status === 'revoked') {
+        res.status(409).json({
+          error_code: 'DEVICE_REVOKED',
+          message: 'This device was revoked and cannot be issued a credential.'
+        });
+        return;
+      }
+
+      const { secret, record } = await issueDeviceSecret(deviceId);
+      res.json({
+        ok: true,
+        deviceId,
+        deviceSecret: secret,
+        issuedAtUtc: record.createdAtUtc
+      });
     } catch (error) {
       next(error);
     }

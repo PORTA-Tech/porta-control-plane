@@ -214,6 +214,17 @@ async function initializeFleetSchema(): Promise<void> {
       ON devices (last_seen_at DESC);
   `);
 
+  // Stage 3 — per-device credentials. Only the sha256 hash is ever stored; the plaintext
+  // secret is returned once at issuance and never again. Nullable by design: every device
+  // registered before this column existed has no credential, and the device-auth middleware
+  // must keep working for them while PORTA_DEVICE_AUTH_MODE is still 'log'.
+  await activePool.query(`
+    ALTER TABLE devices
+      ADD COLUMN IF NOT EXISTS device_secret_hash TEXT;
+    ALTER TABLE devices
+      ADD COLUMN IF NOT EXISTS device_secret_created_at_utc TIMESTAMPTZ;
+  `);
+
   await activePool.query(`
     CREATE TABLE IF NOT EXISTS consent_records (
       consent_id UUID PRIMARY KEY,
