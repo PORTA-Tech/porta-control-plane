@@ -153,6 +153,26 @@ function requireSignupCode(): boolean {
   return parseBoolean(process.env.AUTH_REQUIRE_SIGNUP_CODE, false);
 }
 
+function isProductionRuntime(): boolean {
+  return (process.env.NODE_ENV ?? '').trim().toLowerCase() === 'production';
+}
+
+// The built-in admin/operator/auditor/developer table (stableUsers) carries
+// passwords defined in THIS source file. That is a development convenience and
+// nothing more. Reaching it requires BOTH gates, and production can pass neither:
+//   1. NODE_ENV must not be 'production' — a password compiled into source can
+//      never be a live credential on a deployed node, whatever else is set.
+//   2. PORTA_ENABLE_DEFAULT_LOGINS must be explicitly truthy — off by default, so
+//      even a dev node has no built-in logins unless someone opts in.
+// This closes the hole where, with AUTH_USERS_JSON unset in production, the old
+// loadBaseUsers() returned stableUsers() and admin/porta-admin was a live login.
+function allowBuiltInDevLogins(): boolean {
+  if (isProductionRuntime()) {
+    return false;
+  }
+  return parseBoolean(process.env.PORTA_ENABLE_DEFAULT_LOGINS, false);
+}
+
 // Compatibility-release toggle: allow postgres nodes to keep reading legacy
 // file-backed custom users until the rollout is complete everywhere.
 function allowLegacyCustomUserFallback(): boolean {
@@ -181,6 +201,9 @@ function deriveStableAccountId(userId: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
+// DEV-ONLY. The passwords below are compiled into source, so this table is only
+// ever reached through allowBuiltInDevLogins() — never in production. Do not call
+// this directly; go through loadBaseUsers().
 function stableUsers(): LocalAuthUserRecord[] {
   const adminPassword = process.env.AUTH_DEFAULT_ADMIN_PASSWORD ?? 'porta-admin';
   const operatorPassword = process.env.AUTH_DEFAULT_OPERATOR_PASSWORD ?? 'porta-operator';
@@ -232,17 +255,33 @@ function parseUserRows(raw: unknown, source: UserSource): LocalAuthUserRecord[] 
 
 function loadBaseUsers(): LocalAuthUserRecord[] {
   const envRaw = process.env.AUTH_USERS_JSON;
-  if (!envRaw || envRaw.trim().length === 0) {
+  if (envRaw && envRaw.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(envRaw);
+      const users = parseUserRows(parsed, 'env');
+      if (users.length > 0) {
+        return users;
+      }
+      console.warn('[auth] AUTH_USERS_JSON was set but yielded no valid users; base-user table is empty.');
+    } catch {
+      console.warn('[auth] AUTH_USERS_JSON could not be parsed; base-user table is empty.');
+    }
+  }
+
+  // No explicitly-configured user table. Fail closed. The source-defined
+  // admin/operator/... logins are dev-only and gated (see allowBuiltInDevLogins);
+  // production authenticates against the Postgres account store, never a password
+  // baked into this file.
+  if (allowBuiltInDevLogins()) {
+    console.warn('[auth] Built-in dev logins ENABLED via PORTA_ENABLE_DEFAULT_LOGINS — never set this in production.');
     return stableUsers();
   }
 
-  try {
-    const parsed = JSON.parse(envRaw);
-    const users = parseUserRows(parsed, 'env');
-    return users.length > 0 ? users : stableUsers();
-  } catch {
-    return stableUsers();
+  if (isProductionRuntime() && process.env.PORTA_ENABLE_DEFAULT_LOGINS !== undefined) {
+    console.warn('[auth] PORTA_ENABLE_DEFAULT_LOGINS is set but IGNORED in production; built-in logins stay disabled.');
   }
+
+  return [];
 }
 
 function loadCustomUsersFromFiles(): LocalAuthUserRecord[] {
@@ -1206,4 +1245,13 @@ export async function resetAuthUserPasswordWithCode(input: {
 
 export function clearAuthSessionStoreForTests(): void {
   sessions.clear();
+}
+
+/**
+ * Re-evaluate the base-user table. `baseUsers` is computed once at import, so a
+ * test that changes NODE_ENV, AUTH_USERS_JSON or PORTA_ENABLE_DEFAULT_LOGINS must
+ * call this for the change to take effect.
+ */
+export function reloadBaseUsersForTests(): void {
+  baseUsers = loadBaseUsers();
 }

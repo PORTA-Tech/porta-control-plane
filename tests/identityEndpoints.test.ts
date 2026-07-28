@@ -12,6 +12,12 @@ import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../sr
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests, upsertDeviceProfile } from '../src/store/deviceStore.js';
 import { clearConsentRecordStoreForTests, upsertConsentRecord } from '../src/store/consentRecordStore.js';
+import { reloadBaseUsersForTests } from '../src/core/authSessionStore.js';
+
+// This suite signs in through the built-in admin login, which is now dev-only and
+// off by default. Opt in explicitly, the way a developer would locally.
+process.env.PORTA_ENABLE_DEFAULT_LOGINS = 'true';
+reloadBaseUsersForTests();
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');

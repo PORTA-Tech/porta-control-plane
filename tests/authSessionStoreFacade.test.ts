@@ -148,7 +148,8 @@ vi.mock('../src/core/rbacStore.js', () => ({
 import {
   clearAuthSessionStoreForTests,
   issueAuthSession,
-  readAuthSession
+  readAuthSession,
+  reloadBaseUsersForTests
 } from '../src/core/authSessionStore.js';
 
 describe('auth session store facade', () => {
@@ -159,6 +160,10 @@ describe('auth session store facade', () => {
     mocked.updateAuthSessionRecord.mockClear();
     mocked.revokeAuthSessionRecord.mockClear();
     clearAuthSessionStoreForTests();
+    // This suite reconciles a session against the built-in 'admin' identity, which
+    // is now dev-only and off by default. Opt in explicitly.
+    process.env.PORTA_ENABLE_DEFAULT_LOGINS = 'true';
+    reloadBaseUsersForTests();
   });
 
   it('reads postgres sessions from the shared store after local memory is cleared', async () => {
