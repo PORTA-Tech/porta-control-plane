@@ -14,6 +14,7 @@ import { clearAccountActiveDayStoreForTests, listAccountActiveDaysForAccount } f
 import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../src/store/organizationStore.js';
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests, getDeviceProfile } from '../src/store/deviceStore.js';
+import { issueAuthSession } from '../src/core/authSessionStore.js';
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
@@ -356,11 +357,25 @@ describe('endpoint integration', () => {
     });
     expect(registerResponse.status).toBe(200);
 
-    const linkResponse = await request(app).post('/api/device/link-account').send({
-      deviceId,
-      accountId,
-      orgId
+    // link-account is account-session authenticated; mint a session for this account.
+    const { access_token: accountToken } = await issueAuthSession({
+      account_id: accountId,
+      user_id: 'alice@example.com',
+      role: 'developer',
+      base_role: 'developer',
+      display_name: 'Alice',
+      auth_provider: 'local',
+      source: 'custom'
     });
+
+    const linkResponse = await request(app)
+      .post('/api/device/link-account')
+      .set('authorization', `Bearer ${accountToken}`)
+      .send({
+        deviceId,
+        accountId,
+        orgId
+      });
     expect(linkResponse.status).toBe(200);
 
     const consentResponse = await request(app).post('/api/device/register').send({

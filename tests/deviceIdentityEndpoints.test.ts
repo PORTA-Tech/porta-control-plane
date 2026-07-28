@@ -12,10 +12,29 @@ import { clearOrganizationStoreForTests, upsertOrganizationProfile } from '../sr
 import { clearMembershipStoreForTests, upsertMembership } from '../src/store/membershipStore.js';
 import { clearDeviceStoreForTests } from '../src/store/deviceStore.js';
 import { clearConsentRecordStoreForTests, listConsentRecordsForDevice } from '../src/store/consentRecordStore.js';
+import { clearAuthSessionStoreForTests, issueAuthSession } from '../src/core/authSessionStore.js';
 
 const dataDir = path.resolve('.data');
 const request = (supertest as unknown as { default: typeof supertest }).default as unknown as typeof import('supertest');
 const app = createApp();
+
+// Mints a session directly rather than signing in, so the suite does not depend on
+// the dev-only default logins or on a shared process.env flag. The tests run
+// single-threaded in one process (see the --pool=threads npm script), so any env
+// toggling here would leak into every other suite.
+async function sessionTokenFor(accountId: string, userId = 'alice@example.com'): Promise<string> {
+  const issued = await issueAuthSession({
+    account_id: accountId,
+    user_id: userId,
+    role: 'developer',
+    base_role: 'developer',
+    display_name: 'Alice',
+    auth_provider: 'local',
+    source: 'custom'
+  });
+
+  return issued.access_token;
+}
 
 describe('device identity endpoints', () => {
   beforeEach(() => {
@@ -29,6 +48,7 @@ describe('device identity endpoints', () => {
     clearMembershipStoreForTests();
     clearDeviceStoreForTests();
     clearConsentRecordStoreForTests();
+    clearAuthSessionStoreForTests();
     loadRuntimeState();
   });
 
@@ -95,22 +115,30 @@ describe('device identity endpoints', () => {
     expect(registerResponse.status).toBe(200);
     expect(registerResponse.body.linkState).toBe('unlinked');
 
-    const linkResponse = await request(app).post('/api/device/link-account').send({
-      deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
-      accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
-      orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1'
-    });
+    const token = await sessionTokenFor('2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b');
+
+    const linkResponse = await request(app)
+      .post('/api/device/link-account')
+      .set('authorization', `Bearer ${token}`)
+      .send({
+        deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
+        accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
+        orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1'
+      });
 
     expect(linkResponse.status).toBe(200);
     expect(linkResponse.body.linkState).toBe('linked');
     expect(linkResponse.body.device.currentAccountId).toBe('2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b');
     expect(linkResponse.body.device.orgId).toBe('6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1');
 
-    const unlinkResponse = await request(app).post('/api/device/unlink-account').send({
-      deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
-      accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
-      orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1'
-    });
+    const unlinkResponse = await request(app)
+      .post('/api/device/unlink-account')
+      .set('authorization', `Bearer ${token}`)
+      .send({
+        deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
+        accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
+        orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1'
+      });
 
     expect(unlinkResponse.status).toBe(200);
     expect(unlinkResponse.body.linkState).toBe('unlinked');
@@ -230,11 +258,14 @@ describe('device identity endpoints', () => {
       agentVersion: '1.0.0'
     });
 
-    const linkResponse = await request(app).post('/api/device/link-account').send({
-      deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
-      accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
-      orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1'
-    });
+    const linkResponse = await request(app)
+      .post('/api/device/link-account')
+      .set('authorization', `Bearer ${await sessionTokenFor('2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b')}`)
+      .send({
+        deviceId: 'd93d90c1-a120-4c72-89ee-5c7d16efea31',
+        accountId: '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b',
+        orgId: '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1'
+      });
     expect(linkResponse.status).toBe(200);
 
     const registerResponse = await request(app).post('/api/device/register').send({
@@ -312,11 +343,14 @@ describe('device identity endpoints', () => {
     });
     expect(registerResponse.status).toBe(200);
 
-    const linkResponse = await request(app).post('/api/device/link-account').send({
-      deviceId,
-      accountId,
-      orgId
-    });
+    const linkResponse = await request(app)
+      .post('/api/device/link-account')
+      .set('authorization', `Bearer ${await sessionTokenFor(accountId)}`)
+      .send({
+        deviceId,
+        accountId,
+        orgId
+      });
     expect(linkResponse.status).toBe(200);
 
     const consentResponse = await request(app).post('/api/device/register').send({
@@ -338,5 +372,166 @@ describe('device identity endpoints', () => {
     expect(growthEvents.map((event) => event.eventType)).toEqual(
       expect.arrayContaining(['device_linked', 'device_capture_consented'])
     );
+  });
+
+  describe('link and unlink require the signed-in account', () => {
+    const accountA = '2094e8ad-74f6-45fc-a044-c9ab6f9f0a4b';
+    const accountB = '9d1c0a77-3d31-4f4e-9a5e-4c2b0c3f1f77';
+    const orgId = '6b7fd26e-ae90-4d4c-9d8e-e95c15db89e1';
+    const deviceId = 'd93d90c1-a120-4c72-89ee-5c7d16efea31';
+
+    async function seedAccount(accountId: string, membershipId: string, displayName: string): Promise<void> {
+      await upsertAccountProfile({
+        accountId,
+        displayName,
+        primaryEmail: `${displayName.toLowerCase()}@example.com`,
+        emailVerified: true,
+        avatarUrl: null,
+        status: 'active',
+        authProvider: 'local',
+        lastLoginAt: null,
+        createdAt: '2026-03-11T12:00:00.000Z',
+        updatedAt: '2026-03-11T12:00:00.000Z'
+      });
+
+      await upsertMembership({
+        membershipId,
+        accountId,
+        orgId,
+        role: 'member',
+        status: 'active',
+        invitedAt: null,
+        joinedAt: '2026-03-11T12:01:00.000Z',
+        invitedByAccountId: null,
+        createdAt: '2026-03-11T12:01:00.000Z',
+        updatedAt: '2026-03-11T12:01:00.000Z'
+      });
+    }
+
+    async function seedOrganization(): Promise<void> {
+      await upsertOrganizationProfile({
+        orgId,
+        orgName: 'PORTA Labs',
+        orgSlug: 'porta-labs',
+        planTier: 'pro',
+        billingAccountId: 'billing-1',
+        createdAt: '2026-03-11T12:00:00.000Z',
+        updatedAt: '2026-03-11T12:00:00.000Z'
+      });
+    }
+
+    async function registerDevice(id: string): Promise<void> {
+      const response = await request(app).post('/api/device/register').send({
+        deviceId: id,
+        machineName: 'ALICE-BOX',
+        platform: 'windows',
+        agentVersion: '1.0.0'
+      });
+      expect(response.status).toBe(200);
+    }
+
+    it('rejects an unauthenticated link', async () => {
+      const response = await request(app).post('/api/device/link-account').send({
+        deviceId,
+        accountId: accountA,
+        orgId
+      });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error_code).toBe('SESSION_REQUIRED');
+    });
+
+    it('rejects an unauthenticated unlink', async () => {
+      const response = await request(app).post('/api/device/unlink-account').send({
+        deviceId,
+        accountId: accountA,
+        orgId
+      });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error_code).toBe('SESSION_REQUIRED');
+    });
+
+    it('rejects an expired or unknown session token', async () => {
+      const response = await request(app)
+        .post('/api/device/link-account')
+        .set('authorization', 'Bearer not-a-real-token')
+        .send({ deviceId, accountId: accountA, orgId });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error_code).toBe('SESSION_EXPIRED');
+    });
+
+    it('rejects linking a device to an account the session does not own', async () => {
+      const response = await request(app)
+        .post('/api/device/link-account')
+        .set('authorization', `Bearer ${await sessionTokenFor(accountA)}`)
+        .send({ deviceId, accountId: accountB, orgId });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error_code).toBe('ACCOUNT_MISMATCH');
+    });
+
+    it('rejects unlinking a device from an account the session does not own', async () => {
+      const response = await request(app)
+        .post('/api/device/unlink-account')
+        .set('authorization', `Bearer ${await sessionTokenFor(accountA)}`)
+        .send({ deviceId, accountId: accountB, orgId });
+
+      expect(response.status).toBe(403);
+      expect(response.body.error_code).toBe('ACCOUNT_MISMATCH');
+    });
+
+    // The interesting one: accountId is optional on the wire, and the service skips
+    // its ownership check when it is null. Omitting it must not become a way to
+    // unlink somebody else's device by guessing a device id.
+    it('does not let an omitted accountId unlink another account\'s device', async () => {
+      await seedOrganization();
+      await seedAccount(accountB, 'f86b5272-1f29-4a52-a7af-8382d800d448', 'Bob');
+      await registerDevice(deviceId);
+
+      const link = await request(app)
+        .post('/api/device/link-account')
+        .set('authorization', `Bearer ${await sessionTokenFor(accountB, 'bob@example.com')}`)
+        .send({ deviceId, accountId: accountB, orgId });
+      expect(link.status).toBe(200);
+      expect(link.body.device.currentAccountId).toBe(accountB);
+
+      const attempt = await request(app)
+        .post('/api/device/unlink-account')
+        .set('authorization', `Bearer ${await sessionTokenFor(accountA)}`)
+        .send({ deviceId });
+
+      expect(attempt.status).toBe(409);
+      expect(attempt.body.error_code).toBe('DEVICE_LINK_MISMATCH');
+
+      const relink = await request(app)
+        .post('/api/device/link-account')
+        .set('authorization', `Bearer ${await sessionTokenFor(accountB, 'bob@example.com')}`)
+        .send({ deviceId, accountId: accountB, orgId });
+      expect(relink.body.device.currentAccountId).toBe(accountB);
+    });
+
+    it('ignores the shared operator key on these routes', async () => {
+      const previous = process.env.PORTA_OPERATOR_KEY;
+      process.env.PORTA_OPERATOR_KEY = 'shared-console-key';
+      try {
+        const response = await request(app)
+          .post('/api/device/link-account')
+          .set('x-operator-id', 'console')
+          .set('x-operator-role', 'admin')
+          .set('x-operator-key', 'shared-console-key')
+          .send({ deviceId, accountId: accountA, orgId });
+
+        expect(response.status).toBe(401);
+        expect(response.body.error_code).toBe('SESSION_REQUIRED');
+      } finally {
+        if (previous === undefined) {
+          delete process.env.PORTA_OPERATOR_KEY;
+        } else {
+          process.env.PORTA_OPERATOR_KEY = previous;
+        }
+      }
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { Request, Response, Router } from 'express';
 import type { ConsentState, DeviceAccountLinkRequest, DeviceAccountUnlinkRequest, DeviceRegistrationRequest, TelemetryLevel } from '@porta/api-contracts';
 import { linkDeviceIdentity, registerDeviceIdentity, unlinkDeviceIdentity } from '../../core/identityProfileService.js';
+import { requireAccountSession, type OperatorRequest } from '../middleware/auth.js';
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -139,11 +140,20 @@ export function createDeviceIdentityController(): Router {
     }
   });
 
-  router.post('/link-account', async (req: Request, res: Response, next) => {
+  router.post('/link-account', requireAccountSession, async (req: Request, res: Response, next) => {
     try {
       const payload = parseDeviceAccountLinkRequest(req.body);
       if (!payload) {
         res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'Invalid device account link payload.' });
+        return;
+      }
+
+      const sessionAccountId = (req as OperatorRequest).operatorAccountId;
+      if (!sessionAccountId || sessionAccountId !== payload.accountId) {
+        res.status(403).json({
+          error_code: 'ACCOUNT_MISMATCH',
+          message: 'The signed-in account may only link a device to itself.'
+        });
         return;
       }
 
@@ -159,7 +169,7 @@ export function createDeviceIdentityController(): Router {
     }
   });
 
-  router.post('/unlink-account', async (req: Request, res: Response, next) => {
+  router.post('/unlink-account', requireAccountSession, async (req: Request, res: Response, next) => {
     try {
       const payload = parseDeviceAccountUnlinkRequest(req.body);
       if (!payload) {
@@ -167,7 +177,19 @@ export function createDeviceIdentityController(): Router {
         return;
       }
 
-      const result = await unlinkDeviceIdentity(payload);
+      const sessionAccountId = (req as OperatorRequest).operatorAccountId;
+      if (!sessionAccountId || (payload.accountId !== null && sessionAccountId !== payload.accountId)) {
+        res.status(403).json({
+          error_code: 'ACCOUNT_MISMATCH',
+          message: 'The signed-in account may only unlink a device from itself.'
+        });
+        return;
+      }
+
+      // accountId is optional on the wire, and unlinkDeviceIdentity skips its
+      // ownership check when it is null — which would let any signed-in account
+      // unlink any device by id. Substitute the session account so the check runs.
+      const result = await unlinkDeviceIdentity({ ...payload, accountId: sessionAccountId });
       if (!result.ok) {
         res.status(result.error.status).json({ error_code: result.error.errorCode, message: result.error.message });
         return;

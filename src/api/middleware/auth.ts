@@ -6,6 +6,12 @@ export type OperatorRole = 'viewer' | 'operator' | 'admin' | 'auditor' | 'develo
 
 export interface OperatorRequest extends Request {
   operatorId?: string;
+  /**
+   * The signed-in account, which is NOT operatorId. operatorId carries the session's
+   * user_id; account ownership checks must compare against this field instead.
+   * Only populated in session mode — header/operator-key auth has no account.
+   */
+  operatorAccountId?: string;
   operatorRole?: OperatorRole;
   authSessionToken?: string;
   authMode?: 'session' | 'header';
@@ -116,6 +122,7 @@ export async function requireAuthenticatedOperator(req: OperatorRequest, res: Re
         return;
       }
       req.operatorId = session.user_id;
+      req.operatorAccountId = session.account_id;
       req.operatorRole = session.role;
       req.authSessionToken = bearerToken;
       req.authMode = 'session';
@@ -148,6 +155,40 @@ export async function requireAuthenticatedOperator(req: OperatorRequest, res: Re
     req.operatorId = operatorId;
     req.operatorRole = operatorRole;
     req.authMode = 'header';
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Session-only authentication for routes that act on a specific account.
+ *
+ * Deliberately does not fall back to the x-operator-key header the way
+ * requireAuthenticatedOperator does. That key is a shared secret baked into the
+ * operations console bundle at build time and carries no account, so it cannot
+ * satisfy an account-ownership check. Nothing in the console calls these routes.
+ */
+export async function requireAccountSession(req: OperatorRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const bearerToken = parseBearerToken(req.header('authorization'));
+    if (!bearerToken) {
+      res.status(401).json({ error: 'unauthorized', error_code: 'SESSION_REQUIRED' });
+      return;
+    }
+
+    const session = await readAuthSession(bearerToken);
+    if (!session) {
+      res.status(401).json({ error: 'unauthorized', error_code: 'SESSION_EXPIRED' });
+      return;
+    }
+
+    req.operatorId = session.user_id;
+    req.operatorAccountId = session.account_id;
+    req.operatorRole = session.role;
+    req.authSessionToken = bearerToken;
+    req.authMode = 'session';
+    req.reauthExpiresAtUtc = session.reauth_expires_at_utc;
     next();
   } catch (error) {
     next(error);
