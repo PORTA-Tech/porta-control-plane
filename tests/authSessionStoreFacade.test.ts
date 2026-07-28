@@ -148,8 +148,7 @@ vi.mock('../src/core/rbacStore.js', () => ({
 import {
   clearAuthSessionStoreForTests,
   issueAuthSession,
-  readAuthSession,
-  reloadBaseUsersForTests
+  readAuthSession
 } from '../src/core/authSessionStore.js';
 
 describe('auth session store facade', () => {
@@ -159,11 +158,9 @@ describe('auth session store facade', () => {
     mocked.findAuthSessionRecordByToken.mockClear();
     mocked.updateAuthSessionRecord.mockClear();
     mocked.revokeAuthSessionRecord.mockClear();
+    mocked.findAuthUserRecordByUserId.mockReset();
+    mocked.findAuthUserRecordByUserId.mockResolvedValue(null);
     clearAuthSessionStoreForTests();
-    // This suite reconciles a session against the built-in 'admin' identity, which
-    // is now dev-only and off by default. Opt in explicitly.
-    process.env.PORTA_ENABLE_DEFAULT_LOGINS = 'true';
-    reloadBaseUsersForTests();
   });
 
   it('reads postgres sessions from the shared store after local memory is cleared', async () => {
@@ -185,6 +182,26 @@ describe('auth session store facade', () => {
     mocked.sessions.set(issued.access_token, stored!);
 
     clearAuthSessionStoreForTests();
+
+    // Reconciliation must re-derive the identity from the shared (postgres) user
+    // store, not the stale session row. Seed that store directly — this is the real
+    // production path (findAuthUserRecordByUserId), and keeps the test independent of
+    // the dev-only built-in user table, which is off in production and under the
+    // singleThread runner shares process.env with other suites.
+    mocked.findAuthUserRecordByUserId.mockResolvedValue({
+      account_id: '3de5c660-c2f4-4142-adbc-d8bf0217c2e0',
+      user_id: 'admin',
+      password_hash: 'unused-in-this-path',
+      password_algo: 'scrypt',
+      role: 'admin',
+      source: 'custom',
+      display_name: 'Admin',
+      auth_provider: 'local',
+      status: 'active',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      last_login_at: null
+    });
 
     const session = await readAuthSession(issued.access_token);
     expect(session?.user_id).toBe('admin');
