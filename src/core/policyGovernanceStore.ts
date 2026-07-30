@@ -57,14 +57,32 @@ const metricsPath = path.resolve('.data', 'audit-observability-metrics.json');
 const alertsPath = path.resolve('.data', 'audit-alerts.ndjson');
 const privateKeyPath = path.resolve('signer-private.pem');
 const publicKeyPath = path.resolve('signer-public.pem');
-const defaultPrivateKeyPem = `-----BEGIN PRIVATE KEY-----
-MC4CAQAwBQYDK2VwBCIEIP9JxHB5GacOrYlIguz6uyrlrGVmXNi3uCtAGqKstxP2
------END PRIVATE KEY-----
-`;
-const defaultPublicKeyPem = `-----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEAh55FcXC93q/jqMJ2XVjy+qqtU1+EEG1zB0ELsX9dhXs=
------END PUBLIC KEY-----
-`;
+
+/**
+ * Signing keys are supplied by the environment or by a local file. There is deliberately no
+ * compiled-in fallback: a key committed to source is not a key, and the previous default was a
+ * real, valid Ed25519 pair that production actually signed its audit ledger with.
+ *
+ * Failing closed is the point. If the key is missing, signing throws rather than silently
+ * producing signatures under a key everyone with repo access holds. Both halves must be set
+ * together -- a private key without its matching public half means nothing this node signs
+ * will verify.
+ */
+function readSigningKey(envName: string, filePath: string, label: string): string {
+  const fromEnv = process.env[envName]?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  if (fs.existsSync(filePath)) {
+    return fs.readFileSync(filePath, 'utf8');
+  }
+
+  throw new Error(
+    `${label} is not configured. Set ${envName} or provide ${path.basename(filePath)}. ` +
+      'There is no built-in key by design.'
+  );
+}
 
 function ensureDir(): void {
   fs.mkdirSync(path.resolve('.data'), { recursive: true });
@@ -84,18 +102,22 @@ function canonicalize(value: unknown): string {
 function signObject(payload: unknown): string {
   const canonical = canonicalize(payload);
   const hash = crypto.createHash('sha256').update(canonical).digest('hex');
-  const privateKey =
-    process.env.CONTROL_PLANE_SIGNING_PRIVATE_KEY_PEM ||
-    (fs.existsSync(privateKeyPath) ? fs.readFileSync(privateKeyPath, 'utf8') : defaultPrivateKeyPem);
+  const privateKey = readSigningKey(
+    'CONTROL_PLANE_SIGNING_PRIVATE_KEY_PEM',
+    privateKeyPath,
+    'The control-plane signing private key'
+  );
   return crypto.sign(null, Buffer.from(hash, 'utf8'), privateKey).toString('base64');
 }
 
 function verifySignature(payload: unknown, signature: string): boolean {
   const canonical = canonicalize(payload);
   const hash = crypto.createHash('sha256').update(canonical).digest('hex');
-  const publicKey =
-    process.env.CONTROL_PLANE_SIGNING_PUBLIC_KEY_PEM ||
-    (fs.existsSync(publicKeyPath) ? fs.readFileSync(publicKeyPath, 'utf8') : defaultPublicKeyPem);
+  const publicKey = readSigningKey(
+    'CONTROL_PLANE_SIGNING_PUBLIC_KEY_PEM',
+    publicKeyPath,
+    'The control-plane signing public key'
+  );
   try {
     return crypto.verify(null, Buffer.from(hash, 'utf8'), publicKey, Buffer.from(signature, 'base64'));
   } catch {

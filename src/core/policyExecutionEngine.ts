@@ -104,10 +104,27 @@ export interface SignedInterventionCommand {
 
 const runtimePath = path.resolve('.data', 'policy-engine-state.json');
 const privateKeyPath = path.resolve('signer-private.pem');
-const defaultPrivateKeyPem = `-----BEGIN PRIVATE KEY-----
-MC4CAQAwBQYDK2VwBCIEIP9JxHB5GacOrYlIguz6uyrlrGVmXNi3uCtAGqKstxP2
------END PRIVATE KEY-----
-`;
+
+/**
+ * No compiled-in fallback -- see the note in policyGovernanceStore. The key that used to sit
+ * here was a real one, and it signed production's intervention commands.
+ */
+function readSigningPrivateKey(): string {
+  const fromEnv = process.env.CONTROL_PLANE_SIGNING_PRIVATE_KEY_PEM?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  if (fs.existsSync(privateKeyPath)) {
+    return fs.readFileSync(privateKeyPath, 'utf8');
+  }
+
+  throw new Error(
+    'The control-plane signing private key is not configured. Set ' +
+      'CONTROL_PLANE_SIGNING_PRIVATE_KEY_PEM or provide signer-private.pem. ' +
+      'There is no built-in key by design.'
+  );
+}
 
 const policies: ExecutionPolicy[] = [
   {
@@ -187,9 +204,7 @@ function deterministicUuid(seed: string): string {
 function signPayload(payload: unknown): { hash: string; signature: string } {
   const canonical = canonicalize(payload);
   const hash = crypto.createHash('sha256').update(canonical).digest('hex');
-  const privateKey =
-    process.env.CONTROL_PLANE_SIGNING_PRIVATE_KEY_PEM ||
-    (fs.existsSync(privateKeyPath) ? fs.readFileSync(privateKeyPath, 'utf8') : defaultPrivateKeyPem);
+  const privateKey = readSigningPrivateKey();
   const signature = crypto.sign(null, Buffer.from(hash, 'utf8'), privateKey).toString('base64');
   return { hash, signature };
 }
