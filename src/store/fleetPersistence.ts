@@ -225,6 +225,28 @@ async function initializeFleetSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS device_secret_created_at_utc TIMESTAMPTZ;
   `);
 
+  // Every credential issuance, durably. Deliberately its own table rather than the .data
+  // audit files: those are ephemeral on Render and reset on deploy, and the whole point of
+  // this log is to make an unexpected claim visible afterwards. Never deleted on unlink or
+  // re-issue -- the history is the evidence.
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS device_credential_issuances (
+      issuance_id UUID PRIMARY KEY,
+      device_id UUID NOT NULL,
+      account_id UUID NULL,
+      issued_at_utc TIMESTAMPTZ NOT NULL,
+      source TEXT NOT NULL,
+      source_ip TEXT NULL,
+      user_agent TEXT NULL,
+      replaced_existing BOOLEAN NOT NULL DEFAULT FALSE
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_device_credential_issuances_device_id
+      ON device_credential_issuances (device_id, issued_at_utc DESC);
+  `);
+
   await activePool.query(`
     CREATE TABLE IF NOT EXISTS consent_records (
       consent_id UUID PRIMARY KEY,

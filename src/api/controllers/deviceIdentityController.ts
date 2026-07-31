@@ -3,7 +3,12 @@ import type { ConsentState, DeviceAccountLinkRequest, DeviceAccountUnlinkRequest
 import { linkDeviceIdentity, registerDeviceIdentity, unlinkDeviceIdentity } from '../../core/identityProfileService.js';
 import { requireAccountSession, type OperatorRequest } from '../middleware/auth.js';
 import { getDeviceProfile } from '../../store/deviceStore.js';
-import { issueDeviceSecret } from '../../store/deviceCredentialStore.js';
+import {
+  getDeviceCredential,
+  issueDeviceSecret,
+  recordDeviceCredentialIssuance
+} from '../../store/deviceCredentialStore.js';
+import { randomUUID } from 'node:crypto';
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -136,7 +141,38 @@ export function createDeviceIdentityController(): Router {
         return;
       }
 
-      res.json(result.value);
+      // Bootstrap a credential for a device that is already linked and has none.
+      //
+      // This is open by necessity: the service registers as LocalSystem at boot with no user
+      // signed in, and requiring a session made acquisition depend on somebody opening the
+      // Control Center -- which left linked machines uncredentialed indefinitely. The accepted
+      // trade is that anyone positioned to abuse this already has local access to the machine
+      // and can read device_credential.bin directly, so it grants them nothing new.
+      //
+      // Issued once: a device that already has a credential is never handed another here.
+      // Every issuance is logged durably so an unexpected claim is visible afterwards.
+      const registered = result.value.device;
+      let deviceSecret: string | null = null;
+
+      if (registered.currentAccountId && registered.status !== 'revoked') {
+        const existing = await getDeviceCredential(registered.deviceId);
+        if (!existing) {
+          const issued = await issueDeviceSecret(registered.deviceId);
+          deviceSecret = issued.secret;
+          await recordDeviceCredentialIssuance({
+            issuanceId: randomUUID(),
+            deviceId: registered.deviceId,
+            accountId: registered.currentAccountId,
+            issuedAtUtc: issued.record.createdAtUtc,
+            source: 'register-bootstrap',
+            sourceIp: req.ip ?? null,
+            userAgent: req.header('user-agent') ?? null,
+            replacedExisting: false
+          });
+        }
+      }
+
+      res.json(deviceSecret ? { ...result.value, deviceSecret } : result.value);
     } catch (error) {
       next(error);
     }
@@ -251,7 +287,18 @@ export function createDeviceIdentityController(): Router {
         return;
       }
 
+      const existing = await getDeviceCredential(deviceId);
       const { secret, record } = await issueDeviceSecret(deviceId);
+      await recordDeviceCredentialIssuance({
+        issuanceId: randomUUID(),
+        deviceId,
+        accountId: sessionAccountId,
+        issuedAtUtc: record.createdAtUtc,
+        source: 'account-session',
+        sourceIp: req.ip ?? null,
+        userAgent: req.header('user-agent') ?? null,
+        replacedExisting: existing !== null
+      });
       res.json({
         ok: true,
         deviceId,

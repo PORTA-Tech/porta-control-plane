@@ -135,6 +135,99 @@ export async function clearDeviceCredential(deviceId: string): Promise<void> {
   );
 }
 
+export interface DeviceCredentialIssuanceRecord {
+  issuanceId: string;
+  deviceId: string;
+  accountId: string | null;
+  issuedAtUtc: string;
+  /** How the credential was obtained: 'register-bootstrap' or 'account-session'. */
+  source: string;
+  sourceIp: string | null;
+  userAgent: string | null;
+  /** True when a credential already existed and this call rotated it. */
+  replacedExisting: boolean;
+}
+
+const issuanceMemoryLog: DeviceCredentialIssuanceRecord[] = [];
+
+/**
+ * Appends to the durable issuance log. Never throws into the caller: failing to write an audit
+ * row must not stop a device acquiring a credential, or a logging outage becomes a fleet outage.
+ * A dropped row is reported to stderr so it is at least visible.
+ */
+export async function recordDeviceCredentialIssuance(record: DeviceCredentialIssuanceRecord): Promise<void> {
+  if (getFleetPersistenceMode() === 'memory') {
+    issuanceMemoryLog.push(record);
+    return;
+  }
+
+  try {
+    await ensureFleetPersistenceReady();
+    const pool = getFleetPool();
+    if (!pool) {
+      issuanceMemoryLog.push(record);
+      return;
+    }
+
+    await pool.query(
+      `
+        INSERT INTO device_credential_issuances (
+          issuance_id, device_id, account_id, issued_at_utc, source, source_ip, user_agent, replaced_existing
+        ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::timestamptz, $5, $6, $7, $8);
+      `,
+      [
+        record.issuanceId,
+        record.deviceId,
+        record.accountId,
+        record.issuedAtUtc,
+        record.source,
+        record.sourceIp,
+        record.userAgent,
+        record.replacedExisting
+      ]
+    );
+  } catch (error) {
+    console.error(
+      `device_credential_issuance_log_failed device=${record.deviceId} source=${record.source}`,
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
+export async function listDeviceCredentialIssuances(deviceId: string): Promise<DeviceCredentialIssuanceRecord[]> {
+  if (getFleetPersistenceMode() === 'memory') {
+    return issuanceMemoryLog.filter((row) => row.deviceId === deviceId);
+  }
+
+  await ensureFleetPersistenceReady();
+  const pool = getFleetPool();
+  if (!pool) {
+    return issuanceMemoryLog.filter((row) => row.deviceId === deviceId);
+  }
+
+  const result = await pool.query(
+    `
+      SELECT issuance_id, device_id, account_id, issued_at_utc, source, source_ip, user_agent, replaced_existing
+      FROM device_credential_issuances
+      WHERE device_id = $1::uuid
+      ORDER BY issued_at_utc DESC;
+    `,
+    [deviceId]
+  );
+
+  return result.rows.map((row) => ({
+    issuanceId: row.issuance_id,
+    deviceId: row.device_id,
+    accountId: row.account_id,
+    issuedAtUtc: row.issued_at_utc instanceof Date ? row.issued_at_utc.toISOString() : String(row.issued_at_utc),
+    source: row.source,
+    sourceIp: row.source_ip,
+    userAgent: row.user_agent,
+    replacedExisting: row.replaced_existing
+  }));
+}
+
 export function clearDeviceCredentialStoreForTests(): void {
   credentialMemoryStore.clear();
+  issuanceMemoryLog.length = 0;
 }
