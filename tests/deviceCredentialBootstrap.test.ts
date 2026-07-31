@@ -158,6 +158,65 @@ describe('credential bootstrap on register', () => {
     expect(await getDeviceCredential(deviceId)).toBeNull();
   });
 
+  describe('agent capability gate', () => {
+    // The live incident this exists for: agents register at boot, so without this gate every
+    // reboot of an older build consumed its one issuance and stranded the machine permanently.
+    it('issues nothing to an agent too old to store it', async () => {
+      await seedLinkedDevice();
+
+      const response = await request(app)
+        .post('/api/device/register')
+        .send(registerBody({ agentVersion: '1.2.123' }));
+
+      expect(response.status).toBe(200);
+      expect(response.body.deviceSecret).toBeUndefined();
+      expect(await getDeviceCredential(deviceId)).toBeNull();
+      expect(await listDeviceCredentialIssuances(deviceId)).toHaveLength(0);
+    });
+
+    it('issues nothing for the four-part version older builds report', async () => {
+      await seedLinkedDevice();
+
+      const response = await request(app)
+        .post('/api/device/register')
+        .send(registerBody({ agentVersion: '1.2.123.0' }));
+
+      expect(response.body.deviceSecret).toBeUndefined();
+      expect(await getDeviceCredential(deviceId)).toBeNull();
+    });
+
+    it('issues to 1.2.124 and later', async () => {
+      await seedLinkedDevice();
+
+      const response = await request(app)
+        .post('/api/device/register')
+        .send(registerBody({ agentVersion: '1.2.124.0' }));
+
+      expect(typeof response.body.deviceSecret).toBe('string');
+    });
+
+    it('issues on the explicit capability flag even without a qualifying version', async () => {
+      await seedLinkedDevice();
+
+      const response = await request(app)
+        .post('/api/device/register')
+        .send(registerBody({ agentVersion: '1.2.123', supportsCredentialStorage: true }));
+
+      expect(typeof response.body.deviceSecret).toBe('string');
+    });
+
+    it('issues nothing for an unparseable version', async () => {
+      await seedLinkedDevice();
+
+      const response = await request(app)
+        .post('/api/device/register')
+        .send(registerBody({ agentVersion: 'unknown' }));
+
+      expect(response.body.deviceSecret).toBeUndefined();
+      expect(await getDeviceCredential(deviceId)).toBeNull();
+    });
+  });
+
   describe('issuance log', () => {
     it('records the bootstrap issuance durably', async () => {
       await seedLinkedDevice();

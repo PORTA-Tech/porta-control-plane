@@ -227,6 +227,48 @@ export async function listDeviceCredentialIssuances(deviceId: string): Promise<D
   }));
 }
 
+export async function listRecentDeviceCredentialIssuances(
+  deviceId: string | null,
+  limit: number
+): Promise<DeviceCredentialIssuanceRecord[]> {
+  if (getFleetPersistenceMode() === 'memory') {
+    return issuanceMemoryLog
+      .filter((row) => !deviceId || row.deviceId === deviceId)
+      .slice(-limit)
+      .reverse();
+  }
+
+  await ensureFleetPersistenceReady();
+  const pool = getFleetPool();
+  if (!pool) {
+    return issuanceMemoryLog.filter((row) => !deviceId || row.deviceId === deviceId).slice(-limit).reverse();
+  }
+
+  const result = deviceId
+    ? await pool.query(
+        `SELECT issuance_id, device_id, account_id, issued_at_utc, source, source_ip, user_agent, replaced_existing
+         FROM device_credential_issuances WHERE device_id = $1::uuid
+         ORDER BY issued_at_utc DESC LIMIT $2;`,
+        [deviceId, limit]
+      )
+    : await pool.query(
+        `SELECT issuance_id, device_id, account_id, issued_at_utc, source, source_ip, user_agent, replaced_existing
+         FROM device_credential_issuances ORDER BY issued_at_utc DESC LIMIT $1;`,
+        [limit]
+      );
+
+  return result.rows.map((row) => ({
+    issuanceId: row.issuance_id,
+    deviceId: row.device_id,
+    accountId: row.account_id,
+    issuedAtUtc: row.issued_at_utc instanceof Date ? row.issued_at_utc.toISOString() : String(row.issued_at_utc),
+    source: row.source,
+    sourceIp: row.source_ip,
+    userAgent: row.user_agent,
+    replacedExisting: row.replaced_existing
+  }));
+}
+
 export function clearDeviceCredentialStoreForTests(): void {
   credentialMemoryStore.clear();
   issuanceMemoryLog.length = 0;

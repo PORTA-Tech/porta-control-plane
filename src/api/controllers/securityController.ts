@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { listRecentDeviceCredentialIssuances } from '../../store/deviceCredentialStore.js';
 import type { OperatorRequest } from '../middleware/auth.js';
 import {
   listSecurityRoles,
@@ -10,6 +11,18 @@ import {
 
 export function createSecurityController(): Router {
   const router = Router();
+
+  // Operator-visible view of the credential issuance log. Without this the log is only
+  // reachable with direct database access, which defeats the point of keeping it.
+  router.get('/device-credential-issuances', async (req, res, next) => {
+    try {
+      const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId.trim() : null;
+      const limit = Math.min(Number(req.query.limit ?? 200) || 200, 1000);
+      res.json(await listRecentDeviceCredentialIssuances(deviceId, limit));
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.get('/roles', (_req, res) => {
     res.json(listSecurityRoles());

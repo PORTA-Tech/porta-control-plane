@@ -70,8 +70,9 @@ function parseDeviceRegistrationRequest(body: unknown): DeviceRegistrationReques
     deviceCaptureConsentedAt: payload.deviceCaptureConsentedAt?.trim() ?? null,
     deviceCaptureTelemetryLevel: payload.deviceCaptureTelemetryLevel ?? null,
     sessionToken: payload.sessionToken?.trim() ?? null,
-    localProofToken: payload.localProofToken?.trim() ?? null
-  };
+    localProofToken: payload.localProofToken?.trim() ?? null,
+    ...(payload.supportsCredentialStorage === true ? { supportsCredentialStorage: true } : {})
+  } as DeviceRegistrationRequest;
 }
 
 function parseDeviceAccountLinkRequest(body: unknown): DeviceAccountLinkRequest | null {
@@ -124,6 +125,35 @@ function parseDeviceAccountUnlinkRequest(body: unknown): DeviceAccountUnlinkRequ
   };
 }
 
+const CREDENTIAL_STORAGE_MIN_AGENT = { major: 1, minor: 2, patch: 124 };
+
+/**
+ * True when the registering agent is known to store a bootstrapped credential.
+ *
+ * Two signals, either sufficient: an explicit capability flag (sent from 1.2.124 onward, and the
+ * signal to prefer because it says what it means), or the agent version, which works without any
+ * agent change and is what stops the bleeding for the fleet already deployed.
+ */
+function canStoreIssuedCredential(payload: DeviceRegistrationRequest & { supportsCredentialStorage?: unknown }): boolean {
+  if (payload.supportsCredentialStorage === true) {
+    return true;
+  }
+
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(String(payload.agentVersion ?? '').trim());
+  if (!match) {
+    return false;
+  }
+
+  const [major, minor, patch] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (major !== CREDENTIAL_STORAGE_MIN_AGENT.major) {
+    return major > CREDENTIAL_STORAGE_MIN_AGENT.major;
+  }
+  if (minor !== CREDENTIAL_STORAGE_MIN_AGENT.minor) {
+    return minor > CREDENTIAL_STORAGE_MIN_AGENT.minor;
+  }
+  return patch >= CREDENTIAL_STORAGE_MIN_AGENT.patch;
+}
+
 export function createDeviceIdentityController(): Router {
   const router = Router();
 
@@ -154,7 +184,16 @@ export function createDeviceIdentityController(): Router {
       const registered = result.value.device;
       let deviceSecret: string | null = null;
 
-      if (registered.currentAccountId && registered.status !== 'revoked') {
+      // Only issue to an agent that can actually store it.
+      //
+      // The secret is returned exactly once, so handing it to a build that ignores the field
+      // burns the device's issuance and strands it permanently -- and agents register at boot,
+      // so every reboot of an old build would have done exactly that.
+      //
+      // This gate is against accidental self-harm by legitimate old agents, NOT against an
+      // attacker: the endpoint is unauthenticated by design, so anyone can claim any version.
+      // That was already the accepted trade -- see the note above.
+      if (canStoreIssuedCredential(payload) && registered.currentAccountId && registered.status !== 'revoked') {
         const existing = await getDeviceCredential(registered.deviceId);
         if (!existing) {
           const issued = await issueDeviceSecret(registered.deviceId);

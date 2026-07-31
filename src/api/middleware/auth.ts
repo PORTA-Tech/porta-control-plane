@@ -89,6 +89,7 @@ const routePolicies: RoutePolicy[] = [
   { method: 'POST', path: /^\/v1\/audit\/alerts\/[a-z0-9]+\/resolve$/, roles: roleSet('admin', 'operator') },
   { method: 'POST', path: /^\/v1\/policy\/evaluate$/, roles: roleSet('operator', 'admin') },
   { method: 'GET', path: /^\/v1\/policy\/state\/[a-z0-9._-]+\/[a-z0-9._-]+$/, roles: roleSet('operator', 'admin', 'auditor') },
+  { method: 'GET', path: /^\/v1\/security\/device-credential-issuances$/, roles: roleSet('operator', 'admin', 'auditor') },
   { method: 'GET', path: /^\/v1\/security\/roles$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') },
   { method: 'GET', path: /^\/v1\/security\/permissions-matrix$/, roles: roleSet('viewer', 'developer', 'operator', 'admin', 'auditor') },
   { method: 'GET', path: /^\/v1\/security\/sensitive-policy$/, roles: roleSet('operator', 'admin', 'auditor') },
