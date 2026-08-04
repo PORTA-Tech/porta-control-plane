@@ -409,6 +409,27 @@ async function initializeFleetSchema(): Promise<void> {
       WHERE revoked_at_utc IS NULL;
   `);
 
+  // 4.6a — refresh tokens share this table rather than getting their own. session_type is
+  // the discriminator: only 'access' rows are accepted as bearer tokens, only 'refresh'
+  // rows are redeemable at POST /auth/refresh. Every row that predates this column is an
+  // access session, which is what the DEFAULT encodes.
+  //
+  // refresh_family_id ties an access token to the refresh token that minted it, and ties
+  // each rotation to the one before. It is what makes reuse of a rotated-away refresh
+  // token revoke the whole chain instead of just the presented row.
+  await activePool.query(`
+    ALTER TABLE auth_sessions
+      ADD COLUMN IF NOT EXISTS session_type TEXT NOT NULL DEFAULT 'access';
+    ALTER TABLE auth_sessions
+      ADD COLUMN IF NOT EXISTS refresh_family_id UUID;
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_refresh_family
+      ON auth_sessions (refresh_family_id)
+      WHERE refresh_family_id IS NOT NULL;
+  `);
+
   await activePool.query(`
     CREATE TABLE IF NOT EXISTS growth_events (
       event_id UUID PRIMARY KEY,

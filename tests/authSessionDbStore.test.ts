@@ -10,6 +10,8 @@ const mocked = vi.hoisted(() => {
     display_name: string;
     avatar_url: string | null;
     auth_provider: 'local' | 'google' | 'microsoft' | 'sso' | null;
+    session_type: 'access' | 'refresh';
+    refresh_family_id: string | null;
     issued_at_utc: string;
     expires_at_utc: string;
     reauth_expires_at_utc: string;
@@ -30,12 +32,14 @@ const mocked = vi.hoisted(() => {
         display_name: params[5] as string,
         avatar_url: params[6] as string | null,
         auth_provider: params[7] as Row['auth_provider'],
-        issued_at_utc: params[8] as string,
-        expires_at_utc: params[9] as string,
-        reauth_expires_at_utc: params[10] as string,
+        session_type: params[8] as Row['session_type'],
+        refresh_family_id: params[9] as string | null,
+        issued_at_utc: params[10] as string,
+        expires_at_utc: params[11] as string,
+        reauth_expires_at_utc: params[12] as string,
         revoked_at_utc: null,
-        created_at_utc: params[11] as string,
-        updated_at_utc: params[12] as string
+        created_at_utc: params[13] as string,
+        updated_at_utc: params[14] as string
       };
       rows.push(row);
       return { rows: [row], rowCount: 1 };
@@ -67,6 +71,15 @@ const mocked = vi.hoisted(() => {
       row.revoked_at_utc = params[9] as string | null;
       row.updated_at_utc = params[10] as string;
       return { rows: [row], rowCount: 1 };
+    }
+
+    if (sql.includes('UPDATE auth_sessions') && sql.includes('WHERE refresh_family_id = $1::uuid')) {
+      const matching = rows.filter((entry) => entry.refresh_family_id === params[0] && entry.revoked_at_utc === null);
+      for (const row of matching) {
+        row.revoked_at_utc = params[1] as string;
+        row.updated_at_utc = params[1] as string;
+      }
+      return { rows: [], rowCount: matching.length };
     }
 
     if (sql.includes('UPDATE auth_sessions') && sql.includes('WHERE token_hash = $1')) {
@@ -101,6 +114,7 @@ import {
   createAuthSessionRecord,
   findAuthSessionRecordByToken,
   hashAuthSessionToken,
+  revokeAuthSessionFamilyRecords,
   revokeAuthSessionRecord,
   updateAuthSessionRecord
 } from '../src/store/authSessionDbStore.js';
@@ -163,5 +177,46 @@ describe('auth session db store', () => {
 
     const loaded = await findAuthSessionRecordByToken(token);
     expect(loaded?.revoked_at_utc).toBe('2026-03-26T08:06:00.000Z');
+  });
+
+  it('revokes every session sharing a refresh family, and defaults untyped rows to access', async () => {
+    const familyId = 'c1d1ba0d-2f1e-4a37-9f0c-2d9b0f4c7f21';
+    const accessToken = 'family-access-token';
+    const refreshToken = 'family-refresh-token';
+
+    const created = await createAuthSessionRecord({
+      token: accessToken,
+      account_id: '906ab65a-ae54-497f-bcbf-22b361e61371',
+      user_id: 'jane@example.com',
+      role: 'developer',
+      display_name: 'Jane Example',
+      refresh_family_id: familyId,
+      issued_at_utc: '2026-03-26T08:00:00.000Z',
+      expires_at_utc: '2026-03-27T08:00:00.000Z',
+      reauth_expires_at_utc: '2026-03-26T08:10:00.000Z'
+    });
+    // session_type is not passed above: the default must be the safe one.
+    expect(created?.session_type).toBe('access');
+
+    const refresh = await createAuthSessionRecord({
+      token: refreshToken,
+      account_id: '906ab65a-ae54-497f-bcbf-22b361e61371',
+      user_id: 'jane@example.com',
+      role: 'developer',
+      display_name: 'Jane Example',
+      session_type: 'refresh',
+      refresh_family_id: familyId,
+      issued_at_utc: '2026-03-26T08:00:00.000Z',
+      expires_at_utc: '2026-06-24T08:00:00.000Z',
+      reauth_expires_at_utc: '2026-03-26T08:10:00.000Z'
+    });
+    expect(refresh?.session_type).toBe('refresh');
+    expect(refresh?.refresh_family_id).toBe(familyId);
+
+    const revoked = await revokeAuthSessionFamilyRecords(familyId, '2026-03-26T09:00:00.000Z');
+    expect(revoked).toBe(2);
+
+    expect((await findAuthSessionRecordByToken(accessToken))?.revoked_at_utc).toBe('2026-03-26T09:00:00.000Z');
+    expect((await findAuthSessionRecordByToken(refreshToken))?.revoked_at_utc).toBe('2026-03-26T09:00:00.000Z');
   });
 });

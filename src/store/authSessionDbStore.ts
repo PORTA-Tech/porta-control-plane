@@ -3,6 +3,12 @@ import type { AuthProvider } from '@porta/api-contracts';
 import type { AuthRole } from './authUserStore.js';
 import { ensureFleetPersistenceReady, getFleetPersistenceMode, getFleetPool } from './fleetPersistence.js';
 
+/**
+ * 'access' is a bearer token every authenticated route accepts. 'refresh' is redeemable
+ * only at POST /auth/refresh and must never satisfy readAuthSession.
+ */
+export type AuthSessionType = 'access' | 'refresh';
+
 export interface StoredAuthSessionRecord {
   session_id: string;
   account_id: string;
@@ -11,6 +17,8 @@ export interface StoredAuthSessionRecord {
   display_name: string;
   avatar_url?: string;
   auth_provider?: AuthProvider | null;
+  session_type: AuthSessionType;
+  refresh_family_id?: string | null;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
@@ -27,6 +35,8 @@ export interface CreateAuthSessionRecordInput {
   display_name: string;
   avatar_url?: string;
   auth_provider?: AuthProvider | null;
+  session_type?: AuthSessionType;
+  refresh_family_id?: string | null;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
@@ -54,6 +64,8 @@ interface AuthSessionRow {
   display_name: string;
   avatar_url: string | null;
   auth_provider: AuthProvider | null;
+  session_type: AuthSessionType;
+  refresh_family_id: string | null;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
@@ -75,6 +87,9 @@ function mapAuthSessionRow(row: AuthSessionRow): StoredAuthSessionRecord {
     display_name: row.display_name,
     ...(row.avatar_url ? { avatar_url: row.avatar_url } : {}),
     ...(row.auth_provider ? { auth_provider: row.auth_provider } : {}),
+    // A row written before session_type existed is an access session.
+    session_type: row.session_type ?? 'access',
+    refresh_family_id: row.refresh_family_id ?? null,
     issued_at_utc: row.issued_at_utc,
     expires_at_utc: row.expires_at_utc,
     reauth_expires_at_utc: row.reauth_expires_at_utc,
@@ -107,6 +122,8 @@ export async function createAuthSessionRecord(input: CreateAuthSessionRecordInpu
         display_name,
         avatar_url,
         auth_provider,
+        session_type,
+        refresh_family_id,
         issued_at_utc,
         expires_at_utc,
         reauth_expires_at_utc,
@@ -114,7 +131,7 @@ export async function createAuthSessionRecord(input: CreateAuthSessionRecordInpu
         created_at_utc,
         updated_at_utc
       ) VALUES (
-        $1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11::timestamptz, NULL, $12::timestamptz, $13::timestamptz
+        $1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10::uuid, $11::timestamptz, $12::timestamptz, $13::timestamptz, NULL, $14::timestamptz, $15::timestamptz
       )
       RETURNING
         session_id,
@@ -124,6 +141,8 @@ export async function createAuthSessionRecord(input: CreateAuthSessionRecordInpu
         display_name,
         avatar_url,
         auth_provider,
+        session_type,
+        refresh_family_id,
         issued_at_utc,
         expires_at_utc,
         reauth_expires_at_utc,
@@ -140,6 +159,8 @@ export async function createAuthSessionRecord(input: CreateAuthSessionRecordInpu
       input.display_name,
       input.avatar_url ?? null,
       input.auth_provider ?? null,
+      input.session_type ?? 'access',
+      input.refresh_family_id ?? null,
       input.issued_at_utc,
       input.expires_at_utc,
       input.reauth_expires_at_utc,
@@ -172,6 +193,8 @@ export async function findAuthSessionRecordByToken(token: string): Promise<Store
         display_name,
         avatar_url,
         auth_provider,
+        session_type,
+        refresh_family_id,
         issued_at_utc,
         expires_at_utc,
         reauth_expires_at_utc,
@@ -209,6 +232,8 @@ export async function updateAuthSessionRecord(input: UpdateAuthSessionRecordInpu
         display_name,
         avatar_url,
         auth_provider,
+        session_type,
+        refresh_family_id,
         issued_at_utc,
         expires_at_utc,
         reauth_expires_at_utc,
@@ -251,6 +276,8 @@ export async function updateAuthSessionRecord(input: UpdateAuthSessionRecordInpu
         display_name,
         avatar_url,
         auth_provider,
+        session_type,
+        refresh_family_id,
         issued_at_utc,
         expires_at_utc,
         reauth_expires_at_utc,
@@ -300,4 +327,35 @@ export async function revokeAuthSessionRecord(token: string, revokedAtUtc: strin
   );
 
   return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Revokes every session in a refresh chain — the access tokens it minted and every
+ * rotation of the refresh token itself. Called on sign-out, and on detecting that a
+ * refresh token which was already rotated away has been presented again.
+ */
+export async function revokeAuthSessionFamilyRecords(refreshFamilyId: string, revokedAtUtc: string): Promise<number> {
+  if (getFleetPersistenceMode() === 'memory') {
+    return 0;
+  }
+
+  await ensureFleetPersistenceReady();
+  const pool = getFleetPool();
+  if (!pool) {
+    return 0;
+  }
+
+  const result = await pool.query(
+    `
+      UPDATE auth_sessions
+      SET
+        revoked_at_utc = $2::timestamptz,
+        updated_at_utc = $2::timestamptz
+      WHERE refresh_family_id = $1::uuid
+        AND revoked_at_utc IS NULL;
+    `,
+    [refreshFamilyId, revokedAtUtc]
+  );
+
+  return result.rowCount ?? 0;
 }

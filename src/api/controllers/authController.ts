@@ -6,6 +6,7 @@ import {
   listAuthUsers,
   readAuthAccessHelp,
   readAuthSession,
+  redeemRefreshToken,
   resetAuthUserPasswordWithCode,
   registerAuthUser,
   refreshReauth,
@@ -81,10 +82,24 @@ export function createAuthController(): Router {
 
       await touchAccountLastLogin(materialized.account.accountId, new Date().toISOString());
 
-      const issued = await issueAuthSession(user, { account_id: materialized.account.accountId });
+      // Opt-in. A client that will not persist the refresh token should not be handed
+      // one — this flag is how "remember me" asks for a durable credential instead of
+      // storing the password, which is what it used to do.
+      const issueRefreshToken = body.issue_refresh_token === true;
+
+      const issued = await issueAuthSession(user, {
+        account_id: materialized.account.accountId,
+        issue_refresh_token: issueRefreshToken
+      });
       res.json({
         access_token: issued.access_token,
         token_type: 'Bearer',
+        ...(issued.refresh_token
+          ? {
+              refresh_token: issued.refresh_token,
+              refresh_expires_at_utc: issued.refresh_expires_at_utc
+            }
+          : {}),
         user: {
           account_id: materialized.account.accountId,
           user_id: issued.session.user_id,
@@ -123,6 +138,49 @@ export function createAuthController(): Router {
         issued_at_utc: session.issued_at_utc,
         session_expires_at_utc: session.expires_at_utc,
         reauth_expires_at_utc: session.reauth_expires_at_utc
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Exchanges a refresh token for a new access token and a new refresh token.
+   *
+   * No bearer token: the whole point is to be callable when the access token is dead.
+   * The refresh token travels in the body, never the query string, so it stays out of
+   * access logs and referrers.
+   */
+  router.post('/refresh', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const refreshToken = typeof body.refresh_token === 'string' ? body.refresh_token.trim() : '';
+      if (!refreshToken) {
+        res.status(400).json({ error_code: 'VALIDATION_ERROR', message: 'refresh_token is required.' });
+        return;
+      }
+
+      const redeemed = await redeemRefreshToken(refreshToken);
+      if (!redeemed.ok) {
+        res.status(401).json({ error_code: redeemed.error_code, message: redeemed.message });
+        return;
+      }
+
+      res.json({
+        access_token: redeemed.access_token,
+        token_type: 'Bearer',
+        refresh_token: redeemed.refresh_token,
+        refresh_expires_at_utc: redeemed.refresh_expires_at_utc,
+        user: {
+          account_id: redeemed.session.account_id,
+          user_id: redeemed.session.user_id,
+          role: redeemed.session.role,
+          display_name: redeemed.session.display_name,
+          avatar_url: redeemed.session.avatar_url ?? null,
+          auth_provider: redeemed.session.auth_provider ?? null
+        },
+        session_expires_at_utc: redeemed.session.expires_at_utc,
+        reauth_expires_at_utc: redeemed.session.reauth_expires_at_utc
       });
     } catch (error) {
       next(error);

@@ -20,8 +20,10 @@ import {
 import {
   createAuthSessionRecord,
   findAuthSessionRecordByToken,
+  revokeAuthSessionFamilyRecords,
   revokeAuthSessionRecord,
   updateAuthSessionRecord,
+  type AuthSessionType,
   type StoredAuthSessionRecord
 } from '../store/authSessionDbStore.js';
 import { getFleetPersistenceMode } from '../store/fleetPersistence.js';
@@ -49,9 +51,15 @@ interface SessionRecord {
   avatar_url?: string;
   auth_provider?: AuthProvider | null;
   source: UserSource;
+  session_type: AuthSessionType;
+  refresh_family_id: string | null;
   issued_at_utc: string;
   expires_at_utc: string;
   reauth_expires_at_utc: string;
+  // Revoked rows are kept rather than deleted: a refresh token that was rotated away
+  // must stay recognisable, or its reuse is indistinguishable from a token that never
+  // existed and the whole chain cannot be revoked in response.
+  revoked_at_utc?: string | null;
 }
 
 type AuthUserPublicView = Pick<LocalAuthUserRecord, 'account_id' | 'user_id' | 'role' | 'display_name' | 'avatar_url' | 'auth_provider'>;
@@ -139,6 +147,13 @@ function sessionTtlMinutes(): number {
 
 function reauthTtlMinutes(): number {
   return parsePositiveInt(process.env.AUTH_REAUTH_TTL_MINUTES, 10);
+}
+
+// Deliberately longer than the access-session TTL: the refresh token is what lets a
+// client come back after its access token dies without re-entering a password. It is
+// revocable, rotates on every use, and never authenticates a request by itself.
+function refreshTtlMinutes(): number {
+  return parsePositiveInt(process.env.AUTH_REFRESH_TTL_MINUTES, 90 * 24 * 60);
 }
 
 function allowSelfRegister(): boolean {
@@ -603,24 +618,34 @@ export async function authenticateUser(userId: string, password: string): Promis
   return toAuthenticatedViewFromLocal(local);
 }
 
-export async function issueAuthSession(
-  user: AuthenticatedAuthUserView,
-  overrides: { account_id?: string } = {}
-): Promise<{ access_token: string; session: AuthSessionView }> {
+interface MintedSession {
+  token: string;
+  view: AuthSessionView;
+}
+
+async function mintSession(input: {
+  user: AuthenticatedAuthUserView;
+  account_id: string;
+  session_type: AuthSessionType;
+  refresh_family_id: string | null;
+  ttl_minutes: number;
+}): Promise<MintedSession> {
   const issuedAt = new Date();
-  const expiresAt = new Date(issuedAt.getTime() + sessionTtlMinutes() * 60_000);
+  const expiresAt = new Date(issuedAt.getTime() + input.ttl_minutes * 60_000);
   const reauthExpiresAt = new Date(issuedAt.getTime() + reauthTtlMinutes() * 60_000);
   const token = randomBytes(32).toString('base64url');
 
   if (getFleetPersistenceMode() === 'postgres') {
     const stored = await createAuthSessionRecord({
       token,
-      account_id: overrides.account_id ?? user.account_id,
-      user_id: user.user_id,
-      role: user.role,
-      display_name: user.display_name,
-      ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
-      ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
+      account_id: input.account_id,
+      user_id: input.user.user_id,
+      role: input.user.role,
+      display_name: input.user.display_name,
+      ...(input.user.avatar_url ? { avatar_url: input.user.avatar_url } : {}),
+      ...(input.user.auth_provider ? { auth_provider: input.user.auth_provider } : {}),
+      session_type: input.session_type,
+      refresh_family_id: input.refresh_family_id,
       issued_at_utc: issuedAt.toISOString(),
       expires_at_utc: expiresAt.toISOString(),
       reauth_expires_at_utc: reauthExpiresAt.toISOString()
@@ -628,38 +653,84 @@ export async function issueAuthSession(
     if (!stored) {
       throw new Error('Auth session could not be persisted.');
     }
-    return {
-      access_token: token,
-      session: toSessionViewFromStored(stored)
-    };
+    return { token, view: toSessionViewFromStored(stored) };
   }
 
   cleanupExpiredSessions();
   const record: SessionRecord = {
     token,
-    account_id: overrides.account_id ?? user.account_id,
-    user_id: user.user_id,
-    base_role: user.base_role,
-    role: user.role,
-    display_name: user.display_name,
-    ...(user.avatar_url ? { avatar_url: user.avatar_url } : {}),
-    ...(user.auth_provider ? { auth_provider: user.auth_provider } : {}),
-    source: user.source,
+    account_id: input.account_id,
+    user_id: input.user.user_id,
+    base_role: input.user.base_role,
+    role: input.user.role,
+    display_name: input.user.display_name,
+    ...(input.user.avatar_url ? { avatar_url: input.user.avatar_url } : {}),
+    ...(input.user.auth_provider ? { auth_provider: input.user.auth_provider } : {}),
+    source: input.user.source,
+    session_type: input.session_type,
+    refresh_family_id: input.refresh_family_id,
     issued_at_utc: issuedAt.toISOString(),
     expires_at_utc: expiresAt.toISOString(),
-    reauth_expires_at_utc: reauthExpiresAt.toISOString()
+    reauth_expires_at_utc: reauthExpiresAt.toISOString(),
+    revoked_at_utc: null
   };
   sessions.set(token, record);
+  return { token, view: toSessionView(record) };
+}
+
+export interface IssuedAuthSession {
+  access_token: string;
+  session: AuthSessionView;
+  /** Only present when the caller asked for one. */
+  refresh_token?: string;
+  refresh_expires_at_utc?: string;
+}
+
+export async function issueAuthSession(
+  user: AuthenticatedAuthUserView,
+  overrides: { account_id?: string; issue_refresh_token?: boolean } = {}
+): Promise<IssuedAuthSession> {
+  const accountId = overrides.account_id ?? user.account_id;
+
+  // A refresh token is minted only when the client asks for it. It is a 90-day
+  // credential; issuing one for a sign-in that will not persist it would leave a
+  // long-lived revocable secret in the table that nothing ever redeems or revokes.
+  const refreshFamilyId = overrides.issue_refresh_token ? randomUUID() : null;
+
+  const access = await mintSession({
+    user,
+    account_id: accountId,
+    session_type: 'access',
+    refresh_family_id: refreshFamilyId,
+    ttl_minutes: sessionTtlMinutes()
+  });
+
+  if (!refreshFamilyId) {
+    return { access_token: access.token, session: access.view };
+  }
+
+  const refresh = await mintSession({
+    user,
+    account_id: accountId,
+    session_type: 'refresh',
+    refresh_family_id: refreshFamilyId,
+    ttl_minutes: refreshTtlMinutes()
+  });
+
   return {
-    access_token: token,
-    session: toSessionView(record)
+    access_token: access.token,
+    session: access.view,
+    refresh_token: refresh.token,
+    refresh_expires_at_utc: refresh.view.expires_at_utc
   };
 }
 
 export async function readAuthSession(token: string): Promise<AuthSessionView | null> {
   if (getFleetPersistenceMode() === 'postgres') {
     const record = await findAuthSessionRecordByToken(token);
-    if (!record || record.revoked_at_utc) {
+    // A refresh token is not a bearer token. It is redeemable at /auth/refresh and
+    // nowhere else; accepting one here would hand every route a 90-day credential.
+    if (!record || record.revoked_at_utc || record.session_type !== 'access') {
       return null;
     }
 
@@ -698,7 +769,9 @@ export async function readAuthSession(token: string): Promise<AuthSessionView | 
 
   cleanupExpiredSessions();
   const record = sessions.get(token);
-  if (!record) return null;
+  // Same rule as the postgres path: revoked rows survive for reuse detection, and a
+  // refresh token never authenticates a request.
+  if (!record || record.revoked_at_utc || record.session_type !== 'access') return null;
 
   const canRefreshFromLocal = record.source !== 'custom' || getFleetPersistenceMode() === 'memory';
   if (canRefreshFromLocal) {
@@ -740,19 +813,190 @@ export async function readAuthSession(token: string): Promise<AuthSessionView | 
   return toSessionView(record);
 }
 
+/**
+ * Signing out must take the refresh token with it. Revoking only the presented access
+ * token would leave a 90-day credential on disk that still mints new sessions — the
+ * user would have "signed out" of nothing.
+ */
 export async function revokeAuthSession(token: string): Promise<void> {
+  const revokedAt = new Date().toISOString();
+
   if (getFleetPersistenceMode() === 'postgres') {
-    await revokeAuthSessionRecord(token, new Date().toISOString());
+    const record = await findAuthSessionRecordByToken(token);
+    if (record?.refresh_family_id) {
+      await revokeAuthSessionFamilyRecords(record.refresh_family_id, revokedAt);
+      return;
+    }
+    await revokeAuthSessionRecord(token, revokedAt);
     return;
   }
 
-  sessions.delete(token);
+  const record = sessions.get(token);
+  if (!record) {
+    return;
+  }
+  if (record.refresh_family_id) {
+    revokeMemorySessionFamily(record.refresh_family_id, revokedAt);
+    return;
+  }
+  record.revoked_at_utc = revokedAt;
+  sessions.set(token, record);
+}
+
+function revokeMemorySessionFamily(refreshFamilyId: string, revokedAtUtc: string): void {
+  for (const [token, record] of sessions.entries()) {
+    if (record.refresh_family_id === refreshFamilyId && !record.revoked_at_utc) {
+      record.revoked_at_utc = revokedAtUtc;
+      sessions.set(token, record);
+    }
+  }
+}
+
+export type RefreshTokenRedemption =
+  | {
+      ok: true;
+      access_token: string;
+      refresh_token: string;
+      session: AuthSessionView;
+      refresh_expires_at_utc: string;
+    }
+  | { ok: false; error_code: RefreshTokenRejection; message: string };
+
+export type RefreshTokenRejection =
+  | 'REFRESH_TOKEN_INVALID'
+  | 'REFRESH_TOKEN_EXPIRED'
+  | 'REFRESH_TOKEN_REUSED'
+  | 'USER_NOT_FOUND';
+
+function rejectRefresh(error_code: RefreshTokenRejection, message: string): RefreshTokenRedemption {
+  return { ok: false, error_code, message };
+}
+
+/**
+ * Exchanges a refresh token for a fresh access token, rotating the refresh token in the
+ * same step. Rotation is what makes theft detectable: the stolen copy and the legitimate
+ * client cannot both redeem, so whichever presents second is presenting a token that has
+ * already been rotated away — and that revokes the entire chain, signing out the thief
+ * and the real user together. A silent single-use failure would leave the thief holding a
+ * working credential.
+ *
+ * The identity is re-derived from the user store on every redemption rather than copied
+ * from the stored row, so a role change or a deleted account takes effect at the next
+ * refresh instead of riding along for the life of the chain.
+ */
+export async function redeemRefreshToken(token: string): Promise<RefreshTokenRedemption> {
+  if (!token || !token.trim()) {
+    return rejectRefresh('REFRESH_TOKEN_INVALID', 'Refresh token is required.');
+  }
+
+  const now = new Date().toISOString();
+  const postgres = getFleetPersistenceMode() === 'postgres';
+
+  let userId: string;
+  let accountId: string;
+  let refreshFamilyId: string;
+  let expiresAtUtc: string;
+
+  if (postgres) {
+    const record = await findAuthSessionRecordByToken(token);
+    if (!record || record.session_type !== 'refresh') {
+      return rejectRefresh('REFRESH_TOKEN_INVALID', 'Refresh token is not valid.');
+    }
+
+    if (record.revoked_at_utc) {
+      if (record.refresh_family_id) {
+        await revokeAuthSessionFamilyRecords(record.refresh_family_id, now);
+      }
+      return rejectRefresh(
+        'REFRESH_TOKEN_REUSED',
+        'This refresh token was already used. Every session in its chain has been revoked; sign in again.'
+      );
+    }
+
+    userId = record.user_id;
+    accountId = record.account_id;
+    refreshFamilyId = record.refresh_family_id ?? randomUUID();
+    expiresAtUtc = record.expires_at_utc;
+  } else {
+    cleanupExpiredSessions();
+    const record = sessions.get(token);
+    if (!record || record.session_type !== 'refresh') {
+      return rejectRefresh('REFRESH_TOKEN_INVALID', 'Refresh token is not valid.');
+    }
+
+    if (record.revoked_at_utc) {
+      if (record.refresh_family_id) {
+        revokeMemorySessionFamily(record.refresh_family_id, now);
+      }
+      return rejectRefresh(
+        'REFRESH_TOKEN_REUSED',
+        'This refresh token was already used. Every session in its chain has been revoked; sign in again.'
+      );
+    }
+
+    userId = record.user_id;
+    accountId = record.account_id;
+    refreshFamilyId = record.refresh_family_id ?? randomUUID();
+    expiresAtUtc = record.expires_at_utc;
+  }
+
+  const expiryMs = Date.parse(expiresAtUtc);
+  if (!Number.isFinite(expiryMs) || expiryMs <= Date.now()) {
+    return rejectRefresh('REFRESH_TOKEN_EXPIRED', 'Refresh token has expired. Sign in again.');
+  }
+
+  const user = await findResolvedUser(userId);
+  if (!user) {
+    // The account is gone or no longer resolves. Retire the chain rather than leaving a
+    // redeemable token behind for an identity that no longer exists.
+    if (postgres) {
+      await revokeAuthSessionFamilyRecords(refreshFamilyId, now);
+    } else {
+      revokeMemorySessionFamily(refreshFamilyId, now);
+    }
+    return rejectRefresh('USER_NOT_FOUND', 'This account no longer exists. Sign in again.');
+  }
+
+  // Rotate: the presented token dies before its replacement is handed out.
+  if (postgres) {
+    await revokeAuthSessionRecord(token, now);
+  } else {
+    const record = sessions.get(token);
+    if (record) {
+      record.revoked_at_utc = now;
+      sessions.set(token, record);
+    }
+  }
+
+  const access = await mintSession({
+    user,
+    account_id: user.account_id || accountId,
+    session_type: 'access',
+    refresh_family_id: refreshFamilyId,
+    ttl_minutes: sessionTtlMinutes()
+  });
+
+  const refresh = await mintSession({
+    user,
+    account_id: user.account_id || accountId,
+    session_type: 'refresh',
+    refresh_family_id: refreshFamilyId,
+    ttl_minutes: refreshTtlMinutes()
+  });
+
+  return {
+    ok: true,
+    access_token: access.token,
+    refresh_token: refresh.token,
+    session: access.view,
+    refresh_expires_at_utc: refresh.view.expires_at_utc
+  };
 }
 
 export async function refreshReauth(token: string): Promise<AuthSessionView | null> {
   if (getFleetPersistenceMode() === 'postgres') {
     const record = await findAuthSessionRecordByToken(token);
-    if (!record || record.revoked_at_utc) {
+    if (!record || record.revoked_at_utc || record.session_type !== 'access') {
       return null;
     }
 
@@ -772,7 +1016,7 @@ export async function refreshReauth(token: string): Promise<AuthSessionView | nu
 
   cleanupExpiredSessions();
   const record = sessions.get(token);
-  if (!record) return null;
+  if (!record || record.revoked_at_utc || record.session_type !== 'access') return null;
   const reauthExpiresAt = new Date(Date.now() + reauthTtlMinutes() * 60_000).toISOString();
   record.reauth_expires_at_utc = reauthExpiresAt;
   sessions.set(token, record);

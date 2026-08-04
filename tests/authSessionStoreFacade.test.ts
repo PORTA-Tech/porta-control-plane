@@ -9,6 +9,8 @@ const mocked = vi.hoisted(() => {
     display_name: string;
     avatar_url?: string;
     auth_provider?: 'local' | 'google' | 'microsoft' | 'sso' | null;
+    session_type: 'access' | 'refresh';
+    refresh_family_id?: string | null;
     issued_at_utc: string;
     expires_at_utc: string;
     reauth_expires_at_utc: string;
@@ -32,6 +34,8 @@ const mocked = vi.hoisted(() => {
       display_name: string;
       avatar_url?: string;
       auth_provider?: SessionRow['auth_provider'];
+      session_type?: SessionRow['session_type'];
+      refresh_family_id?: string | null;
       issued_at_utc: string;
       expires_at_utc: string;
       reauth_expires_at_utc: string;
@@ -44,6 +48,8 @@ const mocked = vi.hoisted(() => {
         display_name: input.display_name,
         ...(input.avatar_url ? { avatar_url: input.avatar_url } : {}),
         ...(input.auth_provider ? { auth_provider: input.auth_provider } : {}),
+        session_type: input.session_type ?? 'access',
+        refresh_family_id: input.refresh_family_id ?? null,
         issued_at_utc: input.issued_at_utc,
         expires_at_utc: input.expires_at_utc,
         reauth_expires_at_utc: input.reauth_expires_at_utc,
@@ -102,6 +108,18 @@ const mocked = vi.hoisted(() => {
       sessions.set(token, row);
       return true;
     }),
+    revokeAuthSessionFamilyRecords: vi.fn(async (refreshFamilyId: string, revokedAtUtc: string) => {
+      let revoked = 0;
+      for (const [token, row] of sessions.entries()) {
+        if (row.refresh_family_id === refreshFamilyId && !row.revoked_at_utc) {
+          row.revoked_at_utc = revokedAtUtc;
+          row.updated_at_utc = revokedAtUtc;
+          sessions.set(token, row);
+          revoked += 1;
+        }
+      }
+      return revoked;
+    }),
     createAuthUserRecord: vi.fn(),
     findAuthUserRecordByUserId: vi.fn(async () => null),
     importLegacyAuthUsers: vi.fn(async () => ({ imported: 0, skipped: 0 })),
@@ -123,7 +141,8 @@ vi.mock('../src/store/authSessionDbStore.js', () => ({
   createAuthSessionRecord: mocked.createAuthSessionRecord,
   findAuthSessionRecordByToken: mocked.findAuthSessionRecordByToken,
   updateAuthSessionRecord: mocked.updateAuthSessionRecord,
-  revokeAuthSessionRecord: mocked.revokeAuthSessionRecord
+  revokeAuthSessionRecord: mocked.revokeAuthSessionRecord,
+  revokeAuthSessionFamilyRecords: mocked.revokeAuthSessionFamilyRecords
 }));
 
 vi.mock('../src/store/authUserStore.js', () => ({
