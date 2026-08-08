@@ -5,3 +5,9 @@ dist/
 .data/
 signer-private.pem
 signer-public.pem
+
+# Plaintext auth dumps used during the legacy auth migration. .tmp-auth-compat/ held 609 records
+# with a password field, untracked but NOT ignored — one `git add -A` from being published.
+# The filename is matched anywhere as well as the directory, so a stray copy cannot slip in.
+.tmp-auth-compat/
+auth-users.json
