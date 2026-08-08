@@ -16,6 +16,7 @@ import { createAuthController } from './api/controllers/authController.js';
 import { createSecurityController } from './api/controllers/securityController.js';
 import { createRbacController } from './api/controllers/rbacController.js';
 import { createSystemHealthController } from './api/controllers/systemHealthController.js';
+import { getBuildInfo } from './core/buildInfo.js';
 import { createIdentityController } from './api/controllers/identityController.js';
 import { createDeviceIdentityController } from './api/controllers/deviceIdentityController.js';
 import { createClientReleaseController } from './api/controllers/clientReleaseController.js';
@@ -102,7 +103,19 @@ export function createApp(): Express {
     next();
   });
 
-  app.get('/health', (_req, res) => res.json({ ok: true }));
+  // Answers "what is Render actually running?" without leaving the terminal. The agent's uptime
+  // probe only reads ok, so adding fields here is additive and breaks no caller.
+  app.get('/health', (_req, res) => {
+    const build = getBuildInfo();
+    res.json({
+      ok: true,
+      version: build.version,
+      commit: build.commit,
+      commit_short: build.commitShort,
+      branch: build.branch,
+      started_at_utc: build.startedAtUtc
+    });
+  });
 
   app.get('/launch', (req, res) => {
     const ua = req.headers['user-agent'] ?? '';
