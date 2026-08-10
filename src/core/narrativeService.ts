@@ -80,7 +80,56 @@ export interface NarrativeSituation {
   userText?: string | null;      // the typed reply — reply_* kinds only
   middaySkipped?: boolean;       // eod (Part 1b): a morning goal was set but midday was never answered
   awayGap?: boolean;             // eod (Part 1b): a substantial away stretch today
+  // 2026-08-10 — what actually happened. goalToday is the morning sentence and is never revised,
+  // so without this the model reads abandoned work as still-current plan and proposes it back.
+  tasks?: NarrativeTaskFact[];
 }
+
+/** One task's outcome. Titles are user-authored: validated and clamped at the route. */
+export interface NarrativeTaskFact {
+  title: string;
+  state: string;                 // done | abandoned | active | pending
+  plannedSeconds: number;
+  actualSeconds: number;
+}
+
+/**
+ * Validates an inbound task-outcome array. The titles are the one part of the situation that is
+ * free text the user typed, and they land in a model prompt — so they are trimmed, length-clamped
+ * and count-capped here rather than trusted through the route's cast. Lives beside the type it
+ * validates so the two cannot drift.
+ *
+ * Distinct from the digest's parseTasks: that one is closed-tasks-only and carries offtaskSeconds;
+ * this accepts open states and never takes offtask.
+ */
+export function sanitizeNarrativeTasks(value: unknown): NarrativeTaskFact[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const allowedStates = new Set(['done', 'abandoned', 'active', 'pending']);
+  return (value as unknown[])
+    .map((t) => t as { title?: unknown; state?: unknown; plannedSeconds?: unknown; actualSeconds?: unknown })
+    .filter((t) =>
+      typeof t.title === 'string' && t.title.trim().length > 0
+      && typeof t.state === 'string' && allowedStates.has(t.state)
+      && typeof t.plannedSeconds === 'number' && Number.isFinite(t.plannedSeconds) && t.plannedSeconds > 0
+      && typeof t.actualSeconds === 'number' && Number.isFinite(t.actualSeconds) && t.actualSeconds >= 0)
+    .slice(0, 10)
+    .map((t) => ({
+      title: (t.title as string).trim().slice(0, 80),
+      state: t.state as string,
+      plannedSeconds: Math.trunc(t.plannedSeconds as number),
+      actualSeconds: Math.max(0, t.actualSeconds as number),
+    }));
+}
+
+const TASK_STATE_LABEL: Record<string, string> = {
+  done: 'finished',
+  abandoned: 'dropped',
+  active: 'in progress',
+  pending: 'not started',
+};
 
 const SYSTEM_PROMPT = [
   'You are Ari, a focus assistant, speaking in a small desktop check-in card.',
@@ -206,6 +255,27 @@ export function buildSituationFacts(
 
   const carried = (situation.carriedPlan ?? '').trim();
   if (carried && !goal) lines.push(`Last night they planned for today: "${carried}" (not yet confirmed this morning)`);
+
+  // What became of each task. This sits directly under the stated goal on purpose: the goal is
+  // what they SAID in the morning and is never rewritten, so intent and outcome must be read
+  // together or the sentence alone wins. Dropped work is called out explicitly because proposing
+  // it back is the exact failure this section exists to prevent.
+  const taskFacts = situation.tasks ?? [];
+  if (taskFacts.length > 0) {
+    lines.push('What happened to each task today (this supersedes the stated goal above):');
+    for (const t of taskFacts) {
+      const label = TASK_STATE_LABEL[t.state] ?? t.state;
+      lines.push(
+        `- "${t.title}" — ${label}; planned ${humanDuration(t.plannedSeconds)}, actually worked ${humanDuration(t.actualSeconds)}`
+      );
+    }
+    const dropped = taskFacts.filter((t) => t.state === 'abandoned').map((t) => `"${t.title}"`);
+    if (dropped.length > 0) {
+      lines.push(
+        `They deliberately dropped ${dropped.join(', ')}. Do not suggest picking those back up, and do not treat them as still planned.`
+      );
+    }
+  }
 
   const midday = (situation.middayAnswer ?? '').trim();
   if (midday && MIDDAY_LABEL[midday]) lines.push(`Midday answer on whether they were getting to the goal: ${MIDDAY_LABEL[midday]}`);

@@ -13,7 +13,7 @@ import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } fr
 import { sendEmail } from '../../core/emailService.js';
 import { appendDigestLogEntry, wasDigestSentForAccount } from '../../store/digestLogStore.js';
 import { isWithinAgentDigestSendWindow, isFutureDubaiDate, hasReportableTrackedTime } from '../../core/digestSendWindow.js';
-import { buildNarrativeLine, NARRATIVE_KINDS, type NarrativeKind, type NarrativeSituation } from '../../core/narrativeService.js';
+import { buildNarrativeLine, NARRATIVE_KINDS, sanitizeNarrativeTasks, type NarrativeKind, type NarrativeSituation } from '../../core/narrativeService.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
 import { upsertDailyStats, normalizeGoalText, normalizeMiddayAnswer } from '../../store/dailyStatsStore.js';
 import { recomputeUserHistory } from '../../core/historyService.js';
@@ -751,9 +751,16 @@ export function createAgentController(): Router {
         return;
       }
 
-      const situation: NarrativeSituation =
+      const rawSituation =
         typeof body.situation === 'object' && body.situation !== null
           ? (body.situation as NarrativeSituation)
+          : null;
+      // The rest of the situation is numbers and short labels the agent assembles; the task titles
+      // are the one part that is free text the user typed, so they are re-validated here rather
+      // than passed through the cast into a model prompt.
+      const situation: NarrativeSituation =
+        rawSituation !== null
+          ? { ...rawSituation, tasks: sanitizeNarrativeTasks((rawSituation as { tasks?: unknown }).tasks) }
           : {};
 
       const line = await buildNarrativeLine(accountId, dateLocal, kind, situation);
