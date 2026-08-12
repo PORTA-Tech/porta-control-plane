@@ -109,18 +109,25 @@ function parseTopApps(value: unknown): { label: string; seconds: number; categor
 }
 
 /** W4 — validates the inbound plan-vs-reality tasks array. Titles are user-authored
- * (clamped, escaped at render); numbers must be finite and sane. */
-function parseTasks(value: unknown): { title: string; plannedSeconds: number; actualSeconds: number; offtaskSeconds: number; state: string }[] {
+ * (clamped, escaped at render); numbers must be finite and sane.
+ *
+ * CHANGED 2026-08-11 (digest redesign): OPEN states are accepted, not only closed ones. The
+ * email's headline scores planned-vs-finished off the WHOLE board, the same rule the evening
+ * card uses — filtering to closed tasks here made the two surfaces disagree and made a moved
+ * task ("moved on") unrenderable, since a moved task is still open. */
+const TASK_STATES = new Set(['done', 'abandoned', 'pending', 'active']);
+
+function parseTasks(value: unknown): { title: string; plannedSeconds: number; actualSeconds: number; offtaskSeconds: number; state: string; deferredUntilDay: string }[] {
   if (!Array.isArray(value)) {
     return [];
   }
   return (value as unknown[])
-    .map((t) => t as { title?: unknown; plannedSeconds?: unknown; actualSeconds?: unknown; offtaskSeconds?: unknown; state?: unknown })
+    .map((t) => t as { title?: unknown; plannedSeconds?: unknown; actualSeconds?: unknown; offtaskSeconds?: unknown; state?: unknown; deferredUntilDay?: unknown })
     .filter((t) =>
       typeof t.title === 'string' && t.title.trim().length > 0
       && typeof t.plannedSeconds === 'number' && Number.isFinite(t.plannedSeconds) && t.plannedSeconds > 0
       && typeof t.actualSeconds === 'number' && Number.isFinite(t.actualSeconds) && t.actualSeconds >= 0
-      && (t.state === 'done' || t.state === 'abandoned'))
+      && typeof t.state === 'string' && TASK_STATES.has(t.state))
     .slice(0, 16)
     .map((t) => ({
       title: (t.title as string).trim().slice(0, 80),
@@ -128,7 +135,35 @@ function parseTasks(value: unknown): { title: string; plannedSeconds: number; ac
       actualSeconds: t.actualSeconds as number,
       offtaskSeconds: typeof t.offtaskSeconds === 'number' && Number.isFinite(t.offtaskSeconds) ? Math.max(0, t.offtaskSeconds) : 0,
       state: t.state as string,
+      // A goal-day key ("2026-08-12") — anything else is dropped rather than rendered.
+      deferredUntilDay: typeof t.deferredUntilDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.deferredUntilDay.trim())
+        ? t.deferredUntilDay.trim()
+        : '',
     }));
+}
+
+/** Digest redesign — validates the inbound dayTimeline. NUMBERS ONLY: an hour of the local day
+ * and its focused / at-the-machine / away seconds. Hours that recorded nothing are absent from
+ * the array by design and must stay absent — a zeroed hour would render as "away" when the truth
+ * is "the machine was off". Agents before 1.2.140 send nothing here at all. */
+function parseDayTimeline(value: unknown): { hourLocal: number; focusSeconds: number; activeSeconds: number; awaySeconds: number }[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const clampSeconds = (v: unknown): number =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.min(3600, v) : 0;
+
+  return (value as unknown[])
+    .map((h) => h as { hourLocal?: unknown; focusSeconds?: unknown; activeSeconds?: unknown; awaySeconds?: unknown })
+    .filter((h) => typeof h.hourLocal === 'number' && Number.isInteger(h.hourLocal) && h.hourLocal >= 0 && h.hourLocal <= 23)
+    .slice(0, 24)
+    .map((h) => ({
+      hourLocal: h.hourLocal as number,
+      focusSeconds: clampSeconds(h.focusSeconds),
+      activeSeconds: clampSeconds(h.activeSeconds),
+      awaySeconds: clampSeconds(h.awaySeconds),
+    }))
+    .filter((h) => h.focusSeconds + h.activeSeconds + h.awaySeconds > 0);
 }
 
 /** Validates an inbound labelsByTarget array into clean {target, count, net} entries. Counts only. */
@@ -954,6 +989,12 @@ export function createAgentController(): Router {
       const digestTasks = parseTasks(body.tasks);
       if (digestTasks.length > 0) {
         (payload as unknown as Record<string, unknown>).tasks = digestTasks;
+      }
+      // Digest redesign — the day's shape for the email's timeline strip. Absent (every agent
+      // before 1.2.140) → the email omits THE DAY section rather than drawing a flat bar.
+      const digestTimeline = parseDayTimeline(body.dayTimeline);
+      if (digestTimeline.length > 0) {
+        (payload as unknown as Record<string, unknown>).dayTimeline = digestTimeline;
       }
 
       // B1 — ONE digest per account per day, whatever asks for it. The agent's own guard

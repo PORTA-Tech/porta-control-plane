@@ -38,6 +38,9 @@ const SYSTEM_PROMPT = [
   '  without judgement. If it went well, say that plainly without hype.',
   '- Address the reader as "you". Refer to yourself as "I" only if it is natural; usually do not.',
   '- If a goal is given, the paragraph should speak to how the day went against THAT goal.',
+  '- Task outcomes are the subject. Write about what happened to the tasks — what finished, what',
+  '  took longer or less than planned, what moved on. The day\'s totals are context, not the story.',
+  '- A task that moved to another day has MOVED ON. Never call it a failure, a miss, or a slip.',
 ].join('\n');
 
 /** Formats seconds as "2h 30m" / "45m" — the same shape the email's stat row uses. */
@@ -71,6 +74,31 @@ export function buildNarrativeFacts(payload: DailyDigestPayload): string {
     }
   } else {
     lines.push('They did not set a goal today.');
+  }
+
+  // The 2026-08-11 redesign makes ARI'S TAKE a statement about the task board, so the outcomes
+  // lead the fact sheet. Each line is measured: the state came from what the user ticked, the
+  // seconds from the capture pipeline. The caller does not even ask for a take when the board
+  // shows no outcome, so the model is never left to fill the space from the totals alone.
+  const tasks = payload.tasks ?? [];
+  if (tasks.length > 0) {
+    lines.push(`Their task board today (${tasks.length} task${tasks.length === 1 ? '' : 's'} planned):`);
+    for (const t of tasks) {
+      const movedTo = (t.deferredUntilDay ?? '').trim();
+      const outcome = t.state === 'done'
+        ? 'finished'
+        : movedTo.length > 0
+          ? `not finished, moved on to ${movedTo}`
+          : t.state === 'abandoned'
+            ? 'dropped'
+            : 'still open';
+      lines.push(
+        `- "${t.title}": ${outcome}. Planned ${humanDuration(t.plannedSeconds)}, `
+        + `actually worked ${humanDuration(t.actualSeconds)}.`
+      );
+    }
+  } else {
+    lines.push('They planned no tasks today.');
   }
 
   lines.push(`Time tracked at the computer: ${humanDuration(payload.trackedSeconds)}`);
