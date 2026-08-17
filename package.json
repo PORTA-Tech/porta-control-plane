@@ -11,7 +11,8 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --pool=threads --poolOptions.threads.singleThread",
-    "step16:load": "node ./scripts/step16-policy-load.mjs"
+    "step16:load": "node ./scripts/step16-policy-load.mjs",
+    "preview:report": "tsx ./scripts/preview-report-page.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.1",
