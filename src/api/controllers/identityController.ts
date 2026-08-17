@@ -249,7 +249,7 @@ export function createIdentityController(): Router {
 
   // Admin endpoint: update a user's primaryEmail by their user_id (login credential).
   // Usage: PATCH /v1/identity/admin/accounts/primary-email
-  // Body: { "user_id": "old@email.com", "primary_email": "new@email.com" }
+  // Body: { "user_id": "old@example.test", "primary_email": "new@example.test" }
   router.patch('/admin/accounts/primary-email', async (req: Request, res: Response) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;

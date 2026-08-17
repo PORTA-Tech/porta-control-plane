@@ -684,6 +684,47 @@ async function initializeFleetSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_app_category_labels_source
       ON app_category_labels (source);
   `);
+
+  // Step 10 phase D (2026-08-14) — client reports, sent from here rather than from the machine
+  // because the Resend key must never reach a user's device (spec §6a).
+  //
+  // report_id is the PRIMARY KEY and that is load-bearing, not incidental: it is the idempotency
+  // key, and it is what makes "the same report never sends twice" a property of the database
+  // instead of something a caller has to remember. A duplicate INSERT is a retry, never a new send,
+  // and a second copy in a client's inbox cannot be recalled.
+  //
+  // recipient_email belongs to somebody who never installed Ari and agreed to nothing (§12.0), so
+  // deletion is a real DELETE rather than a flag, and it is per report, on request.
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS sent_reports (
+      report_id         TEXT        PRIMARY KEY,
+      account_id        TEXT        NOT NULL,
+      device_id         TEXT        NOT NULL,
+      machine_id        TEXT        NOT NULL,
+      project_name      TEXT        NOT NULL,
+      range_start_local TEXT        NOT NULL,
+      range_end_local   TEXT        NOT NULL,
+      recipient_email   TEXT        NOT NULL,
+      recipient_name    TEXT        NOT NULL DEFAULT '',
+      from_name         TEXT        NOT NULL DEFAULT '',
+      reply_to          TEXT        NOT NULL DEFAULT '',
+      total_hours       DOUBLE PRECISION NOT NULL DEFAULT 0,
+      days_worked       INTEGER     NOT NULL DEFAULT 0,
+      tasks_completed   INTEGER     NOT NULL DEFAULT 0,
+      tasks_total       INTEGER     NOT NULL DEFAULT 0,
+      lines_json        JSONB       NOT NULL,
+      daily_json        JSONB       NOT NULL,
+      requested_at_utc  TIMESTAMPTZ NOT NULL,
+      sent_at_utc       TIMESTAMPTZ NULL,
+      send_state        TEXT        NOT NULL DEFAULT 'pending',
+      send_error        TEXT        NOT NULL DEFAULT ''
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_sent_reports_account
+      ON sent_reports (account_id, requested_at_utc DESC);
+  `);
 }
 
 export async function resetFleetPersistenceForTests(): Promise<void> {

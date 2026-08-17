@@ -10,6 +10,7 @@ import { createCohortController } from './api/controllers/cohortController.js';
 import { createExperimentController } from './api/controllers/experimentController.js';
 import { createAdapterController } from './api/controllers/adapterController.js';
 import { createAgentController } from './api/controllers/agentController.js';
+import { createReportsController } from './api/controllers/reportsController.js';
 import { createCategoryController } from './api/controllers/categoryController.js';
 import { createPolicyController } from './api/controllers/policyController.js';
 import { createAuthController } from './api/controllers/authController.js';
@@ -192,6 +193,9 @@ export function createApp(): Express {
 
   app.use('/auth', createAuthController());
   app.use('/api/agent', createAgentController());
+  // Step 10 — client reports. Device-authenticated like /api/agent: the machine is the only thing
+  // that can cause a report to be sent, which is the first of the three bounds in spec 12.4.
+  app.use('/api/reports', createReportsController());
   app.use('/api/device', createDeviceIdentityController());
   app.use('/api/client-release', createClientReleaseController());
 

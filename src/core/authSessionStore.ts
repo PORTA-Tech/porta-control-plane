@@ -1071,7 +1071,7 @@ export function readAuthAccessHelp(): AuthAccessHelpView {
       pattern: USER_ID_PATTERN_STRING,
       min_length: USER_ID_MIN,
       max_length: USER_ID_MAX,
-      example: 'name@company.com'
+      example: 'name@example.test'
     },
     password_rules: {
       min_length: PASSWORD_MIN,
