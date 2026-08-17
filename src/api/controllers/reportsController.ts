@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { requireDeviceAuth, type DeviceRequest } from '../middleware/deviceAuth.js';
+import { allowDeviceAccountAccess, requireDeviceAuth, type DeviceRequest } from '../middleware/deviceAuth.js';
+import { draftReportSummary, type SummaryTask } from '../../core/reportSummary.js';
 import { getAccountProfile } from '../../store/accountStore.js';
 import { sendEmail } from '../../core/emailService.js';
 import { buildReportEmail, type ReportEmailPayload } from '../../core/reportEmailBuilder.js';
@@ -166,6 +167,115 @@ async function resolveSender(accountId: string): Promise<
 
 export function createReportsController(): Router {
   const router = Router();
+
+  /**
+   * Phase 0.2 (2026-08-17) — who the report will come from.
+   *
+   * ReadIdentityAsync on the agent used to hardcode both of these empty, because §12.2 put sender
+   * identity on the server so there would be one copy of it. But the local preflight refuses an
+   * empty From name and an empty Reply-to, and the confirm screen prefills from the agent — so
+   * both boxes arrived blank and every send was refused until the user typed their own name and
+   * address. It worked for the founder, who knows what to type, and dead-ended everyone else.
+   *
+   * The fix keeps the single source and adds a way to READ it. This is data coming IN to the
+   * machine, not out: the account's own display name and email, returned to that account's own
+   * device. It is the same pair `resolveSender` uses at send time, so what the confirm screen
+   * shows is what the client will actually see — not a second copy that can drift.
+   */
+  router.get('/sender', requireDeviceAuth, async (req: DeviceRequest, res, next) => {
+    try {
+      const accountId = str(req.query.accountId);
+      if (!accountId) {
+        res.status(400).json({ success: false, reason: 'account_id_required' });
+        return;
+      }
+
+      if (!(await allowDeviceAccountAccess(req, accountId, 'reports/sender'))) {
+        res.status(403).json({ success: false, reason: 'device_account_mismatch' });
+        return;
+      }
+
+      const sender = await resolveSender(accountId);
+      if (!sender.ok) {
+        // The same reason codes the send path returns, so one vocabulary explains both.
+        res.status(200).json({ success: false, reason: sender.reason });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        fromName: sender.fromName,
+        fromAddress: FROM_ADDRESS,
+        replyTo: sender.replyTo
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Phase 1.4 (2026-08-17) — draft the summary paragraph.
+   *
+   * The request body is the ONLY thing the model sees, and it carries exactly the fields Yadin
+   * approved on 2026-08-17: the client-facing project name, and per task the client-facing label,
+   * status, hours and one-line result. Everything else on the wire is dropped here rather than
+   * being trusted not to matter — see `toSummaryFacts`.
+   *
+   * Drafting is not sending. Nothing here writes a report, and the user edits the result.
+   */
+  router.post('/summary', requireDeviceAuth, async (req: DeviceRequest, res, next) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const accountId = str(body.accountId);
+      if (!accountId) {
+        res.status(400).json({ success: false, reason: 'account_id_required' });
+        return;
+      }
+
+      if (!(await allowDeviceAccountAccess(req, accountId, 'reports/summary'))) {
+        res.status(403).json({ success: false, reason: 'device_account_mismatch' });
+        return;
+      }
+
+      const rawTasks = Array.isArray(body.tasks) ? body.tasks : [];
+      // Rebuilt field by field. A field the agent adds later cannot ride along into the model
+      // call by accident — it has to be added here, on purpose, which is the point.
+      const tasks: SummaryTask[] = rawTasks.map((entry) => {
+        const t = (entry ?? {}) as Record<string, unknown>;
+        const status = str(t.status);
+        return {
+          clientLabel: str(t.clientLabel),
+          status: (['planned', 'in_progress', 'done', 'blocked'].includes(status)
+            ? status
+            : 'planned') as SummaryTask['status'],
+          hours: num(t.hours),
+          result: str(t.result),
+          blockedReason: str(t.blockedReason)
+        };
+      }).filter((t) => t.clientLabel.length > 0);
+
+      if (tasks.length === 0) {
+        res.status(200).json({ success: false, reason: 'nothing_to_summarise' });
+        return;
+      }
+
+      const summary = await draftReportSummary({
+        projectName: str(body.projectName),
+        rangeStartLocal: str(body.rangeStartLocal),
+        rangeEndLocal: str(body.rangeEndLocal),
+        tasks
+      });
+
+      if (!summary) {
+        res.status(200).json({ success: false, reason: 'draft_unavailable' });
+        return;
+      }
+
+      res.status(200).json({ success: true, summary });
+    } catch (error) {
+      next(error);
+    }
+  });
 
   /**
    * Render exactly what the client would receive, and send nothing.
