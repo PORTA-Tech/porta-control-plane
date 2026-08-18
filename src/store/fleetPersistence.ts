@@ -721,6 +721,26 @@ async function initializeFleetSchema(): Promise<void> {
     );
   `);
 
+  // Phase 2b (2026-08-17) — the permanent link and the frozen page.
+  //
+  // page_html is the RENDERED page, not the data behind it. What the client opens has to be what
+  // was sent, forever, so re-rendering a stored object with a later version of the renderer is
+  // exactly the silent rewrite this must not do. Regenerating a report writes a NEW row with a NEW
+  // token instead.
+  //
+  // page_token is a long random value, never the report id and never sequential: the page has no
+  // login, because a client will not make an account, so the token IS the access control.
+  await activePool.query(`
+    ALTER TABLE sent_reports ADD COLUMN IF NOT EXISTS page_token TEXT;
+    ALTER TABLE sent_reports ADD COLUMN IF NOT EXISTS page_html  TEXT NOT NULL DEFAULT '';
+    ALTER TABLE sent_reports ADD COLUMN IF NOT EXISTS summary    TEXT NOT NULL DEFAULT '';
+  `);
+
+  await activePool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sent_reports_page_token
+      ON sent_reports (page_token) WHERE page_token IS NOT NULL;
+  `);
+
   await activePool.query(`
     CREATE INDEX IF NOT EXISTS idx_sent_reports_account
       ON sent_reports (account_id, requested_at_utc DESC);

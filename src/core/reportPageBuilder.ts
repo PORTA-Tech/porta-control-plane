@@ -221,6 +221,25 @@ function renderShare(page: ReportPage, totalHours: number): string {
 
 const MAX_COLUMN_PX = 150;
 
+/**
+ * Below this many worked days the day chart is replaced by a sentence. Yadin's decision,
+ * 2026-08-17, and one line to revert.
+ *
+ * <b>This is not hiding empty days.</b> Every worked day is still named, with its hours, in prose.
+ * What it stops is drawing a DISTRIBUTION when there is no distribution to draw: one tall column
+ * beside six flat lines reads as a chart that failed rather than as a short week, which is exactly
+ * how the thin-week fixture looked when phase 2a rendered it.
+ */
+const MIN_DAYS_FOR_CHART = 3;
+
+/** "17 August" · "14 and 17 August" · "12, 14 and 17 August" — a list a person would say aloud. */
+function joinDays(labels: string[]): string {
+  if (labels.length <= 1) {
+    return labels[0] ?? '';
+  }
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
+
 function renderDays(page: ReportPage): string {
   if (page.days.length === 0) {
     return '';
@@ -228,6 +247,26 @@ function renderDays(page: ReportPage): string {
 
   const dayTotals = page.days.map((d) => d.segments.reduce((s, seg) => s + seg.hours, 0));
   const peak = Math.max(...dayTotals, 0);
+
+  const worked = page.days
+    .map((d, i) => ({ label: d.label, hours: dayTotals[i] ?? 0 }))
+    .filter((d) => d.hours > 0);
+
+  if (worked.length > 0 && worked.length < MIN_DAYS_FOR_CHART) {
+    const total = worked.reduce((s, d) => s + d.hours, 0);
+    const sentence =
+      worked.length === 1
+        ? `${hoursLabel(total)}, worked on ${worked[0]!.label}.`
+        : `${hoursLabel(total)} across ${worked.length} days — ${joinDays(
+            worked.map((d) => `${d.label} (${hoursLabel(d.hours)})`)
+          )}.`;
+
+    return `
+  <div class="pad" style="padding-top:32px;">
+    <div class="sec-title">Effort by day</div>
+    <div class="sec-sub" style="padding-bottom:2px;">${esc(sentence)}</div>
+  </div>`;
+  }
 
   const columns = page.days
     .map((day, i) => {
@@ -437,6 +476,11 @@ export function buildReportPage(page: ReportPage): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Phase 2b. In the FROZEN page as well as on the response header, because the header is a
+     property of how this copy was served and the meta travels with the file wherever it goes —
+     saved, forwarded, or opened from disk. A client's project details must not be indexable. -->
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+<meta name="referrer" content="no-referrer">
 <title>${esc(page.projectName)} — progress report, ${esc(page.period)}</title>
 <style>
   .viz-root{

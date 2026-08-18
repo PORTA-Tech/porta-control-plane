@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { allowDeviceAccountAccess, requireDeviceAuth, type DeviceRequest } from '../middleware/deviceAuth.js';
 import { draftReportSummary, type SummaryTask } from '../../core/reportSummary.js';
+import { buildReportPage, type ReportPage, type ReportTask, type ReportTaskStatus } from '../../core/reportPageBuilder.js';
+import { buildCarrierEmail } from '../../core/reportCarrierEmail.js';
+import { randomBytes } from 'node:crypto';
 import { getAccountProfile } from '../../store/accountStore.js';
 import { sendEmail } from '../../core/emailService.js';
 import { buildReportEmail, type ReportEmailPayload } from '../../core/reportEmailBuilder.js';
@@ -55,6 +58,9 @@ interface ReportRequestBody {
   tasksTotal?: unknown;
   lines?: unknown;
   daily?: unknown;
+  // Phase 2b — approved 2026-08-17.
+  summary?: unknown;
+  nextSteps?: unknown;
 }
 
 function str(value: unknown): string {
@@ -164,6 +170,106 @@ async function resolveSender(accountId: string): Promise<
 
   return { ok: true, fromName, replyTo };
 }
+
+/**
+ * Phase 2b — where the report page lives. Overridable so a staging deploy links to itself.
+ */
+const PUBLIC_BASE_URL = (process.env.PORTA_PUBLIC_BASE_URL ?? 'https://porta-control-plane.onrender.com').replace(/\/+$/, '');
+
+/**
+ * The link's whole security model.
+ *
+ * 32 bytes of CSPRNG, base64url — 256 bits. Not the report id, not sequential, not derived from
+ * anything about the account: a client will not make an account, so the page has no login and this
+ * token IS the access control. Enumerating a counter would have been trivial, which is exactly why
+ * the report id is never used here.
+ */
+function newPageToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+function reportUrlFor(token: string): string {
+  return `${PUBLIC_BASE_URL}/r/${token}`;
+}
+
+const STATUS_VALUES: ReportTaskStatus[] = ['planned', 'in_progress', 'done', 'blocked'];
+
+function toStatus(value: unknown): ReportTaskStatus {
+  const s = str(value);
+  return (STATUS_VALUES as string[]).includes(s) ? (s as ReportTaskStatus) : 'planned';
+}
+
+/**
+ * Turn the approved payload into the renderer's input.
+ *
+ * Field by field, like `toSummaryFacts` and for the same reason: what a client's document can show
+ * is bounded by what is read HERE, not by what the agent happens to put on the wire. A field added
+ * upstream cannot reach a client's page without being added to this function on purpose.
+ */
+function toReportPage(body: ReportRequestBody, fromName: string, sentOn: string): ReportPage | null {
+  const projectName = str(body.projectName);
+  const rangeStartLocal = str(body.rangeStartLocal);
+  const rangeEndLocal = str(body.rangeEndLocal);
+
+  if (!projectName || !rangeStartLocal || !rangeEndLocal) {
+    return null;
+  }
+
+  const rawLines = Array.isArray(body.lines) ? body.lines : [];
+  const byLineId = new Map<string, { label: string; slot: number }>();
+
+  const tasks: ReportTask[] = rawLines
+    .map((entry) => {
+      const l = (entry ?? {}) as Record<string, unknown>;
+      const label = str(l.clientLabel);
+      const slot = Math.trunc(num(l.colourSlot));
+      byLineId.set(str(l.lineId), { label, slot });
+      return {
+        label,
+        status: toStatus(l.status),
+        hours: num(l.hours),
+        colourSlot: slot,
+        result: str(l.result),
+        dates: str(l.dates),
+        blockedReason: str(l.blockedReason)
+      };
+    })
+    .filter((t) => t.label.length > 0);
+
+  const rawDaily = Array.isArray(body.daily) ? body.daily : [];
+  const days = rawDaily.map((entry) => {
+    const d = (entry ?? {}) as Record<string, unknown>;
+    const rawSegments = Array.isArray(d.segments) ? d.segments : [];
+    return {
+      label: str(d.dateLabel) || str(d.dateLocal),
+      segments: rawSegments
+        .map((sEntry) => {
+          const s = (sEntry ?? {}) as Record<string, unknown>;
+          const ref = byLineId.get(str(s.lineId));
+          return {
+            taskLabel: ref?.label ?? '',
+            colourSlot: ref?.slot ?? 0,
+            hours: num(s.hours)
+          };
+        })
+        .filter((s) => s.hours > 0)
+    };
+  });
+
+  return {
+    projectName,
+    period: `${rangeStartLocal} – ${rangeEndLocal}`,
+    preparedBy: fromName,
+    sentOn,
+    summary: str(body.summary),
+    tasks,
+    days,
+    nextSteps: (Array.isArray(body.nextSteps) ? body.nextSteps : [])
+      .map((n) => str(n))
+      .filter((n) => n.length > 0)
+  };
+}
+
 
 export function createReportsController(): Router {
   const router = Router();
@@ -298,17 +404,19 @@ export function createReportsController(): Router {
         return;
       }
 
-      const payload = toEmailPayload(body, sender.fromName);
-      if (!payload) {
+      // THE REAL PAGE, THE SAME RENDERER THE SEND USES. A preview that could differ from what is
+      // stored would be a promise quietly broken, and the preview is mandatory before a first send
+      // precisely so the user sees the actual document.
+      const page = toReportPage(body, sender.fromName, 'Preview — not yet sent');
+      if (!page || page.tasks.length === 0) {
         res.status(400).json({ success: false, reason: 'invalid_report' });
         return;
       }
 
-      const { subject, html } = buildReportEmail(payload);
       res.status(200).json({
         success: true,
-        subject,
-        html,
+        subject: `${page.projectName} — progress report, ${page.period}`,
+        html: buildReportPage(page),
         fromName: sender.fromName,
         fromAddress: FROM_ADDRESS,
         replyTo: sender.replyTo
@@ -342,11 +450,19 @@ export function createReportsController(): Router {
         return;
       }
 
-      const payload = toEmailPayload(body, sender.fromName);
-      if (!payload) {
+      const sentOn = `Sent ${new Date().toISOString().slice(0, 10)}`;
+      const page = toReportPage(body, sender.fromName, sentOn);
+      if (!page || page.tasks.length === 0) {
         res.status(400).json({ success: false, reason: 'invalid_report' });
         return;
       }
+
+      // FROZEN HERE, ONCE. The rendered HTML is what gets stored and what the client will open
+      // forever; nothing re-renders it later, so a change to the renderer cannot rewrite a page
+      // somebody has already read. Regenerating a report writes a new row with a new token.
+      const pageToken = newPageToken();
+      const pageHtml = buildReportPage(page);
+      const reportUrl = reportUrlFor(pageToken);
 
       // BOUND 2 AND BOUND 3 IN ONE STEP: the row is written before anything is attempted, and the
       // insert fails closed if this id has been claimed before. A duplicate is a retry of something
@@ -356,23 +472,26 @@ export function createReportsController(): Router {
         accountId,
         deviceId: str(body.deviceId) || (req.authenticatedDeviceId ?? ''),
         machineId: str(body.machineId),
-        projectName: payload.projectName,
-        rangeStartLocal: payload.rangeStartLocal,
-        rangeEndLocal: payload.rangeEndLocal,
+        projectName: page.projectName,
+        rangeStartLocal: str(body.rangeStartLocal),
+        rangeEndLocal: str(body.rangeEndLocal),
         recipientEmail,
         recipientName: str(body.recipientName),
         fromName: sender.fromName,
         replyTo: sender.replyTo,
-        totalHours: payload.totalHours,
-        daysWorked: payload.daysWorked,
-        tasksCompleted: payload.tasksCompleted,
-        tasksTotal: payload.tasksTotal,
-        linesJson: JSON.stringify(payload.lines),
-        dailyJson: JSON.stringify(payload.daily),
+        totalHours: num(body.totalHours),
+        daysWorked: Math.trunc(num(body.daysWorked)),
+        tasksCompleted: Math.trunc(num(body.tasksCompleted)),
+        tasksTotal: Math.trunc(num(body.tasksTotal)),
+        linesJson: JSON.stringify(page.tasks),
+        dailyJson: JSON.stringify(page.days),
         requestedAtUtc: str(body.requestedAtUtc) || new Date().toISOString(),
         sentAtUtc: '',
         sendState: 'pending',
-        sendError: ''
+        sendError: '',
+        pageToken,
+        pageHtml,
+        summary: page.summary
       });
 
       if (!claimed) {
@@ -380,7 +499,15 @@ export function createReportsController(): Router {
         return;
       }
 
-      const { subject, html } = buildReportEmail(payload);
+      // THE EMAIL IS NOW A CARRIER, not the report. Mail clients strip the markup the charts need,
+      // so the document lives at the link and this message exists only to get someone there.
+      const { subject, html } = buildCarrierEmail({
+        projectName: page.projectName,
+        rangeStartLocal: str(body.rangeStartLocal),
+        rangeEndLocal: str(body.rangeEndLocal),
+        reportUrl,
+        fromName: sender.fromName
+      });
 
       const sent = await sendEmail({
         to: recipientEmail,
@@ -403,7 +530,7 @@ export function createReportsController(): Router {
       }
 
       console.log(`[reports] sent report ${reportId} for account ${accountId}`);
-      res.status(200).json({ success: true, reportId, sentAtUtc });
+      res.status(200).json({ success: true, reportId, sentAtUtc, reportUrl });
     } catch (error) {
       next(error);
     }

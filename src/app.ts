@@ -11,6 +11,7 @@ import { createExperimentController } from './api/controllers/experimentControll
 import { createAdapterController } from './api/controllers/adapterController.js';
 import { createAgentController } from './api/controllers/agentController.js';
 import { createReportsController } from './api/controllers/reportsController.js';
+import { getReportPageByToken } from './store/sentReportStore.js';
 import { createCategoryController } from './api/controllers/categoryController.js';
 import { createPolicyController } from './api/controllers/policyController.js';
 import { createAuthController } from './api/controllers/authController.js';
@@ -196,6 +197,40 @@ export function createApp(): Express {
   // Step 10 — client reports. Device-authenticated like /api/agent: the machine is the only thing
   // that can cause a report to be sent, which is the first of the three bounds in spec 12.4.
   app.use('/api/reports', createReportsController());
+
+  // ── Phase 2b (2026-08-17): the report page at its permanent link ────────────────────────────
+  //
+  // The ONLY unauthenticated route that serves customer content, so every property it needs is
+  // enforced here rather than assumed:
+  //
+  //   - The token is the access control. There is no login because a client will not make an
+  //     account, and 256 bits of CSPRNG is not guessable.
+  //   - It is NOT enumerable. There is no listing endpoint, no index, and a miss returns the same
+  //     flat 404 as a malformed token, so nothing here confirms whether a token exists.
+  //   - noindex/nofollow on the response AND inside the stored page.
+  //   - Only a report whose state is actually 'sent' resolves. A pending or failed row has a token
+  //     but was never delivered, and a link to one would show a client a report that does not exist.
+  //   - It never expires. A client can come back to it next year, which is the point.
+  app.get('/r/:token', async (req, res, next) => {
+    try {
+      const html = await getReportPageByToken(String(req.params.token ?? ''));
+
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      res.setHeader('Cache-Control', 'private, no-store');
+
+      if (!html) {
+        // Deliberately bare. An error that distinguished "no such report" from "not sent yet"
+        // would turn this into an oracle for probing tokens.
+        res.status(404).type('html').send('<!doctype html><meta name="robots" content="noindex"><title>Not found</title><p>This report link is not valid.</p>');
+        return;
+      }
+
+      res.status(200).type('html').send(html);
+    } catch (error) {
+      next(error);
+    }
+  });
   app.use('/api/device', createDeviceIdentityController());
   app.use('/api/client-release', createClientReleaseController());
 

@@ -43,6 +43,15 @@ export interface SentReportRecord {
   /** pending | sent | failed */
   sendState: string;
   sendError: string;
+  /**
+   * Phase 2b — the unguessable path segment the client opens. Long and random, never the report id
+   * and never sequential: there is no login on that page, so this token IS the access control.
+   */
+  pageToken: string;
+  /** The RENDERED page, frozen at send time. Never re-rendered — see fleetPersistence. */
+  pageHtml: string;
+  /** The paragraph the user approved. Stored with the snapshot because it is part of what was sent. */
+  summary: string;
 }
 
 const memoryStore = new Map<string, SentReportRecord>();
@@ -79,10 +88,12 @@ export async function claimReportForSend(record: SentReportRecord): Promise<bool
         report_id, account_id, device_id, machine_id, project_name,
         range_start_local, range_end_local, recipient_email, recipient_name,
         from_name, reply_to, total_hours, days_worked, tasks_completed, tasks_total,
-        lines_json, daily_json, requested_at_utc, sent_at_utc, send_state, send_error
+        lines_json, daily_json, requested_at_utc, sent_at_utc, send_state, send_error,
+        page_token, page_html, summary
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16::jsonb, $17::jsonb, $18::timestamptz, NULL, 'pending', ''
+        $16::jsonb, $17::jsonb, $18::timestamptz, NULL, 'pending', '',
+        $19, $20, $21
       )
       ON CONFLICT (report_id) DO NOTHING;
     `,
@@ -91,7 +102,8 @@ export async function claimReportForSend(record: SentReportRecord): Promise<bool
       record.rangeStartLocal, record.rangeEndLocal, record.recipientEmail, record.recipientName,
       record.fromName, record.replyTo, record.totalHours, record.daysWorked,
       record.tasksCompleted, record.tasksTotal,
-      record.linesJson, record.dailyJson, record.requestedAtUtc
+      record.linesJson, record.dailyJson, record.requestedAtUtc,
+      record.pageToken, record.pageHtml, record.summary
     ]
   );
 
@@ -128,6 +140,42 @@ export async function markReportOutcome(
   );
 }
 
+/**
+ * Phase 2b — serve the frozen page for a token.
+ *
+ * Returns the stored HTML and nothing else. Deliberately narrow: the public route has no auth, so
+ * it must never be able to reach the recipient's address, the account id, or any other row on the
+ * table. It also refuses anything not actually SENT — a pending or failed row has a token but was
+ * never delivered, and a link to it would show a client a report that does not exist.
+ *
+ * There is no listing function beside this one, and there must not be: the page is unguessable OR
+ * it is enumerable, never both.
+ */
+export async function getReportPageByToken(token: string): Promise<string | null> {
+  if (!token || token.length < 20) {
+    return null;
+  }
+
+  const db = await pool();
+  if (!db) {
+    for (const record of memoryStore.values()) {
+      if (record.pageToken === token && record.sendState === 'sent' && record.pageHtml) {
+        return record.pageHtml;
+      }
+    }
+    return null;
+  }
+
+  const result = await db.query(
+    `SELECT page_html FROM sent_reports
+      WHERE page_token = $1 AND send_state = 'sent' AND page_html <> ''
+      LIMIT 1;`,
+    [token]
+  );
+
+  return result.rows[0]?.page_html ?? null;
+}
+
 export async function getSentReport(reportId: string): Promise<SentReportRecord | null> {
   const db = await pool();
   if (!db) {
@@ -146,6 +194,9 @@ export async function getSentReport(reportId: string): Promise<SentReportRecord 
     deviceId: row.device_id,
     machineId: row.machine_id,
     projectName: row.project_name,
+    pageToken: row.page_token ?? '',
+    pageHtml: row.page_html ?? '',
+    summary: row.summary ?? '',
     rangeStartLocal: row.range_start_local,
     rangeEndLocal: row.range_end_local,
     recipientEmail: row.recipient_email,
