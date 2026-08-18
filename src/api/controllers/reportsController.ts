@@ -174,7 +174,20 @@ async function resolveSender(accountId: string): Promise<
 /**
  * Phase 2b — where the report page lives. Overridable so a staging deploy links to itself.
  */
-const PUBLIC_BASE_URL = (process.env.PORTA_PUBLIC_BASE_URL ?? 'https://porta-control-plane.onrender.com').replace(/\/+$/, '');
+const DEFAULT_BASE_URL = 'https://porta-control-plane.onrender.com';
+const PUBLIC_BASE_URL = (process.env.PORTA_PUBLIC_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
+
+/**
+ * Yadin, 2026-08-17: report links are PERMANENT, so they must not be minted on a hostname he is
+ * about to move off. Until PORTA_PUBLIC_BASE_URL names his own domain the send is refused rather
+ * than quietly producing a link that will outlive the domain it points at.
+ *
+ * A refusal is recoverable; a link already in a client's inbox is not. Preview is unaffected — it
+ * never mints a token — so the whole flow stays usable while the DNS change is made.
+ */
+function baseUrlIsConfigured(): boolean {
+  return PUBLIC_BASE_URL.length > 0 && PUBLIC_BASE_URL !== DEFAULT_BASE_URL;
+}
 
 /**
  * The link's whole security model.
@@ -447,6 +460,12 @@ export function createReportsController(): Router {
       const sender = await resolveSender(accountId);
       if (!sender.ok) {
         res.status(200).json({ success: false, reason: sender.reason });
+        return;
+      }
+
+      // BEFORE anything is claimed, minted or sent: see baseUrlIsConfigured.
+      if (!baseUrlIsConfigured()) {
+        res.status(200).json({ success: false, reason: 'report_base_url_not_configured' });
         return;
       }
 
