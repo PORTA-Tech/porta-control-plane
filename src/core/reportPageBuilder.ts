@@ -382,7 +382,9 @@ function renderDays(page: ReportPage): string {
     <div class="sec-title">Effort by day</div>
     <div class="sec-sub" style="padding-bottom:6px;">Each day split by the task worked on. Days with
       no work on this project are shown as gaps rather than removed.${unrecordedNote}</div>
-    <div class="cols">${columns}
+    <div class="colsWrap">
+      <div class="cols">${columns}
+      </div>
     </div>
   </div>`;
 }
@@ -500,6 +502,7 @@ function renderTable(page: ReportPage, totalHours: number, daysWorked: number): 
   return `
   <div class="pad" style="padding-top:30px;">
     <div class="sec-title" style="padding-bottom:12px;">All tasks</div>
+    <div class="tablewrap">
     <table class="tv">
       <thead>
         <tr>
@@ -518,6 +521,7 @@ function renderTable(page: ReportPage, totalHours: number, daysWorked: number): 
         </tr>
       </tbody>
     </table>
+    </div>
   </div>`;
 }
 
@@ -657,6 +661,27 @@ export function buildReportPage(page: ReportPage): string {
     .kpis{grid-template-columns:repeat(2,1fr);}
     header{flex-direction:column;}
     .by{text-align:left;}
+
+    /* The day chart, which had no mobile rules at all and was silently clipped on a phone.
+       Tighter gap and smaller type first, so a normal week fits without scrolling. */
+    .cols{gap:6px;height:150px;}
+    .coltot{font-size:10px;padding-bottom:4px;}
+    .collab{font-size:10px;padding-top:6px;}
+    .stack{max-width:44px;}
+    .zero{max-width:44px;}
+
+    /* Long ranges still will not fit, so the row scrolls rather than losing columns off the edge.
+       A clipped chart is worse than a scrolled one: it hides days without ever saying it did. */
+    .colsWrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+    .colsWrap .cols{min-width:100%;width:max-content;}
+    .colsWrap .colwrap{min-width:34px;}
+
+    /* A safety net only. The table fits a phone as it is, so nothing scrolls today; this
+       exists so that if a column is ever added it scrolls inside itself rather than
+       stretching the page or being cut off at the edge. */
+    .tablewrap{overflow-x:auto;}
+    h1{font-size:26px;}
+    .legend{gap:10px;}
   }
 </style>
 </head>

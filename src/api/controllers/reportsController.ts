@@ -219,6 +219,37 @@ function toStatus(value: unknown): ReportTaskStatus {
  * is bounded by what is read HERE, not by what the agent happens to put on the wire. A field added
  * upstream cannot reach a client's page without being added to this function on purpose.
  */
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * "2026-08-12" becomes "12 Aug" — the form the agreed mockup uses, at every width.
+ *
+ * The agent sends each day as a plain local date and the renderer printed it verbatim, so a week of
+ * columns carried seven ten-character labels. Those labels are set not to wrap, so on a phone the
+ * chart row overflowed its container and was clipped. The long form also just looked wrong on a
+ * desktop, which is why this is not a mobile-only change.
+ *
+ * Parsed by hand rather than through Date: `new Date('2026-08-12')` is midnight UTC, and reading a
+ * day back out of that in a westward timezone returns the 11th. This is a label for a date the user
+ * already recorded in their own local time, so it must not travel through a timezone at all.
+ *
+ * Anything that is not a plain yyyy-mm-dd passes through untouched.
+ */
+export function shortDayLabel(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) {
+    return value;
+  }
+
+  const month = MONTHS_SHORT[Number(match[2]) - 1];
+  const day = Number(match[3]);
+  if (month === undefined || day < 1 || day > 31) {
+    return value;
+  }
+
+  return `${day} ${month}`;
+}
+
 function toReportPage(body: ReportRequestBody, fromName: string, sentOn: string): ReportPage | null {
   const projectName = str(body.projectName);
   const rangeStartLocal = str(body.rangeStartLocal);
@@ -254,7 +285,7 @@ function toReportPage(body: ReportRequestBody, fromName: string, sentOn: string)
     const d = (entry ?? {}) as Record<string, unknown>;
     const rawSegments = Array.isArray(d.segments) ? d.segments : [];
     return {
-      label: str(d.dateLabel) || str(d.dateLocal),
+      label: str(d.dateLabel) || shortDayLabel(str(d.dateLocal)),
       // The day's own measured hours, carried through separately from the split. The agent has
       // always sent this; dropping it here is what let the day chart disagree with the table.
       hours: num(d.hours),
