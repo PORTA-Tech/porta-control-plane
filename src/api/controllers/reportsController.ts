@@ -255,6 +255,9 @@ function toReportPage(body: ReportRequestBody, fromName: string, sentOn: string)
     const rawSegments = Array.isArray(d.segments) ? d.segments : [];
     return {
       label: str(d.dateLabel) || str(d.dateLocal),
+      // The day's own measured hours, carried through separately from the split. The agent has
+      // always sent this; dropping it here is what let the day chart disagree with the table.
+      hours: num(d.hours),
       segments: rawSegments
         .map((sEntry) => {
           const s = (sEntry ?? {}) as Record<string, unknown>;

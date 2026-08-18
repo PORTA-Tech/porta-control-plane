@@ -20,9 +20,26 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildReportPage, type ReportPage, type ReportDay } from '../src/core/reportPageBuilder.js';
 
-/** Build a day column from (task label, slot, hours) triples. */
+/** Build a day column from (task label, slot, hours) triples. Hours default to the split's sum. */
 function day(label: string, ...segs: Array<[string, number, number]>): ReportDay {
-  return { label, segments: segs.map(([taskLabel, colourSlot, hours]) => ({ taskLabel, colourSlot, hours })) };
+  const segments = segs.map(([taskLabel, colourSlot, hours]) => ({ taskLabel, colourSlot, hours }));
+  return { label, hours: segments.reduce((s, x) => s + x.hours, 0), segments };
+}
+
+/**
+ * A day whose hours are known but whose per-task split is missing or incomplete.
+ *
+ * Every fixture above uses `day()`, where the total and the split agree by construction — which is
+ * precisely why the day chart could disagree with the table for weeks without a fixture noticing.
+ * Real data does not behave that way: the per-task grain only began recording on 17 August 2026, so
+ * every earlier day has hours and no split, and a day can be partly attributed.
+ */
+function partialDay(label: string, hours: number, ...segs: Array<[string, number, number]>): ReportDay {
+  return {
+    label,
+    hours,
+    segments: segs.map(([taskLabel, colourSlot, hours]) => ({ taskLabel, colourSlot, hours }))
+  };
 }
 
 // ── 1. A FULL WEEK ─────────────────────────────────────────────────────────────────────────────
@@ -213,12 +230,49 @@ const noResults: ReportPage = {
   nextSteps: []
 };
 
+// ── 6. THE GRAIN CHANGEOVER ────────────────────────────────────────────────────────────────────
+// The state that broke in production and that no other fixture could produce: a range spanning the
+// day the per-task grain started recording. These are Yadin's real numbers from 13–18 August 2026.
+//
+//   13 Aug  6.1h measured, no split at all        → was drawn as a gap. A worked day shown as empty
+//   14 Aug  2.0h measured, no split at all        → was drawn as a gap
+//   17 Aug  2.6h measured, only 0.7h attributed   → was drawn at 0.7h, disagreeing with the table
+//   18 Aug  2.1h measured, fully attributed       → the only day that was ever right
+//
+// It also pins the thin-week rule: four worked days must draw a CHART. Counted from the split it
+// saw two, fell below the threshold, and replaced a worked week with a sentence.
+const grainChangeover: ReportPage = {
+  projectName: 'PORTA SYSTEM',
+  period: '13 – 18 August 2026',
+  preparedBy: 'Yadin',
+  sentOn: 'Sent 18 Aug 2026',
+  summary:
+    'Six days on the system, four of them worked. The per-task breakdown only began part way '
+    + 'through, so the earlier days show their hours without a split.',
+  tasks: [
+    { label: 'Improve the system', status: 'in_progress', hours: 8.1, colourSlot: 1, result: 'Report page and tracking hardened.', dates: 'from 13 Aug' },
+    { label: 'Work on phase 2, the report', status: 'in_progress', hours: 1.3, colourSlot: 2, result: 'Renderer built to the mockup.', dates: 'from 18 Aug' },
+    { label: 'Finish the send button', status: 'done', hours: 1.7, colourSlot: 3, result: 'Sends and copies the link.', dates: '17 Aug' },
+    { label: 'Add the task page', status: 'done', hours: 0.9, colourSlot: 4, result: 'Listed with filters.', dates: '17 Aug' }
+  ],
+  days: [
+    partialDay('13 Aug', 6.1),
+    partialDay('14 Aug', 2.0),
+    partialDay('15 Aug', 0),
+    partialDay('16 Aug', 0),
+    partialDay('17 Aug', 2.6, ['Add the task page', 4, 0.7]),
+    partialDay('18 Aug', 2.1, ['Work on phase 2, the report', 2, 1.3], ['Improve the system', 1, 0.8])
+  ],
+  nextSteps: ['Finish phase 3, the pages.']
+};
+
 const STATES: Array<{ file: string; title: string; page: ReportPage }> = [
   { file: '1-full-week.html', title: 'A full week — four tasks, two days not worked', page: fullWeek },
   { file: '2-thin-week.html', title: 'A thin week — two tasks, 3.7h, one day worked', page: thinWeek },
   { file: '3-crowded.html', title: 'A crowded project — twelve tasks, four folded into Other', page: crowded },
   { file: '4-all-complete.html', title: 'Everything complete — no in-progress, nothing blocked', page: allDone },
-  { file: '5-no-result-lines.html', title: 'Every result line skipped — hours and names only', page: noResults }
+  { file: '5-no-result-lines.html', title: 'Every result line skipped — hours and names only', page: noResults },
+  { file: '6-grain-changeover.html', title: 'The grain changeover — days with hours but no split', page: grainChangeover }
 ];
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

@@ -34,10 +34,24 @@ export interface ReportTask {
   blockedReason?: string;
 }
 
-/** One day column. `segments` are the per-task splits that phase 0.1 records. */
+/**
+ * One day column.
+ *
+ * `hours` is the day's OWN total and the only authority on whether the day was worked. It is the
+ * same measurement the headline figures and the table are built from, so a day can never be worth
+ * one thing here and another there.
+ *
+ * `segments` are the per-task split, and are a SEPARATE, less complete measurement: they come from
+ * the per-task-per-day grain that only began recording on 17 August 2026, and they carry only time
+ * that was attributed to a task. So segments may be missing entirely on an older day, or sum to
+ * less than `hours` on a day only partly attributed. Neither means the day was not worked, which
+ * is why the total is never derived from them.
+ */
 export interface ReportDay {
   /** Short label under the column, e.g. "12 Aug". */
   label: string;
+  /** The day's measured hours. 0, and only 0, means genuinely not worked. */
+  hours: number;
   segments: Array<{ taskLabel: string; colourSlot: number; hours: number }>;
 }
 
@@ -79,6 +93,14 @@ const PALETTE: Array<{ fill: string; ink: string }> = [
 
 /** Slot 0. Neutral by design: "Other" is an absence of a slot, not a ninth colour. */
 const OTHER = { fill: '#c3c2b7', ink: '#0b0b0b' };
+
+/**
+ * Time that was measured but never attributed to a task. Deliberately LIGHTER than OTHER, because
+ * the two say different things: "Other" is known tasks folded together, this is "nobody recorded
+ * which task this went to". Drawing both in the same neutral made them one indistinguishable band.
+ * The distinction is also stated in words under the chart, so it never rests on colour alone.
+ */
+const UNRECORDED_FILL = '#e1e0d9';
 const OTHER_LABEL = 'Other';
 
 function slotColour(slot: number): { fill: string; ink: string } {
@@ -134,7 +156,8 @@ function foldForCharts(
   }
 
   const folded = other.reduce((sum, e) => sum + e.hours, 0);
-  return [...own, { label: `${OTHER_LABEL} (${other.length} tasks)`, colourSlot: 0, hours: folded }];
+  const count = `${other.length} ${other.length === 1 ? 'task' : 'tasks'}`;
+  return [...own, { label: `${OTHER_LABEL} (${count})`, colourSlot: 0, hours: folded }];
 }
 
 function renderKpis(page: ReportPage, totalHours: number, daysWorked: number): string {
@@ -232,6 +255,13 @@ const MAX_COLUMN_PX = 150;
  */
 const MIN_DAYS_FOR_CHART = 3;
 
+/**
+ * Hours below this are treated as fully attributed rather than drawing a sliver of "unrecorded".
+ * The two measurements are rounded to one decimal independently, so they can differ by a rounding
+ * step on a day that is genuinely complete. 0.05 is half of that step.
+ */
+const UNATTRIBUTED_EPSILON_HOURS = 0.05;
+
 /** "17 August" · "14 and 17 August" · "12, 14 and 17 August" — a list a person would say aloud. */
 function joinDays(labels: string[]): string {
   if (labels.length <= 1) {
@@ -245,11 +275,17 @@ function renderDays(page: ReportPage): string {
     return '';
   }
 
-  const dayTotals = page.days.map((d) => d.segments.reduce((s, seg) => s + seg.hours, 0));
+  // The day's own hours, NEVER the sum of its segments. Deriving the total from the split was the
+  // bug: a day worked before the per-task grain existed summed to zero and drew as a gap while the
+  // table beside it showed the real hours. Seen live at 6.1h in the table against an empty column,
+  // and at 2.6h against 0.7h on a day only partly attributed.
+  const dayTotals = page.days.map((d) => d.hours);
   const peak = Math.max(...dayTotals, 0);
 
+  // Worked days are counted from the day's own hours for the same reason. Counting them from the
+  // segments made the thin-week rule fire on weeks that were fully worked.
   const worked = page.days
-    .map((d, i) => ({ label: d.label, hours: dayTotals[i] ?? 0 }))
+    .map((d) => ({ label: d.label, hours: d.hours }))
     .filter((d) => d.hours > 0);
 
   if (worked.length > 0 && worked.length < MIN_DAYS_FOR_CHART) {
@@ -287,32 +323,65 @@ function renderDays(page: ReportPage): string {
         day.segments.map((s) => ({ label: s.taskLabel, colourSlot: s.colourSlot, hours: s.hours }))
       ).filter((s) => s.hours > 0);
 
+      // The column is always as tall as the day's OWN hours, so it can never contradict the table.
       const columnPx = Math.max(4, Math.round((total / peak) * MAX_COLUMN_PX));
-      const segs = folded
-        .map((s) => {
-          const c = slotColour(s.colourSlot);
-          const px = Math.max(2, Math.round((s.hours / total) * columnPx));
-          const tip = `${day.label} · ${s.label} · ${hoursLabel(s.hours)}`;
-          return `<div class="seg" data-tip="${esc(tip)}" style="height:${px}px;background:${c.fill};"></div>`;
-        })
-        .join('\n          ');
+
+      // What the split actually accounts for. It can be less than the day: an older day has no
+      // split at all, and a day can be only partly attributed. It is never scaled up to cover the
+      // difference, because stretching a known 0.7h to fill a 2.6h column would claim those hours
+      // went to that task when nothing recorded that they did.
+      const attributed = Math.min(
+        folded.reduce((sum, s) => sum + s.hours, 0),
+        total
+      );
+      const unattributed = total - attributed;
+
+      const bands = folded.map((s) => {
+        const c = slotColour(s.colourSlot);
+        const px = Math.max(2, Math.round((s.hours / total) * columnPx));
+        const tip = `${day.label} · ${s.label} · ${hoursLabel(s.hours)}`;
+        return `<div class="seg" data-tip="${esc(tip)}" style="height:${px}px;background:${c.fill};"></div>`;
+      });
+
+      // The remainder, in the same neutral the charts already use for "Other". When none of the day
+      // was attributed this IS the whole column: one plain bar at the day's real height, which is
+      // the honest drawing of "these hours happened, the per-task split was not recorded".
+      if (unattributed > UNATTRIBUTED_EPSILON_HOURS) {
+        const px = Math.max(2, Math.round((unattributed / total) * columnPx));
+        const tip = `${day.label} · ${hoursLabel(unattributed)} · split not recorded`;
+        bands.push(
+          `<div class="seg" data-tip="${esc(tip)}" style="height:${px}px;background:${UNRECORDED_FILL};"></div>`
+        );
+      }
 
       return `
       <div class="colwrap">
         <div class="coltot">${hoursLabel(total)}</div>
         <div class="stack" style="height:${columnPx}px;">
-          ${segs}
+          ${bands.join('\n          ')}
         </div>
         <div class="collab">${esc(day.label)}</div>
       </div>`;
     })
     .join('');
 
+  // Said in words whenever it applies, so the pale band never has to be decoded from its colour.
+  const anyUnrecorded = page.days.some(
+    (d) =>
+      d.hours > 0 &&
+      d.hours - Math.min(d.segments.reduce((sum, s) => sum + s.hours, 0), d.hours) >
+        UNATTRIBUTED_EPSILON_HOURS
+  );
+  const unrecordedNote = anyUnrecorded
+    ? ' Paler sections are hours that were measured without a per-task breakdown, so the total for'
+      + ' that day is known but its split is not.'
+    : '';
+
   return `
   <div class="pad" style="padding-top:32px;">
     <div class="sec-title">Effort by day</div>
     <div class="sec-sub" style="padding-bottom:6px;">Each day split by the task worked on. Days with
-      no work on this project are shown as gaps rather than removed.</div>
+      no work on this project are shown as gaps rather than removed.${unrecordedNote}</div>
     <div class="cols">${columns}
     </div>
   </div>`;
@@ -454,7 +523,8 @@ function renderTable(page: ReportPage, totalHours: number, daysWorked: number): 
 
 export function buildReportPage(page: ReportPage): string {
   const totalHours = page.tasks.reduce((s, t) => s + t.hours, 0);
-  const daysWorked = page.days.filter((d) => d.segments.reduce((s, x) => s + x.hours, 0) > 0).length;
+  // Same rule as the chart: a day is worked because it has hours, not because it has a split.
+  const daysWorked = page.days.filter((d) => d.hours > 0).length;
   const doneCount = page.tasks.filter((t) => t.status === 'done').length;
   const progressPct = page.tasks.length > 0 ? (doneCount / page.tasks.length) * 100 : 0;
 
