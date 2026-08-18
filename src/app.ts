@@ -215,6 +215,29 @@ export function createApp(): Express {
     try {
       const html = await getReportPageByToken(String(req.params.token ?? ''));
 
+      // Override the restrictive default CSP, exactly as /launch above does and for the same
+      // reason. The frozen report page is ONE self-contained file: an inline <style> block, ~40
+      // inline style= attributes, and one inline <script> that positions the chart tooltips.
+      // Under the global `default-src 'none'` the browser receives correct HTML and silently drops
+      // every one of those, so the page arrives as unstyled text and the tooltips do nothing —
+      // worst on a phone, where no layout survives at all.
+      //
+      // This is deliberately per-route. The global default stays as it is: every API route serves
+      // JSON and must keep `default-src 'none'`.
+      //
+      // The allowances are the smallest set the page actually needs, and none of them can reach
+      // the network:
+      //   - style-src/script-src 'unsafe-inline' — the page's own markup, frozen at send time.
+      //     No external origin is permitted, so nothing can be pulled in or sent out.
+      //   - img-src data: — no report embeds an image today, but a data: URI cannot make a
+      //     request, and leaving it out is how this same bug comes back the day one does.
+      //   - form-action 'none' — the page has no form and must never gain one.
+      // If the renderer ever needs a genuinely external resource, that is a decision to take
+      // here, not a directive to loosen quietly.
+      res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
+      );
       res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
       res.setHeader('Referrer-Policy', 'no-referrer');
       res.setHeader('Cache-Control', 'private, no-store');
