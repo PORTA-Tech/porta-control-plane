@@ -630,7 +630,7 @@ export function buildReportPage(page: ReportPage): string {
   .task .bar{width:3px;border-radius:2px;flex:none;}
   .task .body{flex:1;min-width:0;}
   .task .name{font-size:15px;font-weight:600;line-height:1.35;}
-  .task .res{font-size:13.5px;color:var(--ink-2);line-height:1.65;padding-top:5px;max-width:62ch;}
+  .task .res{font-size:13.5px;color:var(--ink-2);line-height:1.65;padding-top:5px;max-width:62ch;overflow-wrap:anywhere;}
   .task .meta{text-align:right;white-space:nowrap;flex:none;}
   .task .hrs{font-size:14px;font-variant-numeric:tabular-nums;font-weight:600;}
   .task .dates{font-size:11px;color:var(--muted);padding-top:5px;}
