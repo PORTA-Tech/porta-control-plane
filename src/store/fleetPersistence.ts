@@ -556,6 +556,27 @@ async function initializeFleetSchema(): Promise<void> {
       ON digest_log (account_id, date_local);
   `);
 
+  // The weekly digest keeps its OWN send log. See weeklyDigestLogStore for why it is not
+  // digest_log: that table is keyed on a DATE, and one day carrying both cadences would make one
+  // silently suppress the other.
+  await activePool.query(`
+    CREATE TABLE IF NOT EXISTS weekly_digest_log (
+      machine_id      TEXT        NOT NULL,
+      account_id      TEXT,
+      week_end_local  TEXT        NOT NULL,
+      tracked_seconds INTEGER     NOT NULL DEFAULT 0,
+      fired           BOOLEAN     NOT NULL DEFAULT FALSE,
+      failure_reason  TEXT,
+      sent_at_utc     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (machine_id, week_end_local)
+    );
+  `);
+
+  await activePool.query(`
+    CREATE INDEX IF NOT EXISTS idx_weekly_digest_log_account_week
+      ON weekly_digest_log (account_id, week_end_local);
+  `);
+
   // Safe migration: coarse per-app foreground time for the day (JSON array of
   // {label, seconds}). Powers the console per-app view and the server-fallback digest.
   await activePool.query(`

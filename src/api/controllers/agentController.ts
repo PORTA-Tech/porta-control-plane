@@ -10,8 +10,10 @@ import { allowDeviceAccountAccess, attachDeviceIdentity, requireDeviceAuth, type
 import { incrementAuditMetric } from '../../core/policyGovernanceStore.js';
 import { getAccountProfile } from '../../store/accountStore.js';
 import { buildDigestEmail, type DailyDigestPayload, type DigestMissingField } from '../../core/digestEmailBuilder.js';
+import { buildWeeklyDigestEmail, type WeeklyDigestPayload } from '../../core/weeklyDigestBuilder.js';
 import { sendEmail } from '../../core/emailService.js';
 import { appendDigestLogEntry, wasDigestSentForAccount } from '../../store/digestLogStore.js';
+import { appendWeeklyDigestLogEntry, wasWeeklyDigestSentForAccount } from '../../store/weeklyDigestLogStore.js';
 import { isWithinAgentDigestSendWindow, isFutureDubaiDate, hasReportableTrackedTime } from '../../core/digestSendWindow.js';
 import { buildNarrativeLine, NARRATIVE_KINDS, sanitizeNarrativeTasks, type NarrativeKind, type NarrativeSituation } from '../../core/narrativeService.js';
 import { appendUptimeSample } from '../../store/machineUptimeStore.js';
@@ -808,6 +810,105 @@ export function createAgentController(): Router {
 
   // Daily digest -- sent by the agent at 23:30 Dubai time (19:30 UTC) when
   // the user has been active for at least 1 hour.
+  /**
+   * The WEEKLY digest — Chat 8 item 1. Yadin's decision, 2026-08-25: it goes out MONDAY 07:00
+   * LOCAL, and Sunday's daily still sends. The agent owns that clock, because only the agent knows
+   * the user's local Monday; this endpoint sends whatever week it is handed, whenever it is handed
+   * it, and refuses only what it can prove is wrong.
+   *
+   * NOTE ON WHY THIS IS NOT A CRON: every section but the strip and the four figures is built from
+   * task and project data, and NONE of that exists on this server — daily_stats holds per-day
+   * metrics only, the daily's task array is rendered and discarded, and there is no project store
+   * anywhere in this repo. So there is no server-side fallback for the weekly and there cannot be
+   * one until that changes. If the agent does not post, no weekly goes out, and that is honest:
+   * the alternative is an email with four of its eight sections missing.
+   */
+  router.post('/weekly-digest', requireDeviceAuth, async (req, res, next) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const accountId = typeof body.accountId === 'string' && body.accountId.trim().length > 0
+        ? body.accountId.trim()
+        : null;
+
+      if (!accountId) {
+        res.status(400).json({ error: 'accountId is required' });
+        return;
+      }
+
+      const machineId = typeof body.machineId === 'string' ? body.machineId.trim() : '';
+      const weekStartLocal = typeof body.weekStartLocal === 'string' ? body.weekStartLocal.trim() : '';
+      const weekEndLocal = typeof body.weekEndLocal === 'string' ? body.weekEndLocal.trim() : '';
+
+      // The week's END date is this email's identity: it keys the dedup row, so a malformed one
+      // would let the same week send twice. Refuse rather than guess a date.
+      const wellFormed = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d);
+      if (!wellFormed(weekStartLocal) || !wellFormed(weekEndLocal)) {
+        res.status(400).json({ error: 'weekStartLocal and weekEndLocal must be YYYY-MM-DD' });
+        return;
+      }
+      if (weekEndLocal < weekStartLocal) {
+        res.status(400).json({ error: 'weekEndLocal must not precede weekStartLocal' });
+        return;
+      }
+
+      // A week that has not finished cannot be reported on. Reuses the daily's Dubai-future guard,
+      // which is the same wrong-day stamping bug seen from a week away.
+      if (isFutureDubaiDate(weekEndLocal)) {
+        console.warn('[weekly-digest] Rejected weekly for account ' + accountId + ' machine ' + machineId + ' week ending ' + weekEndLocal + ': future_week_end');
+        res.status(202).json({ accepted: true, sent: false, reason: 'future_week_end' });
+        return;
+      }
+
+      const profile = await getAccountProfile(accountId);
+      if (!profile) {
+        await appendWeeklyDigestLogEntry({
+          machineId,
+          accountId,
+          weekEndLocal,
+          trackedSeconds: typeof body.trackedSeconds === 'number' ? body.trackedSeconds : 0,
+          fired: false,
+          failureReason: 'no_profile',
+          sentAtUtc: new Date().toISOString(),
+        });
+        res.status(202).json({ accepted: true, sent: false, reason: 'no_profile' });
+        return;
+      }
+
+      // ONE weekly per account per week, whatever asks for it. Its own log, not the daily's.
+      const alreadySent = await wasWeeklyDigestSentForAccount(accountId, weekEndLocal);
+      if (alreadySent) {
+        console.log('[weekly-digest] Skipped duplicate weekly for account ' + accountId + ' (week ending ' + weekEndLocal + ')');
+        res.status(200).json({ accepted: true, sent: false, reason: 'already_sent' });
+        return;
+      }
+
+      const payload = body as unknown as WeeklyDigestPayload;
+      const baseUrl = req.protocol + '://' + req.get('host');
+      const { subject, html } = buildWeeklyDigestEmail(payload, baseUrl + '/launch');
+      const sent = await sendEmail({ to: profile.primaryEmail, subject, html });
+
+      await appendWeeklyDigestLogEntry({
+        machineId,
+        accountId,
+        weekEndLocal,
+        trackedSeconds: typeof body.trackedSeconds === 'number' ? body.trackedSeconds : 0,
+        fired: sent,
+        failureReason: sent ? null : 'send_failed',
+        sentAtUtc: new Date().toISOString(),
+      });
+
+      if (sent) {
+        console.log('[weekly-digest] Sent weekly for account ' + accountId + ' to ' + profile.primaryEmail + ' (week ending ' + weekEndLocal + ')');
+      } else {
+        console.warn('[weekly-digest] Failed to send weekly for account ' + accountId + ' (week ending ' + weekEndLocal + ')');
+      }
+
+      res.status(200).json({ accepted: true, sent });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.post('/daily-digest', requireDeviceAuth, async (req, res, next) => {
     try {
       const body = req.body as Record<string, unknown>;

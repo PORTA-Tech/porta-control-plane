@@ -106,7 +106,7 @@ export const RESIDUAL_BROWSING_LABEL = 'Other browsing';
  * it is hoisted and usable anywhere in the builder — the goal is user-typed free text rendered
  * near the top of the message, well above where the local `escHtml` helper is defined.
  */
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
@@ -116,7 +116,7 @@ export type DigestMissingField = 'gaming' | 'socialMedia' | 'contextSwitches' | 
 
 /** "8h 35m" / "1h 07m" / "2h" / "42m" — minutes zero-padded beside hours, exactly as the mock
  *  prints them, so a column of times stays visually aligned. */
-function fmtMinutes(seconds: number): string {
+export function fmtMinutes(seconds: number): string {
   const m = Math.round(Math.max(0, seconds) / 60);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
@@ -800,25 +800,25 @@ function buildSubjectLine(
 // THE GREEN RULE: #3FBF7F means work that COUNTED — a finished task, a finished bar, focused
 // time on the timeline, and the primary button. Nothing else, ever.
 
-const PAGE_BG = '#0B0D11';
-const CARD_BG = '#14171C';
-const HAIRLINE = '#2A3038';
-const HEADLINE = '#F2F4F7';
-const BODY = '#DFE3E9';
-const MUTED = '#8B929E';
-const META = '#6F7885';
-const ACCENT = '#3FBF7F';
-const ACCENT_TEXT = '#0E2A1C';
+export const PAGE_BG = '#0B0D11';
+export const CARD_BG = '#14171C';
+export const HAIRLINE = '#2A3038';
+export const HEADLINE = '#F2F4F7';
+export const BODY = '#DFE3E9';
+export const MUTED = '#8B929E';
+export const META = '#6F7885';
+export const ACCENT = '#3FBF7F';
+export const ACCENT_TEXT = '#0E2A1C';
 const AT_MACHINE = '#5A626D';
 /** Away fill on the strip, and the empty half of every bar. */
-const AWAY = '#232931';
+export const AWAY = '#232931';
 const AWAY_EDGE = '#3A424C';
 /** The bare timeline track. Measured: it must read visibly EMPTIER than away — #1B1F26 was
  *  tried first and read as away, which is the one thing a gap must never look like. */
-const GAP_TRACK = '#171A20';
+export const GAP_TRACK = '#171A20';
 
-const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
-const SERIF = "Georgia,'Times New Roman',serif";
+export const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+export const SERIF = "Georgia,'Times New Roman',serif";
 
 const LABEL_STYLE = `font-size:10px;color:${META};text-transform:uppercase;`;
 
