@@ -1008,13 +1008,20 @@ function hourMarkerCells(startHour: number, endHour: number): string {
   for (let h = startHour; h <= endHour; h += step) marks.push(h);
   if (marks[marks.length - 1] !== endHour) marks.push(endHour);
 
+  // Every cell carries its OWN percentage and its OWN padding. Gmail iOS drops
+  // `table-layout:fixed`, and an auto-layout row of bare numbers with no padding is exactly what
+  // collapsed this axis into "9am1236911pm" at 390px: each cell shrank to its own text and the
+  // labels butted together. The width keeps them spread; the padding means they cannot touch even
+  // where the width is thrown away too.
+  const cellWidth = Math.floor(100 / marks.length);
+
   return marks
     .map((h, i) => {
       const isFirst = i === 0;
       const isLast = i === marks.length - 1;
       const label = isFirst || isLast ? fmt12h(h) : String(h % 12 || 12);
       const align = isFirst ? 'left' : isLast ? 'right' : 'center';
-      return `<td align="${align}" style="font-size:10px;color:${META};">${label}</td>`;
+      return `<td align="${align}" width="${cellWidth}%" style="width:${cellWidth}%;font-size:10px;color:${META};white-space:nowrap;padding:0 3px;">${label}</td>`;
     })
     .join('');
 }
@@ -1032,7 +1039,7 @@ function buildTimelineHtml(p: DailyDigestPayload): string {
     .map(({ seg, width }) => {
       const fill = SEGMENT_FILL[seg.kind];
       const background = fill === null ? '' : `background:${fill};`;
-      return `<td width="${width}%" style="${background}font-size:0;line-height:14px;">&nbsp;</td>`;
+      return `<td width="${width}%" style="${background}font-size:0;line-height:14px;width:${width}%;">&nbsp;</td>`;
     })
     .join('');
 
@@ -1046,7 +1053,7 @@ function buildTimelineHtml(p: DailyDigestPayload): string {
 
   return `
 <!-- 6 THE DAY -->
-<tr><td style="padding:20px 32px 0 32px;">
+<tr><td class="px" style="padding:20px 32px 0 32px;">
   <div style="${LABEL_STYLE}">The day</div>
   ${spacer(12)}
 
@@ -1095,20 +1102,20 @@ function taskBlockHtml(t: DigestTaskEntry): string {
     : '';
 
   const barCells = fill >= 100
-    ? `<td width="100%" style="background:${fillColour};font-size:0;line-height:5px;">&nbsp;</td>`
-    : `<td width="${fill}%" style="background:${fillColour};font-size:0;line-height:5px;">&nbsp;</td><td width="${100 - fill}%" style="background:${AWAY};font-size:0;line-height:5px;">&nbsp;</td>`;
+    ? `<td width="100%" style="background:${fillColour};font-size:0;line-height:5px;width:100%;">&nbsp;</td>`
+    : `<td width="${fill}%" style="background:${fillColour};font-size:0;line-height:5px;width:${fill}%;">&nbsp;</td><td width="${100 - fill}%" style="background:${AWAY};font-size:0;line-height:5px;width:${100 - fill}%;">&nbsp;</td>`;
 
   return `
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;">
     <tr>
-      <td style="vertical-align:top;">
-        <div style="font-size:13px;color:${titleColour};">${check}${escapeHtml(t.title)}</div>${movedLine}
+      <td width="62%" style="width:62%;vertical-align:top;padding-right:12px;">
+        <div style="font-size:13px;color:${titleColour};word-break:break-word;">${check}${escapeHtml(t.title)}</div>${movedLine}
         ${spacer(moved ? 6 : 8)}
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:220px;table-layout:fixed;border-radius:3px;overflow:hidden;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:220px;table-layout:fixed;border-radius:3px;overflow:hidden;">
           <tr style="height:5px;">${barCells}</tr>
         </table>
       </td>
-      <td align="right" style="vertical-align:top;white-space:nowrap;">
+      <td width="38%" align="right" style="width:38%;vertical-align:top;white-space:nowrap;">
         <div style="font-size:17px;color:${actualColour};font-variant-numeric:tabular-nums;">${fmtMinutes(t.actualSeconds)}</div>
         ${spacer(3)}
         <div style="font-size:11px;color:${META};font-variant-numeric:tabular-nums;">planned ${fmtMinutes(t.plannedSeconds)}</div>
@@ -1121,7 +1128,7 @@ function buildTasksHtml(tasks: ReadonlyArray<DigestTaskEntry>): string {
   if (tasks.length === 0) return '';
   return `
 <!-- 7 tasks -->
-<tr><td style="padding:20px 32px 0 32px;">
+<tr><td class="px" style="padding:20px 32px 0 32px;">
   <div style="${LABEL_STYLE}">Your tasks</div>
   ${spacer(14)}
   ${tasks.map(taskBlockHtml).join(`\n  ${spacer(18)}\n`)}
@@ -1133,21 +1140,25 @@ ${ruleRow()}`;
 // Worked · Focused · Best run · Away. "Away" replaces the old "Breaks 0/6" and carries the
 // locked/away-not-counted meaning without needing the extra sentence underneath.
 
-function figureCell(label: string, value: string): string {
-  return `<td style="vertical-align:top;"><div style="${LABEL_STYLE}">${label}</div>${spacer(5)}<div style="font-size:17px;color:${HEADLINE};font-variant-numeric:tabular-nums;">${value}</div></td>`;
+function figureCell(label: string, value: string, last = false): string {
+  // A quarter each, stated ON the cell, so the row never depends on the table stretching -- plus a
+  // gutter on the first three, which is exactly what "BEST RUNAWAY" and "14h 02m8h 52m" were
+  // missing. The value is nowrap because a figure that wraps mid-number reads as two figures.
+  const gutter = last ? '' : 'padding-right:10px;';
+  return `<td width="25%" style="width:25%;vertical-align:top;${gutter}"><div style="${LABEL_STYLE}">${label}</div>${spacer(5)}<div style="font-size:17px;color:${HEADLINE};font-variant-numeric:tabular-nums;white-space:nowrap;">${value}</div></td>`;
 }
 
 function buildFiguresHtml(p: DailyDigestPayload, missing: Set<DigestMissingField>): string {
   const bestRun = missing.has('streak') ? NO_DATA_HTML : fmtMinutes(p.longestFocusStreakSeconds);
   return `
 <!-- 8 four figures -->
-<tr><td style="padding:20px 32px 0 32px;">
+<tr><td class="px" style="padding:20px 32px 0 32px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;">
     <tr>
       ${figureCell('Worked', fmtMinutes(p.trackedSeconds))}
       ${figureCell('Focused', fmtMinutes(p.focusSeconds))}
       ${figureCell('Best run', bestRun)}
-      ${figureCell('Away', fmtMinutes(p.awaySeconds))}
+      ${figureCell('Away', fmtMinutes(p.awaySeconds), true)}
     </tr>
   </table>
 </td></tr>
@@ -1189,26 +1200,26 @@ function buildTopSitesHtml(p: DailyDigestPayload): string {
       const pad = last ? '' : 'padding-bottom:10px;';
       const width = Math.max(1, Math.round((a.seconds / top) * 100));
       const bar = width >= 100
-        ? `<tr style="height:5px;"><td width="100%" style="background:${AT_MACHINE};font-size:0;line-height:5px;">&nbsp;</td></tr>`
-        : `<tr style="height:5px;"><td width="${width}%" style="background:${AT_MACHINE};font-size:0;line-height:5px;">&nbsp;</td><td width="${100 - width}%" style="background:${AWAY};font-size:0;line-height:5px;">&nbsp;</td></tr>`;
+        ? `<tr style="height:5px;"><td width="100%" style="background:${AT_MACHINE};font-size:0;line-height:5px;width:100%;">&nbsp;</td></tr>`
+        : `<tr style="height:5px;"><td width="${width}%" style="background:${AT_MACHINE};font-size:0;line-height:5px;width:${width}%;">&nbsp;</td><td width="${100 - width}%" style="background:${AWAY};font-size:0;line-height:5px;width:${100 - width}%;">&nbsp;</td></tr>`;
       return `    <tr>
-      <td${i === 0 ? ' width="130"' : ''} style="font-size:12px;color:${BODY};${pad}">${escapeHtml(a.label)}</td>
-      <td style="${pad}">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;border-radius:3px;overflow:hidden;">
+      <td width="32%" style="width:32%;font-size:12px;color:${BODY};padding-right:10px;word-break:break-word;${pad}">${escapeHtml(a.label)}</td>
+      <td width="48%" style="width:48%;${pad}">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;border-radius:3px;overflow:hidden;">
           ${bar}
         </table>
       </td>
-      <td${i === 0 ? ' width="62"' : ''} align="right" style="font-size:12px;color:${BODY};font-variant-numeric:tabular-nums;${pad}">${fmtMinutes(a.seconds)}</td>
+      <td width="20%" align="right" style="width:20%;font-size:12px;color:${BODY};font-variant-numeric:tabular-nums;white-space:nowrap;padding-left:8px;${pad}">${fmtMinutes(a.seconds)}</td>
     </tr>`;
     })
     .join('\n');
 
   return `
 <!-- 9 where your time went -->
-<tr><td style="padding:20px 32px 0 32px;">
+<tr><td class="px" style="padding:20px 32px 0 32px;">
   <div style="${LABEL_STYLE}">Where your time went</div>
   ${spacer(14)}
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;">
 ${rows}
   </table>
 </td></tr>
@@ -1230,18 +1241,18 @@ function buildPulledOffHtml(p: DailyDigestPayload): string {
     .map((a, i) => {
       const pad = i === apps.length - 1 ? '' : 'padding-bottom:8px;';
       return `    <tr>
-      <td style="font-size:12px;color:${BODY};${pad}">${escapeHtml(a.label)}</td>
-      <td align="right" style="font-size:12px;color:${BODY};font-variant-numeric:tabular-nums;${pad}">${fmtMinutes(a.seconds)}</td>
+      <td width="70%" style="width:70%;font-size:12px;color:${BODY};padding-right:10px;word-break:break-word;${pad}">${escapeHtml(a.label)}</td>
+      <td width="30%" align="right" style="width:30%;font-size:12px;color:${BODY};font-variant-numeric:tabular-nums;white-space:nowrap;${pad}">${fmtMinutes(a.seconds)}</td>
     </tr>`;
     })
     .join('\n');
 
   return `
 <!-- 10 what pulled you off -->
-<tr><td style="padding:20px 32px 0 32px;">
+<tr><td class="px" style="padding:20px 32px 0 32px;">
   <div style="${LABEL_STYLE}">What pulled you off</div>
   ${spacer(14)}
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;table-layout:fixed;">
 ${rows}
   </table>
 </td></tr>
@@ -1260,7 +1271,7 @@ export const NO_OUTCOME_LINE =
 function buildAriTakeHtml(body: string): string {
   return `
 <!-- 11 Ari's take -->
-<tr><td style="padding:20px 32px 0 32px;">
+<tr><td class="px" style="padding:20px 32px 0 32px;">
   <div style="${LABEL_STYLE}">Ari's take</div>
   ${spacer(10)}
   <div style="font-family:${SERIF};font-size:15px;line-height:1.6;color:${BODY};">
@@ -1303,7 +1314,7 @@ export async function buildDigestEmail(
   const offlineHtml = p.isServerFallback
     ? `
 <!-- 4 offline notice (conditional) -->
-<tr><td style="padding:16px 32px 0 32px;">
+<tr><td class="px" style="padding:16px 32px 0 32px;">
   <div style="border-left:2px solid ${HAIRLINE};padding:2px 0 2px 10px;font-size:11px;color:${META};line-height:1.5;">
     Your machine was offline at send time, so this covers the day only up to its last report.
   </div>
@@ -1323,7 +1334,7 @@ export async function buildDigestEmail(
   const contextLine = `${fmtMinutes(p.focusSeconds)} focused across ${articleFor(workedLabel)} ${workedLabel} day.`;
   const headlineHtml = `
 <!-- 5 headline -->
-<tr><td style="padding:24px 32px 0 32px;">${summary === null ? '' : `
+<tr><td class="px" style="padding:24px 32px 0 32px;">${summary === null ? '' : `
   <div style="font-size:20px;line-height:1.35;color:${HEADLINE};font-weight:400;">
     ${escapeHtml(summary.planned)}<br>${escapeHtml(summary.finished)}
   </div>
@@ -1348,16 +1359,24 @@ ${ruleRow(24)}`;
 <meta name="color-scheme" content="dark">
 <meta name="supported-color-schemes" content="dark">
 <title>Ari Daily Digest</title>
+<style>
+  /* Enhancement ONLY. 32px a side costs a sixth of a 390px screen, so a phone gets some of it
+     back. Every fix above lives in the base layout, so a client that strips this block -- which
+     is the normal case in Gmail iOS on a non-Gmail account -- still renders correctly. */
+  @media only screen and (max-width:480px) {
+    .px { padding-left:20px !important; padding-right:20px !important; }
+  }
+</style>
 </head>
 <body style="margin:0;padding:0;background:${PAGE_BG};">
 <div style="margin:0;padding:0;background:${PAGE_BG};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${PAGE_BG};padding:32px 0;">
 <tr><td align="center">
 
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:${CARD_BG};border:0.5px solid ${HAIRLINE};border-radius:12px;font-family:${SANS};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;margin:0 auto;background:${CARD_BG};border:0.5px solid ${HAIRLINE};border-radius:12px;font-family:${SANS};">
 
 <!-- 1 wordmark / 2 label / 3 date -->
-<tr><td style="padding:28px 32px 0 32px;">
+<tr><td class="px" style="padding:28px 32px 0 32px;">
   <div style="font-size:15px;font-weight:500;color:${HEADLINE};letter-spacing:-0.1px;">Ari <span style="color:${META};font-weight:400;">by Porta</span></div>
   ${spacer(18)}
   <div style="${LABEL_STYLE}">Your day at a glance</div>
@@ -1373,16 +1392,16 @@ ${buildTopSitesHtml(p)}
 ${buildPulledOffHtml(p)}
 ${ariTakeHtml}
 <!-- 12 button -->
-<tr><td style="padding:26px 32px 0 32px;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-    <tr><td align="center" style="background:${ACCENT};border-radius:7px;">
-      <a href="${launchUrl}" style="display:block;padding:11px 0;font-size:13px;color:${ACCENT_TEXT};text-decoration:none;font-weight:500;font-family:${SANS};">Open Ari</a>
+<tr><td class="px" style="padding:26px 32px 0 32px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+    <tr><td width="100%" align="center" style="width:100%;background:${ACCENT};border-radius:7px;text-align:center;">
+      <a href="${launchUrl}" style="display:block;width:100%;padding:11px 0;font-size:13px;color:${ACCENT_TEXT};text-decoration:none;text-align:center;font-weight:500;font-family:${SANS};">Open Ari</a>
     </td></tr>
   </table>
 </td></tr>
 
 <!-- 13 footer -->
-<tr><td style="padding:22px 32px 28px 32px;">
+<tr><td class="px" style="padding:22px 32px 28px 32px;">
   <div style="font-size:11px;color:${META};">Sent by Ari &middot; <a href="https://useporta.com" style="color:${META};text-decoration:none;">useporta.com</a></div>
 </td></tr>
 
