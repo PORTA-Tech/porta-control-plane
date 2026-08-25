@@ -22,6 +22,7 @@ import { getBuildInfo } from './core/buildInfo.js';
 import { createIdentityController } from './api/controllers/identityController.js';
 import { createDeviceIdentityController } from './api/controllers/deviceIdentityController.js';
 import { createClientReleaseController } from './api/controllers/clientReleaseController.js';
+import { createDownloadRequestController } from './api/controllers/downloadRequestController.js';
 import { createGrowthController } from './api/controllers/growthController.js';
 import { createDigestController } from './api/controllers/digestController.js';
 import { enforceRbacPolicy, requireAuthenticatedOperator } from './api/middleware/auth.js';
@@ -33,9 +34,24 @@ import { loadRuntimeState, runtimeState } from './store/runtimeState.js';
 
 const defaultAllowedOrigins = ['https://porta-operations-console.onrender.com', 'http://localhost:5173'];
 
+/**
+ * The marketing site posts the download form here from the browser, and a JSON content type makes
+ * that a preflighted request. These origins are unioned in rather than added to the default list
+ * because CORS_ALLOWED_ORIGINS, once set in Render, replaces the defaults entirely — so a
+ * deploy-time env value would silently drop the website and the form would fail in the browser
+ * only. Allowing an origin grants no authority on its own: every other route still requires its
+ * own auth, and none of them use cookies.
+ */
+const websiteOrigins = [
+  'https://useporta.com',
+  'https://www.useporta.com',
+  'http://localhost:4173'
+];
+
 function getAllowedOrigins(): Set<string> {
   const configured = process.env.CORS_ALLOWED_ORIGINS?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
-  return new Set(configured.length > 0 ? configured : defaultAllowedOrigins);
+  const base = configured.length > 0 ? configured : defaultAllowedOrigins;
+  return new Set([...base, ...websiteOrigins]);
 }
 
 export function initializeControlPlane(): void {
@@ -256,6 +272,7 @@ export function createApp(): Express {
   });
   app.use('/api/device', createDeviceIdentityController());
   app.use('/api/client-release', createClientReleaseController());
+  app.use('/api/download-request', createDownloadRequestController());
 
   app.use('/v1', requireAuthenticatedOperator, enforceRbacPolicy);
   app.use('/v1/config', createConfigController());
