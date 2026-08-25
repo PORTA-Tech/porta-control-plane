@@ -213,11 +213,14 @@ function renderShare(page: ReportPage, totalHours: number): string {
   const segments = folded
     .map((e) => {
       const pct = (e.hours / totalHours) * 100;
+      // Round once, then gate on the rounded value. The bar label, the tooltip and the table
+      // must all show the same number, or a 6.7% slice reads "7%" in the table with a bare bar.
+      const shown = Math.round(pct);
       const c = slotColour(e.colourSlot);
       // A sliver cannot hold a legible number. Below this the legend and the table carry it,
       // which is exactly why the table exists.
-      const label = pct >= 7 ? `${Math.round(pct)}%` : '';
-      const tip = `${e.label} · ${hoursLabel(e.hours)} · ${Math.round(pct)}%`;
+      const label = shown >= 7 ? `${shown}%` : '';
+      const tip = `${e.label} · ${hoursLabel(e.hours)} · ${shown}%`;
       return `<span data-tip="${esc(tip)}" style="width:${pct.toFixed(1)}%;background:${c.fill};color:${c.ink};">${label}</span>`;
     })
     .join('\n      ');
